@@ -1,0 +1,13 @@
+node_modules/
+dist/
+dist-test/
+.env
+*.log
+backups/
+.next/
+.expo/
+.env.local
+.env.*.local
+*.tsbuildinfo
+web-build/
+dist-check/

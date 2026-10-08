@@ -1,0 +1,23 @@
+{
+  "name": "duan-khoaluan",
+  "private": true,
+  "workspaces": [
+    "apps/*"
+  ],
+  "scripts": {
+    "dev:api": "npm run dev -w apps/api",
+    "build": "npm run build -w apps/api && npm run build -w apps/web",
+    "typecheck": "npm run typecheck --workspaces",
+    "lint": "npm run lint --workspaces",
+    "test": "npm run test -w apps/api",
+    "db:check": "npm run db:check -w apps/api",
+    "db:migrate": "npm run db:migrate -w apps/api",
+    "db:seed": "npm run db:seed -w apps/api",
+    "dev:web": "npm run dev -w apps/web",
+    "dev:mobile": "npm run start -w apps/mobile",
+    "dev:android": "npm run android -w apps/mobile",
+    "dev:ios": "npm run ios -w apps/mobile",
+    "test:api": "npm run test -w apps/api",
+    "check:mobile": "npm run check -w apps/mobile"
+  }
+}

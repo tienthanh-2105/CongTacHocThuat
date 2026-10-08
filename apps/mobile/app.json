@@ -1,0 +1,27 @@
+{
+  "expo": {
+    "name": "Công tác học thuật",
+    "slug": "cong-tac-hoc-thuat",
+    "version": "1.0.0",
+    "orientation": "portrait",
+    "icon": "./assets/icon.png",
+    "userInterfaceStyle": "light",
+    "ios": {
+      "supportsTablet": true,
+      "bundleIdentifier": "vn.khoaluan.hocthuat"
+    },
+    "android": {
+      "adaptiveIcon": {
+        "backgroundColor": "#E6F4FE",
+        "foregroundImage": "./assets/android-icon-foreground.png",
+        "backgroundImage": "./assets/android-icon-background.png",
+        "monochromeImage": "./assets/android-icon-monochrome.png"
+      },
+      "predictiveBackGestureEnabled": false,
+      "package": "vn.khoaluan.hocthuat"
+    },
+    "web": {
+      "favicon": "./assets/favicon.png"
+    }
+  }
+}
