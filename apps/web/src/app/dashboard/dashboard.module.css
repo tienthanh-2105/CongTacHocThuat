@@ -4,7 +4,7 @@
   min-height: 100svh;
   background: #f4f7fb;
   color: var(--ink);
-  font-size: 14px;
+  font-size: 16px;
   display: flex;
 }
 .app button {
@@ -17,10 +17,11 @@
   flex-shrink: 0;
 }
 .sidebar {
-  width: 244px;
+  width: 280px;
   flex-shrink: 0;
-  background: #122d43;
-  color: #d6e1ee;
+  background: #ffffff;
+  border-right: 1px solid #e6edf6;
+  color: #285784;
   position: fixed;
   inset: 0 auto 0 0;
   display: flex;
@@ -30,11 +31,12 @@
   overflow-y: auto;
 }
 .brand {
+  font-weight: 700;
   display: flex;
   align-items: center;
   gap: 12px;
   padding: 0 8px 27px;
-  font-size: 15px;
+  font-size: 17px;
   letter-spacing: 0.5px;
 }
 .brand > span {
@@ -46,14 +48,16 @@
   height: 42px;
   color: white;
   font-weight: 700;
-  font-size: 20px;
+  font-size: 22px;
 }
 .brand small {
+  white-space: nowrap;
+  font-weight: 700;
   display: block;
-  font-size: 10px;
+  font-size: 12px;
   margin-top: 5px;
   letter-spacing: 0;
-  color: #9bb0c5;
+  color: #537a9f;
 }
 .sidebar nav {
   display: grid;
@@ -69,16 +73,20 @@
   color: inherit;
   padding: 12px 10px;
   border-radius: 8px;
-  font-size: 13px;
+  font-size: 15px;
   line-height: 1.3;
 }
-.sidebar nav button:hover,
-.sidebar nav .active {
-  background: #294459;
-  color: white;
+.sidebar nav button:hover {
+  background: #e9f6fa;
+  color: #194f8c;
 }
 .sidebar nav .active {
-  box-shadow: inset 3px 0 #4590ff;
+  background: #c2e8f3;
+  color: #285784;
+  font-weight: 600;
+}
+.sidebar nav .active {
+  box-shadow: inset 3px 0 #83c7dc;
 }
 .sidebar nav svg {
   width: 17px;
@@ -86,32 +94,32 @@
   opacity: 0.8;
 }
 .year {
-  background: #1c374d;
-  border: 1px solid #30485d;
+  background: #f4f9fc;
+  border: 1px solid #e1edf4;
   border-radius: 10px;
   padding: 15px 12px;
   margin-top: 28px;
 }
 .year small {
   display: block;
-  font-size: 9px;
-  color: #9fb2c7;
+  font-size: 11px;
+  color: #52789c;
   line-height: 1.6;
 }
 .year strong {
   display: block;
-  font-size: 12px;
+  font-size: 14px;
   font-weight: 400;
   margin-top: 7px;
 }
 .sidebarFoot {
   margin-top: auto;
   padding: 28px 10px 0;
-  font-size: 10px;
-  color: #7993ab;
+  font-size: 12px;
+  color: #537a9f;
 }
 .workspace {
-  margin-left: 244px;
+  margin-left: 280px;
   min-width: 0;
   flex: 1;
 }
@@ -134,14 +142,14 @@
   flex: 1;
 }
 .search > span {
-  font-size: 25px;
+  font-size: 27px;
   color: #8da1bc;
 }
 .search input {
   border: 0;
   outline: 0;
   background: transparent;
-  font-size: 12px;
+  font-size: 14px;
   width: 100%;
   color: #18345b;
   padding: 10px 0;
@@ -169,12 +177,12 @@
   align-items: center;
   gap: 10px;
   text-align: left;
-  font-size: 12px;
+  font-size: 14px;
   color: #18345b;
 }
 .profile small {
   display: block;
-  font-size: 10px;
+  font-size: 12px;
   color: #8a9bb3;
   margin-top: 4px;
 }
@@ -186,7 +194,7 @@
   color: #266fe4;
   display: grid;
   place-items: center;
-  font-size: 15px;
+  font-size: 17px;
   font-weight: 600;
 }
 .popupWrap {
@@ -204,7 +212,7 @@
   top: calc(100% + 14px);
   right: 0;
   min-width: 230px;
-  font-size: 13px;
+  font-size: 15px;
   line-height: 1.7;
 }
 .popup button,
@@ -237,7 +245,7 @@
   margin-bottom: 20px;
 }
 .heading h1 {
-  font-size: 28px;
+  font-size: 30px;
   font-weight: 500;
   letter-spacing: -0.5px;
   margin: 0 0 8px;
@@ -245,7 +253,7 @@
 .heading p,
 .card > p,
 .cardHeading p {
-  font-size: 12px;
+  font-size: 14px;
   line-height: 1.6;
   color: #7c8fae;
   margin: 0;
@@ -257,14 +265,14 @@
   padding: 12px 17px;
   border-radius: 7px;
   white-space: nowrap;
-  font-size: 13px;
+  font-size: 15px;
   box-shadow: 0 2px 3px #1869ec15;
 }
 .primary:hover {
   background: #1158ce;
 }
 .demo {
-  font-size: 11px;
+  font-size: 13px;
   color: #776337;
   background: #fff8e9;
   border: 1px solid #f2e8cd;
@@ -298,7 +306,7 @@
   display: flex;
   align-items: center;
   justify-content: space-between;
-  font-size: 12px;
+  font-size: 14px;
   gap: 8px;
 }
 .metricIcon {
@@ -324,12 +332,12 @@
 }
 .metric strong {
   display: block;
-  font-size: 29px;
+  font-size: 31px;
   font-weight: 500;
   margin: 13px 0 11px;
 }
 .metric small {
-  font-size: 11px;
+  font-size: 13px;
   color: #1869ec;
 }
 .metric small[data-tone="1"] {
@@ -352,7 +360,7 @@
   min-width: 0;
 }
 .card h2 {
-  font-size: 17px;
+  font-size: 19px;
   margin: 0 0 5px;
   font-weight: 600;
 }
@@ -367,7 +375,7 @@
   color: #269d79;
   border-radius: 20px;
   padding: 5px 9px;
-  font-size: 10px;
+  font-size: 12px;
 }
 .chart {
   height: 190px;
@@ -384,10 +392,10 @@
   width: 35px;
   gap: 7px;
   color: #8497b2;
-  font-size: 10px;
+  font-size: 12px;
 }
 .barColumn small {
-  font-size: 10px;
+  font-size: 12px;
 }
 .bar,
 .highlightBar {
@@ -406,7 +414,7 @@
 .progressList > div > div:first-child {
   display: flex;
   justify-content: space-between;
-  font-size: 11px;
+  font-size: 13px;
   gap: 10px;
   margin-bottom: 8px;
 }
@@ -430,7 +438,7 @@
   border: 0;
   background: none;
   color: #1b6be9;
-  font-size: 11px;
+  font-size: 13px;
   padding: 5px;
 }
 .tableScroll {
@@ -448,14 +456,14 @@
 .tableScroll th {
   background: #f7f9fc;
   color: #7a8ba5;
-  font-size: 9px;
+  font-size: 11px;
   font-weight: 500;
   padding: 12px;
 }
 .tableScroll td {
   padding: 14px 12px;
   border-top: 1px solid #edf1f7;
-  font-size: 11px;
+  font-size: 13px;
   color: #7c8daa;
 }
 .tableScroll td:first-child {
@@ -469,7 +477,7 @@
   color: #299b78;
   border-radius: 20px;
   padding: 4px 8px;
-  font-size: 10px;
+  font-size: 12px;
 }
 .soon {
   background: #eaf2ff;
@@ -485,7 +493,7 @@
   text-align: left;
   padding: 13px 0;
   color: #17345b;
-  font-size: 12px;
+  font-size: 14px;
 }
 .task > span:nth-child(2) {
   flex: 1;
@@ -493,7 +501,7 @@
 .task small {
   display: block;
   color: #8c9bb3;
-  font-size: 10px;
+  font-size: 12px;
   margin-top: 5px;
 }
 .taskIcon {
@@ -544,7 +552,7 @@
   background: #fff3dc;
   color: #aa7323;
   padding: 6px 12px;
-  font-size: 12px;
+  font-size: 14px;
 }
 .loading {
   min-height: 100svh;
@@ -560,7 +568,7 @@
   color: #2673ed;
 }
 .loading h1 {
-  font-size: 18px;
+  font-size: 20px;
   font-weight: 500;
 }
 .loading button {
@@ -596,11 +604,11 @@
 }
 @media (max-width: 1150px) {
   .sidebar {
-    width: 220px;
+    width: 280px;
     padding: 24px 12px;
   }
   .workspace {
-    margin-left: 220px;
+    margin-left: 280px;
   }
   .main {
     padding: 24px;
@@ -615,7 +623,7 @@
     padding: 15px;
   }
   .metric > div {
-    font-size: 11px;
+    font-size: 13px;
   }
   .metricIcon {
     width: 28px;
@@ -633,7 +641,7 @@
     grid-template-columns: repeat(2, minmax(0, 1fr));
   }
   .heading h1 {
-    font-size: 25px;
+    font-size: 27px;
   }
   .profile > span:nth-child(2) {
     display: none;
@@ -647,7 +655,7 @@
   .sidebar {
     transform: translateX(-100%);
     transition: transform 0.2s;
-    width: 254px;
+    width: 280px;
   }
   .sidebar.open {
     transform: translateX(0);
@@ -665,7 +673,7 @@
     background: transparent;
     border: 0;
     color: #18345b;
-    font-size: 21px;
+    font-size: 23px;
     padding: 5px;
   }
   .backdrop {
@@ -684,19 +692,19 @@
     flex-wrap: wrap;
   }
   .heading h1 {
-    font-size: 24px;
+    font-size: 26px;
   }
   .heading p {
-    font-size: 12px;
+    font-size: 14px;
   }
   .metrics {
     gap: 12px;
   }
   .metric strong {
-    font-size: 26px;
+    font-size: 28px;
   }
   .metric > div {
-    font-size: 11px;
+    font-size: 13px;
   }
   .metricIcon {
     width: 25px;
@@ -720,13 +728,13 @@
     padding: 7px;
   }
   .search input {
-    font-size: 11px;
+    font-size: 13px;
   }
   .chart {
     gap: 10px;
   }
   .card h2 {
-    font-size: 16px;
+    font-size: 18px;
   }
   .popup {
     min-width: 210px;
@@ -743,3 +751,54 @@
   }
 }
 
+
+.search { border: 1px solid #dce4ee; border-radius: 24px; padding: 0 14px; min-width: 0; max-width: 360px; background: white; }
+.search:focus-within { border-color: #4488df; box-shadow: 0 0 0 3px #1869ec12; }
+.search input { min-width: 0; padding: 12px 0; font-size: 15px; font-family: inherit; }
+.search > svg { width: 19px; height: 19px; color: #7c8795; }
+.srOnly { position: absolute; width: 1px; height: 1px; padding: 0; overflow: hidden; clip-path: inset(50%); white-space: nowrap; }
+.homeLink { border: 0; background: transparent; color: #61758c; font-size: 15px; white-space: nowrap; padding: 10px 0; }
+.bell { align-items: center; gap: 7px; background: transparent; font-size: 15px; white-space: nowrap; }
+.profile { font-size: 16px; }
+.popup { max-width: calc(100vw - 32px); }
+.accountMenu { padding: 0; border-radius: 3px; min-width: 210px; }
+.accountMenu::before { content: ""; position: absolute; right: 18px; top: -7px; width: 12px; height: 12px; background: white; border-top: 1px solid #e4eaf3; border-left: 1px solid #e4eaf3; transform: rotate(45deg); }
+.accountMenu button { position: relative; background: white; margin: 0; padding: 13px 17px; border-radius: 0; font-size: 15px; color: #61758c; }
+.accountMenu button + button { border-top: 1px solid #e4eaf3; }
+.accountMenu button:hover, .accountMenu button:focus-visible { background: #f1f6fd; color: #1869ec; }
+.app button:focus-visible { outline: 2px solid #1869ec; outline-offset: 3px; }
+.accountPanel { max-width: 640px; }
+.accountPanel dl { display: grid; grid-template-columns: 150px 1fr; gap: 18px; margin-top: 24px; }
+.accountPanel dt { color: #61758c; }
+.accountPanel dd { margin: 0; overflow-wrap: anywhere; }
+.accountPanel form { display: grid; gap: 18px; margin-top: 20px; }
+.accountPanel form p { line-height: 1.6; }
+.accountPanel label { display: grid; gap: 8px; }
+.accountPanel input { width: 100%; padding: 12px; font: inherit; color: inherit; border: 1px solid #dce4ee; border-radius: 7px; }
+.accountPanel input:focus { outline: 2px solid #4488df; outline-offset: 1px; }
+.accountPanel form > button { justify-self: start; }
+@media (max-width: 900px) { .homeLink, .bellLabel { display: none; } }
+@media (max-width: 650px) { .search input { font-size: 14px; } .search { padding: 0 10px; } .searchResults { left: 0; width: min(280px, calc(100vw - 100px)); } .accountPanel dl { grid-template-columns: 1fr; gap: 10px; } .accountPanel dd { margin-bottom: 10px; } }
+
+.homeLink { display: inline-flex; align-items: center; gap: 7px; }
+.homeLink svg { width: 21px; height: 21px; }
+.passwordDialog { position: fixed; inset: 0; margin: auto; width: min(500px, calc(100vw - 32px)); max-height: calc(100svh - 32px); overflow-y: auto; padding: 32px 30px 30px; border: 0; border-radius: 5px; background: white; color: #657789; box-shadow: 0 12px 48px #0002; font-family: inherit; font-size: 15px; }
+.passwordDialog::backdrop { background: rgb(0 0 0 / 78%); }
+.passwordDialog form { display: grid; gap: 25px; }
+.passwordDialog label { display: grid; gap: 6px; }
+.passwordDialog em { color: #f33; font-style: normal; }
+.passwordDialog input { width: 100%; min-width: 0; padding: 10px 14px; border: 1px solid #d9d9d9; border-radius: 4px; background: white; color: #34495e; font: inherit; font-size: 14px; }
+.passwordDialog input::placeholder { color: #999; }
+.passwordDialog input:focus { outline: 2px solid #26a3ee; outline-offset: 1px; }
+.inputWrap { position: relative; display: flex; align-items: center; width: 100%; }
+.inputWrap input { padding-right: 42px; }
+.eyeButton { position: absolute; right: 6px; top: 50%; transform: translateY(-50%); display: flex; align-items: center; justify-content: center; width: 30px; height: 30px; padding: 0; border: 0; background: transparent; color: #8c9ba5; cursor: pointer; border-radius: 4px; transition: color 0.15s ease; }
+.eyeButton:hover { color: #26a3ee; }
+.eyeButton svg { width: 18px; height: 18px; }
+.dialogClose { position: absolute; top: 0; right: 0; width: 27px; height: 27px; display: grid; place-items: center; border: 0; border-radius: 0 5px 0 0; background: #26a3ee; color: white; font-size: 24px; line-height: 1; }
+.dialogSave { justify-self: end; border: 0; border-radius: 3px; background: #17a1ee; color: white; padding: 8px 13px; font-size: 14px; font-weight: 600; }
+.dialogSave:hover { background: #098ad2; }
+.passwordHint { font-size: 12px; line-height: 1.5; margin-top: -12px; color: #7b8792; }
+.passwordDialog button:disabled { opacity: .6; cursor: wait; }
+@media (max-width: 900px) { .homeLink { display: none; } }
+@media (max-width: 650px) { .passwordDialog { padding: 32px 22px 24px; } }

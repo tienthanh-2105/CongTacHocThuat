@@ -9,7 +9,7 @@ import { HealthController } from "./presentation/health.controller";
     ConfigModule.forRoot({
       isGlobal: true,
       validate: (env: Record<string, unknown>) => {
-        for (const key of ['PGHOST', 'PGDATABASE', 'PGUSER', 'PGPASSWORD']) {
+        for (const key of ['DB_SERVER', 'DB_NAME', 'DB_USER', 'DB_PASSWORD']) {
           if (typeof env[key] !== 'string' || !String(env[key]).trim()) throw new Error(`Missing ${key}; configure apps/api/.env`);
         }
         const port = Number(env.PORT ?? 3001);

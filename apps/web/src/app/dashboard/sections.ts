@@ -1,7 +1,7 @@
 export const sections = [
   {
     id: "overview",
-    title: "Tổng quan",
+    title: "Trang chủ",
     detail: "Theo dõi hoạt động học thuật của toàn khoa.",
   },
   {
