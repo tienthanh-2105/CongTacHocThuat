@@ -1,55 +1,112 @@
 import { Inject, Injectable, UnauthorizedException } from '@nestjs/common';
 import { randomUUID } from 'node:crypto';
+import sql from 'mssql';
 import { DatabaseService } from '../../database.service';
 import type { SessionContext } from '../../../business/auth/auth.types';
 
-type AccountRow = { id: string; username: string; name: string; passwordHash: string; passwordVersion: number; active: boolean; role: string };
-const accountSelect = `SELECT a.matk::text AS id, a.tendangnhap AS username,
- COALESCE(n.hoten,a.tendangnhap) AS name, a.matkhau AS "passwordHash",
- a.pbmatkhau AS "passwordVersion",
- (a.trangthai='Hoạt động' AND (n.mangdung IS NULL OR n.trangthai='Hoạt động')) AS active,
- r.tenvaitro AS role
- FROM public.taikhoan a JOIN public.vaitro r ON r.mavaitro=a.mavaitro
- LEFT JOIN public.nguoidung n ON n.mangdung=a.mangdung`;
-function account(row: AccountRow) { return { ...row, roles: [{ role: { code: row.role } }] }; }
+type AccountRow = {
+  id: string;
+  username: string;
+  name: string;
+  passwordHash: string;
+  passwordVersion: number;
+  active: boolean;
+  role: string;
+};
+
+const accountSelect = `SELECT 
+  CAST(a.MaTK AS VARCHAR(50)) AS id, 
+  a.TenDangNhap AS username,
+  COALESCE(n.HoTen, a.TenDangNhap) AS name, 
+  a.MatKhau AS passwordHash,
+  a.PBMatKhau AS passwordVersion,
+  CASE 
+    WHEN a.TrangThai = N'Hoạt động' AND (n.MaNgDung IS NULL OR n.TrangThai = N'Hoạt động') 
+    THEN CAST(1 AS BIT) 
+    ELSE CAST(0 AS BIT) 
+  END AS active,
+  r.TenVaiTro AS role
+FROM TAIKHOAN a 
+JOIN VAITRO r ON r.MaVaiTro = a.MaVaiTro
+LEFT JOIN NGUOIDUNG n ON n.MaNgDung = a.MaNgDung`;
+
+function account(row: AccountRow) {
+  return { ...row, roles: [{ role: { code: row.role } }] };
+}
 
 @Injectable()
 export class AuthRepository {
   constructor(@Inject(DatabaseService) private readonly db: DatabaseService) {}
+
   async findUserByUsername(username: string) {
-    const result = await this.db.pool.query<AccountRow>(accountSelect+' WHERE a.tendangnhap=$1', [username]);
-    return result.rows[0] ? account(result.rows[0]) : null;
+    const rows = await this.db.query<AccountRow>(`${accountSelect} WHERE a.TenDangNhap = @p1`, [username]);
+    return rows[0] ? account(rows[0]) : null;
   }
+
   async findUserById(id: string) {
-    const result = await this.db.pool.query<AccountRow>(accountSelect+' WHERE a.matk=$1', [id]);
-    return result.rows[0] ? account(result.rows[0]) : null;
+    const rows = await this.db.query<AccountRow>(`${accountSelect} WHERE a.MaTK = @p1`, [id]);
+    return rows[0] ? account(rows[0]) : null;
   }
+
   async createSession(tokenHash: string, userId: string, passwordVersion: number, expiresAt: Date) {
-    await this.db.pool.query('INSERT INTO public.phiendangnhap(maphien,mabamtoken,matk,pbmatkhau,hethanluc) VALUES($1,$2,$3,$4,$5)', [randomUUID(), tokenHash, userId, passwordVersion, expiresAt]);
+    await this.db.query(
+      'INSERT INTO PHIENDANGNHAP(MaPhien, MaBamToken, MaTK, PBMatKhau, HetHanLuc) VALUES(@p1, @p2, @p3, @p4, @p5)',
+      [randomUUID(), tokenHash, userId, passwordVersion, expiresAt],
+    );
   }
+
   async findSession(tokenHash: string) {
-    const result = await this.db.pool.query<{ id: string; userId: string; passwordVersion: number; expiresAt: Date }>('SELECT maphien AS id,matk::text AS "userId",pbmatkhau AS "passwordVersion",hethanluc AS "expiresAt" FROM public.phiendangnhap WHERE mabamtoken=$1', [tokenHash]);
-    const session=result.rows[0];
-    if(!session) return null;
-    const user=await this.findUserById(session.userId);
+    const rows = await this.db.query<{ id: string; userId: string; passwordVersion: number; expiresAt: Date }>(
+      'SELECT CAST(MaPhien AS VARCHAR(50)) AS id, CAST(MaTK AS VARCHAR(50)) AS userId, PBMatKhau AS passwordVersion, HetHanLuc AS expiresAt FROM PHIENDANGNHAP WHERE MaBamToken = @p1',
+      [tokenHash],
+    );
+    const session = rows[0];
+    if (!session) return null;
+    const user = await this.findUserById(session.userId);
     return user ? { ...session, user } : null;
   }
-  async deleteSession(tokenHash: string) { await this.db.pool.query('DELETE FROM public.phiendangnhap WHERE mabamtoken=$1', [tokenHash]); }
+
+  async deleteSession(tokenHash: string) {
+    await this.db.query('DELETE FROM PHIENDANGNHAP WHERE MaBamToken = @p1', [tokenHash]);
+  }
+
   async changePassword(context: SessionContext, user: { id: string }, passwordHash: string) {
-    const client=await this.db.pool.connect();
+    const transaction = new sql.Transaction(this.db.pool);
+    await transaction.begin();
     try {
-      await client.query('BEGIN');
-      // Lock the account first so simultaneous password changes cannot both succeed.
-      const locked=await client.query(accountSelect+' WHERE a.matk=$1 FOR UPDATE OF a', [user.id]);
-      const current=locked.rows[0] as AccountRow | undefined;
-      if(!current?.active || current.passwordVersion!==context.passwordVersion) throw new UnauthorizedException('Tài khoản đã thay đổi, vui lòng đăng nhập lại');
-      const session=await client.query('SELECT maphien FROM public.phiendangnhap WHERE maphien=$1 AND matk=$2 AND pbmatkhau=$3 AND hethanluc>now() FOR UPDATE', [context.sessionId,user.id,context.passwordVersion]);
-      if(!session.rowCount) throw new UnauthorizedException('Phiên đăng nhập không hợp lệ');
-      await client.query('UPDATE public.taikhoan SET matkhau=$1,pbmatkhau=pbmatkhau+1 WHERE matk=$2', [passwordHash,user.id]);
-      await client.query('DELETE FROM public.phiendangnhap WHERE matk=$1', [user.id]);
-      await client.query('COMMIT');
-    } catch(error) { await client.query('ROLLBACK'); throw error; }
-    finally { client.release(); }
+      const lockReq = new sql.Request(transaction);
+      lockReq.input('userId', user.id);
+      const lockedQuery = `${accountSelect.replace('FROM TAIKHOAN a', 'FROM TAIKHOAN a WITH (UPDLOCK, ROWLOCK)')} WHERE a.MaTK = @userId`;
+      const locked = await lockReq.query<AccountRow>(lockedQuery);
+      const current = locked.recordset[0];
+      if (!current?.active || current.passwordVersion !== context.passwordVersion) {
+        throw new UnauthorizedException('Tài khoản đã thay đổi, vui lòng đăng nhập lại');
+      }
+
+      const sessionReq = new sql.Request(transaction);
+      sessionReq.input('sessionId', context.sessionId);
+      sessionReq.input('userId', user.id);
+      sessionReq.input('passwordVersion', context.passwordVersion);
+      const session = await sessionReq.query(
+        'SELECT MaPhien FROM PHIENDANGNHAP WITH (UPDLOCK, ROWLOCK) WHERE MaPhien = @sessionId AND MaTK = @userId AND PBMatKhau = @passwordVersion AND HetHanLuc > SYSDATETIMEOFFSET()',
+      );
+      if (!session.recordset.length) {
+        throw new UnauthorizedException('Phiên đăng nhập không hợp lệ');
+      }
+
+      const updateReq = new sql.Request(transaction);
+      updateReq.input('passwordHash', passwordHash);
+      updateReq.input('userId', user.id);
+      await updateReq.query('UPDATE TAIKHOAN SET MatKhau = @passwordHash, PBMatKhau = PBMatKhau + 1 WHERE MaTK = @userId');
+
+      const delReq = new sql.Request(transaction);
+      delReq.input('userId', user.id);
+      await delReq.query('DELETE FROM PHIENDANGNHAP WHERE MaTK = @userId');
+
+      await transaction.commit();
+    } catch (error) {
+      await transaction.rollback();
+      throw error;
+    }
   }
 }
-

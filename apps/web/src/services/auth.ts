@@ -57,3 +57,7 @@ export async function getCurrentUser(): Promise<AuthUser | null> {
   const data = (await response.json()) as { user: AuthUser };
   return data.user;
 }
+
+export async function changePassword(currentPassword: string, newPassword: string): Promise<void> {
+  await authRequest("change-password", { currentPassword, newPassword });
+}

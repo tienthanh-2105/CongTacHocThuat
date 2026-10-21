@@ -1,21 +1,23 @@
 import { HealthService } from './business/health.service';
-import { Module } from "@nestjs/common";
-import { ConfigModule } from "@nestjs/config";
-import { DatabaseModule } from "./data/database.module";
-import { AuthModule } from "./composition/auth.module";
-import { HealthController } from "./presentation/health.controller";
+import { Module } from '@nestjs/common';
+import { ConfigModule } from '@nestjs/config';
+import { DatabaseModule } from './data/database.module';
+import { AuthModule } from './composition/auth.module';
+import { RegistrationModule } from './composition/registration.module';
+import { AdminModule } from './composition/admin.module';
+import { HealthController } from './presentation/health.controller';
+
 @Module({
   imports: [
     ConfigModule.forRoot({
       isGlobal: true,
       validate: (env: Record<string, unknown>) => {
-        for (const key of ['PGHOST', 'PGDATABASE', 'PGUSER', 'PGPASSWORD']) {
+        for (const key of ['DB_SERVER', 'DB_NAME', 'DB_USER', 'DB_PASSWORD']) {
           if (typeof env[key] !== 'string' || !String(env[key]).trim()) throw new Error(`Missing ${key}; configure apps/api/.env`);
         }
         const port = Number(env.PORT ?? 3001);
-        if (!Number.isInteger(port) || port < 1 || port > 65535)
-          throw new Error("Invalid PORT");
-        const origin = String(env.WEB_ORIGIN ?? "http://localhost:3000");
+        if (!Number.isInteger(port) || port < 1 || port > 65535) throw new Error('Invalid PORT');
+        const origin = String(env.WEB_ORIGIN ?? 'http://localhost:3000');
         new URL(origin);
         const apiOrigin = String(env.API_ORIGIN ?? `http://localhost:${port}`);
         new URL(apiOrigin);
@@ -27,8 +29,10 @@ import { HealthController } from "./presentation/health.controller";
     }),
     DatabaseModule,
     AuthModule,
+    RegistrationModule,
+    AdminModule,
   ],
-  controllers: [HealthController], providers: [HealthService],
+  controllers: [HealthController],
+  providers: [HealthService],
 })
 export class AppModule {}
-

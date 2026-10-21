@@ -1,10 +1,17 @@
 "use client";
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import { getCurrentUser, logout, type AuthUser } from "@/services/auth";
+import AccountPanel from "./AccountPanel";
 import { sections } from "./sections";
 import s from "./dashboard.module.css";
 
+function HomeIcon() {
+  return <svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">
+    <path d="M2 10.6 11.3 2.7a1.1 1.1 0 0 1 1.4 0L17 6.3V3h3v5.9l2 1.7-1.5 1.8L12 5.2l-8.5 7.2L2 10.6Z" />
+    <path d="m5 12.4 7-5.9 7 5.9V22h-5v-7h-4v7H5v-9.6Z" />
+  </svg>;
+}
 function Icon({ type = 0 }: { type?: number }) {
   const paths = [
     "M3 3h7v7H3zM14 3h7v7h-7zM3 14h7v7H3zM14 14h7v7h-7z",
@@ -48,6 +55,8 @@ export default function Dashboard() {
   const [profile, setProfile] = useState(false);
   const [notifications, setNotifications] = useState(false);
   const [query, setQuery] = useState("");
+  const headerRef = useRef<HTMLElement>(null);
+  const [accountView, setAccountView] = useState<"info" | "password" | null>(null);
   const [busy, setBusy] = useState(false);
   useEffect(() => {
     let alive = true;
@@ -75,6 +84,15 @@ export default function Dashboard() {
     window.addEventListener("keydown", close);
     return () => window.removeEventListener("keydown", close);
   }, []);
+  useEffect(() => {
+    const close = (event: PointerEvent) => {
+      if (!headerRef.current?.contains(event.target as Node)) {
+        setProfile(false); setNotifications(false); setQuery("");
+      }
+    };
+    document.addEventListener("pointerdown", close);
+    return () => document.removeEventListener("pointerdown", close);
+  }, []);
   async function signOut() {
     setBusy(true);
     try {
@@ -88,6 +106,7 @@ export default function Dashboard() {
     }
   }
   function navigate(id: string) {
+    setAccountView(null);
     setActive(id);
     setMenu(false);
     setQuery("");
@@ -139,7 +158,7 @@ export default function Dashboard() {
               className={active === item.id ? s.active : ""}
               aria-current={active === item.id ? "page" : undefined}
             >
-              <Icon type={index} />
+              {item.id === "overview" ? <HomeIcon /> : <Icon type={index} />}
               {item.title}
             </button>
           ))}
@@ -151,7 +170,7 @@ export default function Dashboard() {
         <div className={s.sidebarFoot}>Nền tảng học thuật của khoa</div>
       </aside>
       <div className={s.workspace}>
-        <header className={s.topbar}>
+        <header ref={headerRef} className={s.topbar}>
           <button
             className={s.menuButton}
             aria-label="Mở menu"
@@ -161,13 +180,14 @@ export default function Dashboard() {
             ☰
           </button>
           <div className={s.search}>
-            <span>⌕</span>
+            <label htmlFor="dashboard-search" className={s.srOnly}>Tìm kiếm chức năng</label>
             <input
-              aria-label="Tìm chức năng"
-              placeholder="Tìm chức năng nhanh…"
+              id="dashboard-search" type="search" autoComplete="off"
+              placeholder="Tìm kiếm…"
               value={query}
               onChange={(e) => setQuery(e.target.value)}
             />
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" aria-hidden="true"><circle cx="10.5" cy="10.5" r="6.5" /><path d="m16 16 5 5" /></svg>
             {query && (
               <div className={s.searchResults}>
                 {matches.length ? (
@@ -182,7 +202,7 @@ export default function Dashboard() {
               </div>
             )}
           </div>
-          <div className={s.actions}>
+          <div className={s.actions}><button className={s.homeLink} onClick={() => navigate("overview")}><HomeIcon />Trang chủ</button>
             <div className={s.popupWrap}>
               <button
                 className={s.bell}
@@ -201,10 +221,10 @@ export default function Dashboard() {
                   aria-hidden="true"
                 >
                   <path d="M18 8a6 6 0 0 0-12 0c0 7-3 7-3 9h18c0-2-3-2-3-9M10 21h4" />
-                </svg>
+                </svg><span className={s.bellLabel}>Thông báo</span>
               </button>
               {notifications && (
-                <div className={s.popup}>Chưa kết nối dữ liệu thông báo.</div>
+                <div className={s.popup}><strong>Thông báo</strong><p>Chưa kết nối dữ liệu thông báo.</p><button onClick={() => { navigate("news"); setNotifications(false); }}>Xem tin tức & thông báo</button></div>
               )}
             </div>
             <div className={s.popupWrap}>
@@ -231,8 +251,9 @@ export default function Dashboard() {
                 <span>⌄</span>
               </button>
               {profile && (
-                <div className={s.popup}>
-                  <strong>{user.username}</strong>
+                <div className={`${s.popup} ${s.accountMenu}`}>
+                  <button onClick={() => { setAccountView("info"); setProfile(false); }}>Thông tin cá nhân</button>
+                  <button onClick={() => { setAccountView("password"); setProfile(false); }}>Đổi mật khẩu</button>
                   <button disabled={busy} onClick={signOut}>
                     {busy ? "Đang đăng xuất…" : "Đăng xuất"}
                   </button>
@@ -245,7 +266,7 @@ export default function Dashboard() {
           <div className={s.heading}>
             <div>
               <h1>
-                {active === "overview" ? "Tổng quan học thuật" : selected.title}
+                {accountView === "info" ? "Thông tin cá nhân" : active === "overview" ? "Trang chủ" : selected.title}
               </h1>
               <p>
                 {active === "overview"
@@ -253,7 +274,7 @@ export default function Dashboard() {
                   : selected.detail}
               </p>
             </div>
-            {active === "overview" && (
+            {accountView !== "info" && active === "overview" && (
               <button
                 className={s.primary}
                 onClick={() => navigate("competitions")}
@@ -267,7 +288,8 @@ export default function Dashboard() {
               {error}
             </p>
           )}
-          {active === "overview" ? (
+          {accountView === "password" && <AccountPanel view="password" user={user} onClose={() => setAccountView(null)} />}
+          {accountView === "info" ? <AccountPanel view="info" user={user} onClose={() => setAccountView(null)} /> : active === "overview" ? (
             <>
               <div className={s.demo}>
                 Dữ liệu minh họa{" "}
@@ -439,7 +461,7 @@ export default function Dashboard() {
                 className={s.primary}
                 onClick={() => navigate("overview")}
               >
-                Về tổng quan
+                Về trang chủ
               </button>
             </section>
           )}
