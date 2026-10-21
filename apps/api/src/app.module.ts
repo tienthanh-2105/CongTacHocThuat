@@ -3,6 +3,7 @@ import { Module } from "@nestjs/common";
 import { ConfigModule } from "@nestjs/config";
 import { DatabaseModule } from "./data/database.module";
 import { AuthModule } from "./composition/auth.module";
+import { RegistrationModule } from "./composition/registration.module";
 import { HealthController } from "./presentation/health.controller";
 @Module({
   imports: [
@@ -27,8 +28,8 @@ import { HealthController } from "./presentation/health.controller";
     }),
     DatabaseModule,
     AuthModule,
+    RegistrationModule,
   ],
   controllers: [HealthController], providers: [HealthService],
 })
 export class AppModule {}
-
