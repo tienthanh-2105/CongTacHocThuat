@@ -29,6 +29,7 @@ async function bootstrap() {
         .setTitle("Academic Activity API")
         .setVersion("1.0")
         .addCookieAuth('academic_session')
+        .addBearerAuth({ type: 'http', scheme: 'bearer', bearerFormat: 'opaque' }, 'bearer')
         .build(),
     ),
   );

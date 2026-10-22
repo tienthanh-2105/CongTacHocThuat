@@ -1,61 +1,46 @@
 # Phát triển Web, Mobile và API
 
-Thư mục chính: `E:\Khoa_Luan_Cu_Nhan\DuAn_KhoaLuan`. Cài dependency tại thư mục gốc bằng `npm install`; khi lấy source có lockfile, dùng `npm ci`.
+## Thành phần
 
-```text
-apps/
-├── web/       Next.js + TypeScript (App Router)
-│   └── src/app/
-├── mobile/    React Native + Expo + TypeScript
-│   └── src/
-│       ├── screens/
-│       └── services/
-└── api/       NestJS + PostgreSQL
-    └── src/
-        ├── presentation/
-        ├── business/
-        └── data/
-```
+- `apps/api`: NestJS + TypeScript, kết nối Microsoft SQL Server bằng `mssql`.
+- `apps/web`: Next.js + TypeScript.
+- `apps/mobile`: React Native + Expo.
+- `apps/flutter`: ứng dụng Flutter mở trực tiếp trong Android Studio.
 
-Mỗi thành viên làm việc trên nhánh Git riêng. Web và Mobile có giao diện riêng, cùng sử dụng API NestJS. Mobile hiện có một màn hình; khi bổ sung điều hướng dùng Expo Router theo AGENTS.md.
+## Cấu hình và khởi chạy API
 
-## Chạy trên máy phát triển
-
-Mở các terminal tại thư mục gốc:
+Cài SQL Server và tạo database `QL_CongTacHocThuat` trong SSMS. Copy `apps/api/.env.example` thành `apps/api/.env`, cấu hình `DB_SERVER`, `DB_PORT`, `DB_NAME`, `DB_USER`, `DB_PASSWORD`; với môi trường local có thể đặt `DB_ENCRYPT=false` và `DB_TRUST_SERVER_CERTIFICATE=true`.
 
 ```powershell
-# Terminal 1: PostgreSQL đang chạy, apps/api/.env đã được cấu hình
+npm ci
+npm run db:migrate
+npm run db:seed
+npm run db:check
 npm run dev:api
-# Terminal 2
+```
+
+Schema khởi tạo nằm tại `apps/api/migrations/001_sqlserver_initial_schema.sql`. Lệnh migrate tạo 31 bảng trong database rỗng, không xóa dữ liệu; schema đang có một phần sẽ bị từ chối để người quản trị xử lý rõ ràng. File `docs/database/QL_CongTacHocThuat_SqlServer.sql` là script reset thủ công có xóa bảng và chèn dữ liệu mẫu.
+
+API: http://localhost:3001/api/v1. Swagger: http://localhost:3001/docs. `apps/api/.env` không được commit; không dùng thông tin mẫu trong `.env.example` như mật khẩu thực.
+
+## Web và mobile
+
+Web dùng `NEXT_PUBLIC_API_URL` (mặc định `http://localhost:3001/api/v1`). Expo dùng `EXPO_PUBLIC_API_URL`; Android emulator thường truy cập máy host qua `http://10.0.2.2:3001/api/v1`. Điện thoại thật cần IP LAN của máy chạy API và backend/firewall cho phép kết nối.
+
+```powershell
 npm run dev:web
-# Terminal 3
 npm run dev:mobile
 ```
 
-Web: http://localhost:3000. API: http://localhost:3001/api/v1. Swagger: http://localhost:3001/docs. Mobile khởi động Metro; dùng Expo Go phù hợp SDK hoặc emulator để mở app. Chưa build APK/IPA.
+Flutter: mở `apps/flutter` bằng Android Studio, cấu hình địa chỉ API trong app theo emulator hoặc thiết bị đang dùng, sau đó chạy cấu hình Android.
 
-Web đọc `NEXT_PUBLIC_API_URL` (mặc định localhost:3001/api/v1). Có thể copy apps/web/.env.example sang apps/web/.env.local. Mobile đọc `EXPO_PUBLIC_API_URL`; copy apps/mobile/.env.example sang apps/mobile/.env.local và sửa theo thiết bị:
-
-| Thiết bị | Địa chỉ API |
-| --- | --- |
-| Web trên máy chạy backend | http://localhost:3001/api/v1 |
-| Android emulator mặc định | http://10.0.2.2:3001/api/v1 |
-| Điện thoại thật cùng Wi-Fi | http://IP_LAN_MAY_CHAY_API:3001/api/v1 |
-
-Backend hiện nghe tại 127.0.0.1:3001. Muốn điện thoại thật hoặc máy khác gọi được API, cần đổi host listen sang 0.0.0.0 và cho phép cổng 3001 qua firewall trong mạng riêng. Source khởi tạo không tự thay đổi cấu hình mạng máy. Biến NEXT_PUBLIC_/EXPO_PUBLIC_ chỉ chứa địa chỉ công khai, không chứa mật khẩu database.
-
-Web có giao diện đăng nhập tại / và /login, kết nối API bằng cookie HttpOnly và hiển thị tài khoản sau khi đăng nhập. Mobile hiện có màn hình khởi đầu và kiểm tra kết nối API; chưa có cơ chế phiên native Mobile. Quên mật khẩu trên Web hướng dẫn liên hệ quản trị viên, chưa có API cấp lại mật khẩu.
-
-## Kiểm tra
+## Kiểm tra mã nguồn
 
 ```powershell
 npm run typecheck
 npm run lint
 npm run build
 npm run check:mobile
-npm run test:api
 ```
 
-`build` biên dịch API và Web; không tạo APK/IPA. `test:api` chạy kiểm thử trên database thật với tài khoản tạm. Trên Windows có thể chạy Android emulator; build iOS native cần macOS hoặc dịch vụ build phù hợp.
-
-Tài liệu: [Next.js](https://nextjs.org/docs/app/getting-started/installation), [Expo TypeScript](https://docs.expo.dev/guides/typescript/), [Expo monorepo](https://docs.expo.dev/guides/monorepos/).
+`npm run test:api` dùng SQL Server thật và cần database được cấu hình sẵn. Lệnh này có thể tạo/xóa dữ liệu kiểm thử.

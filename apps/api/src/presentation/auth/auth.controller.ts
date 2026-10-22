@@ -1,5 +1,5 @@
 import { Body, Controller, Get, HttpCode, Inject, Post, Req, Res, UseGuards } from '@nestjs/common';
-import { ApiCookieAuth, ApiOperation, ApiResponse, ApiTags } from '@nestjs/swagger';
+import { ApiBearerAuth, ApiCookieAuth, ApiOperation, ApiResponse, ApiTags } from '@nestjs/swagger';
 import type { ServerResponse } from 'node:http';
 import { ChangePasswordDto, LoginDto } from './auth.dto';
 import { AuthService } from '../../business/auth/auth.service';
@@ -26,9 +26,21 @@ export class AuthController {
     return { user: result.user, expiresAt: result.expiresAt };
   }
 
+  @Post('mobile/login')
+  @HttpCode(200)
+  @UseGuards(LoginRateGuard)
+  @ApiOperation({ summary: 'Đăng nhập ứng dụng mobile và nhận Bearer token phiên' })
+  @ApiResponse({ status: 200, description: 'Trả accessToken dùng trong Authorization: Bearer' })
+  async mobileLogin(@Body() dto: LoginDto, @Res({ passthrough: true }) response: ServerResponse) {
+    const result = await this.auth.login(dto);
+    response.setHeader('Cache-Control', 'no-store');
+    return { accessToken: result.token, tokenType: 'Bearer', expiresAt: result.expiresAt, user: result.user };
+  }
+
   @Post('logout')
   @HttpCode(204)
   @ApiCookieAuth()
+  @ApiBearerAuth()
   @ApiOperation({ summary: 'Đăng xuất phiên hiện tại; gọi lại vẫn thành công' })
   @ApiResponse({ status: 204, description: 'Đã thu hồi phiên và xóa cookie' })
   async logout(@Req() request: AuthRequest, @Res({ passthrough: true }) response: ServerResponse) {
@@ -39,6 +51,7 @@ export class AuthController {
   @Get('me')
   @UseGuards(SessionGuard)
   @ApiCookieAuth()
+  @ApiBearerAuth()
   @ApiOperation({ summary: 'Xem tài khoản của phiên hiện tại' })
   me(@Req() request: AuthRequest, @Res({ passthrough: true }) response: ServerResponse) {
     response.setHeader('Cache-Control', 'no-store');
@@ -49,6 +62,7 @@ export class AuthController {
   @HttpCode(200)
   @UseGuards(SessionGuard)
   @ApiCookieAuth()
+  @ApiBearerAuth()
   @ApiOperation({ summary: 'Đổi mật khẩu, thu hồi tất cả phiên; cần đăng nhập lại' })
   @ApiResponse({ status: 400, description: 'Mật khẩu hiện tại sai hoặc mật khẩu mới không hợp lệ' })
   async changePassword(@Req() request: AuthRequest, @Body() dto: ChangePasswordDto, @Res({ passthrough: true }) response: ServerResponse) {

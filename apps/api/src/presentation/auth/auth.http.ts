@@ -7,6 +7,11 @@ export { tokenDigest } from '../../business/auth/token';
 export interface AuthRequest extends IncomingMessage { ip?: string; auth?: SessionContext }
 
 export function sessionToken(request: AuthRequest): string | undefined {
+  const authorization = request.headers.authorization;
+  if (authorization !== undefined) {
+    const match = /^Bearer ([a-f0-9]{64})$/i.exec(authorization);
+    return match?.[1].toLowerCase();
+  }
   const matches = (request.headers.cookie ?? '').split(';').map(part => part.trim()).filter(part => part.startsWith(`${SESSION_COOKIE}=`));
   if (matches.length !== 1) return undefined;
   const token = matches[0].slice(SESSION_COOKIE.length + 1);

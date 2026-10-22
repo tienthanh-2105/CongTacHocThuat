@@ -2,6 +2,8 @@
 -- HỆ THỐNG CƠ SỞ DỮ LIỆU: QUẢN LÝ CÔNG TÁC HỌC THUẬT (FIT - HUIT)
 -- NỀN TẢNG: MICROSOFT SQL SERVER (T-SQL) - CHUẨN 31 BẢNG & RÀNG BUỘC
 -- DÀNH CHO: SQL SERVER MANAGEMENT STUDIO (SSMS) / AZURE DATA STUDIO
+-- CẢNH BÁO: SCRIPT RESET, XÓA TOÀN BỘ BẢNG HIỆN CÓ TRONG DATABASE ĐÍCH VÀ CHÈN DỮ LIỆU MẪU.
+-- CÀI ĐẶT THÔNG THƯỜNG: dùng npm run db:migrate, không chạy file này.
 -- =============================================================================
 
 USE master;
@@ -1101,3 +1103,4 @@ INSERT INTO PHIENDANGNHAP (MaPhien, MaBamToken, MaTK, PBMatKhau, TaoLuc, HetHanL
 
 COMMIT TRANSACTION;
 GO
+

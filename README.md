@@ -1,28 +1,25 @@
-# Dự án khóa luận — API xác thực
+# Quản lý công tác học thuật
 
-Thư mục làm việc chính: `E:\Khoa_Luan_Cu_Nhan\DuAn_KhoaLuan`.
+Repository gồm API NestJS (`apps/api`), web Next.js (`apps/web`), mobile Expo (`apps/mobile`) và ứng dụng Flutter (`apps/flutter`). API sử dụng Microsoft SQL Server qua thư viện `mssql`.
 
-Source theo mô hình ba lớp: `apps/api/src/presentation` → `business` → `data/repositories`. NestJS/TypeScript; truy cập PostgreSQL bằng thư viện `pg` và SQL tham số hóa để khớp các bảng tiếng Việt trong `QL_CongTacHocThuat.sql`.
+## Chạy API với SQL Server
 
-Đã cài đặt API đăng nhập, đăng xuất, đổi mật khẩu, xem tài khoản hiện tại và kiểm tra kết nối. Web dùng Next.js + TypeScript tại `apps/web`; Mobile dùng React Native/Expo + TypeScript tại `apps/mobile`, mỗi nền tảng có source và màn hình khởi đầu riêng.
-
-Hướng dẫn chạy cả ba nền tảng, cấu hình địa chỉ API và làm việc nhóm: [docs/development.md](docs/development.md).
-
-## Chạy
+1. Tạo database `QL_CongTacHocThuat` trong SQL Server/SSMS (hoặc đổi `DB_NAME`).
+2. Copy `apps/api/.env.example` thành `apps/api/.env`, rồi điền host, tài khoản và mật khẩu SQL Server. Không đưa `.env` lên Git.
+3. Tại thư mục gốc chạy:
 
 ```powershell
-cd E:\Khoa_Luan_Cu_Nhan\DuAn_KhoaLuan
-npm install
-# Cấu hình apps/api/.env theo apps/api/.env.example
-npm run db:check
+npm ci
 npm run db:migrate
+npm run db:seed
+npm run db:check
 npm run dev:api
 ```
 
-API: http://localhost:3001/api/v1. Swagger: http://localhost:3001/docs.
+`db:migrate` chỉ tạo schema ban đầu khi chưa có bảng ứng dụng; nếu schema đã có đầy đủ thì không thay đổi, nếu chỉ có một phần thì dừng để tránh ghi đè. `db:seed` tạo tài khoản quản trị từ `SEED_USERNAME`/`SEED_PASSWORD` nếu tài khoản chưa tồn tại.
 
-Tài khoản demo local: `admin.demo`. Mật khẩu được sinh ngẫu nhiên và lưu ở `SEED_PASSWORD` trong `apps/api/.env`. Đây là mật khẩu ứng dụng, khác mật khẩu kết nối PostgreSQL. `npm run db:seed` không đổi mật khẩu tài khoản đã tồn tại.
+API: http://localhost:3001/api/v1 · Swagger: http://localhost:3001/docs.
 
-Chi tiết: [docs/api/auth.md](docs/api/auth.md). File chứa mật khẩu không đưa vào Git.
+SQL reset có dữ liệu mẫu tại [docs/database/QL_CongTacHocThuat_SqlServer.sql](docs/database/QL_CongTacHocThuat_SqlServer.sql) sẽ xóa các bảng hiện có. Không dùng file này cho cài đặt thông thường.
 
-Kiểm tra: `npm run typecheck`, `npm run lint`, `npm run build`, `npm test`. Test HTTP dùng PostgreSQL thật, tạo tài khoản tạm và xóa sau kiểm thử; cần chạy migration và seed trước.
+Hướng dẫn chi tiết: [docs/development.md](docs/development.md), [docs/database/schema.md](docs/database/schema.md), [docs/api/auth.md](docs/api/auth.md).
