@@ -1,6 +1,6 @@
 import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
 import { Type } from 'class-transformer';
-import { ArrayNotEmpty, IsArray, IsIn, IsInt, IsNotEmpty, IsOptional, IsString, MaxLength, Min, MinLength } from 'class-validator';
+import { ArrayMaxSize, ArrayNotEmpty, IsArray, IsIn, IsInt, IsNotEmpty, IsOptional, IsString, MaxLength, Min, MinLength } from 'class-validator';
 
 export class RegisterIndividualDto {
   @ApiProperty({ description: 'Mã hoạt động học thuật', example: 1 })
@@ -38,9 +38,18 @@ export class RegisterTeamDto {
     example: ['2001230002', '2001230003'],
   })
   @IsArray()
+  @ArrayMaxSize(4, { message: 'Mỗi đội tối đa 5 thành viên tính cả trưởng đội' })
   @ArrayNotEmpty()
   @IsString({ each: true })
   thanhVienMSSV!: string[];
+}
+
+export class JoinCompetitionTeamDto {
+  @ApiProperty({ description: 'Mã đội được trưởng đội cung cấp', example: 1 })
+  @Type(() => Number)
+  @IsInt()
+  @Min(1)
+  maDoi!: number;
 }
 
 export class UpdateRegistrationStatusDto {

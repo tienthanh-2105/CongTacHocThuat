@@ -37,7 +37,10 @@ test('Registration Service Unit & Integration Logic', async (t) => {
   });
 
   await t.test('support assignments query returns list or empty array', async () => {
-    const assignments = await regService.getSupportAssignments(1);
+    const assignments = await regService.getSupportAssignments({
+      userId: '1', sessionId: 'test', passwordVersion: 0,
+      user: { id: '1', username: 'test', name: 'test', roles: ['ADMIN'] },
+    }, 1);
     assert.ok(Array.isArray(assignments));
   });
 

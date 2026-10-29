@@ -49,31 +49,53 @@ export class FeaturesRepository {
 
   async getReminders(userId: string) {
     return this.db.query(
-      `SELECT TOP (20) h.MaHD, h.TenHoatDong, h.TgBatDau, h.TgKetThuc, h.DiaDiem,
-              DATEDIFF(MINUTE, SYSDATETIME(), h.TgBatDau) AS ConBaoNhieuPhut
-       FROM TAIKHOAN a
-       JOIN SINHVIEN sv ON sv.MaNgDung = a.MaNgDung
-       JOIN DKTHAMGIA dk ON dk.MaSV = sv.MaSV
-       JOIN HOATDONGHOCTHUAT h ON h.MaHD = dk.MaHD
-       WHERE a.MaTK = @p1 AND dk.TrangThai IN (N'Đã đăng ký', N'Đã xác nhận')
-         AND h.TgBatDau >= SYSDATETIME() AND h.TgBatDau < DATEADD(DAY, 8, SYSDATETIME())
-       ORDER BY h.TgBatDau`, [userId]);
+      `SELECT TOP(50) x.* FROM (
+        SELECT h.MaHD,h.TenHoatDong,h.TgBatDau,h.TgKetThuc,h.DiaDiem,h.HanDangKy,
+          DATEDIFF(MINUTE,SYSDATETIME(),h.TgBatDau) AS ConBaoNhieuPhut,
+          CASE WHEN h.TgBatDau<DATEADD(MINUTE,121,SYSDATETIME()) THEN N'Nhắc trước 2 giờ'
+               WHEN h.TgBatDau<DATEADD(HOUR,25,SYSDATETIME()) THEN N'Nhắc trước 24 giờ' ELSE N'Hoạt động sắp tới' END AS LoaiNhac
+        FROM TAIKHOAN a JOIN SINHVIEN sv ON sv.MaNgDung=a.MaNgDung JOIN DKTHAMGIA dk ON dk.MaSV=sv.MaSV JOIN HOATDONGHOCTHUAT h ON h.MaHD=dk.MaHD
+        WHERE a.MaTK=@p1 AND dk.TrangThai IN(N'Đã đăng ký',N'Đã xác nhận') AND h.TgBatDau>=SYSDATETIME() AND h.TgBatDau<DATEADD(DAY,8,SYSDATETIME())
+        UNION ALL
+        SELECT h.MaHD,h.TenHoatDong,h.TgBatDau,h.TgKetThuc,h.DiaDiem,h.HanDangKy,
+          DATEDIFF(MINUTE,SYSDATETIME(),h.HanDangKy) AS ConBaoNhieuPhut,N'Hạn đăng ký sắp kết thúc' AS LoaiNhac
+        FROM TAIKHOAN a JOIN SINHVIEN sv ON sv.MaNgDung=a.MaNgDung CROSS JOIN HOATDONGHOCTHUAT h
+        WHERE a.MaTK=@p1 AND h.HanDangKy>=SYSDATETIME() AND h.HanDangKy<DATEADD(DAY,1,SYSDATETIME())
+          AND h.TrangThai=N'Đã công bố' AND NOT EXISTS(SELECT 1 FROM DKTHAMGIA dk WHERE dk.MaHD=h.MaHD AND dk.MaSV=sv.MaSV AND dk.TrangThai NOT IN(N'Đã hủy',N'Từ chối'))
+      ) x ORDER BY CASE WHEN x.LoaiNhac=N'Hạn đăng ký sắp kết thúc' THEN x.HanDangKy ELSE x.TgBatDau END`, [userId]);
   }
 
   async listSeminars() {
     return this.db.query(
-      `SELECT TOP (100) s.MaSeminar, s.MaHD, s.ChuDe, s.NoiDung, s.DoiTuongTG, s.ThoiLuong,
+      `SELECT TOP (100) s.MaSeminar, s.MaHD, s.ChuDe, s.NoiDung, s.DoiTuongTG, s.ThoiLuong,s.DienGia,s.ChuongTrinh,
               s.DVChuTri, s.DVPhoiHop, h.TenHoatDong, h.MoTa, h.TgBatDau, h.TgKetThuc,
-              h.HanDangKy, h.DiaDiem, h.SLToiDa, h.TrangThai
+              h.HanDangKy, h.DiaDiem, h.SLToiDa, h.TrangThai,
+              (SELECT t.MaTep,t.TenTep,t.UrlTep,t.LoaiTep FROM TEPSEMINAR t WHERE t.MaSeminar=s.MaSeminar FOR JSON PATH) AS TaiLieu
        FROM SEMINAR s JOIN HOATDONGHOCTHUAT h ON h.MaHD = s.MaHD
        ORDER BY h.TgBatDau DESC`);
   }
 
+  async listActivities() {
+    return this.db.query(
+      `SELECT TOP (100) h.MaHD, h.TenHoatDong, h.MoTa, h.TgBatDau, h.TgKetThuc,
+              h.HanDangKy, h.DiaDiem, h.SLToiDa, h.TrangThai,
+              c.MaCThi, c.TenCuocThi, c.HinhThucThi, c.TheLe,
+              s.MaSeminar, s.ChuDe
+       FROM HOATDONGHOCTHUAT h
+       LEFT JOIN CUOCTHI c ON c.MaHD = h.MaHD
+       LEFT JOIN SEMINAR s ON s.MaHD = h.MaHD
+       WHERE ISNULL(h.TrangThai,N'') <> N'Đã hủy'
+       ORDER BY CASE WHEN h.TgBatDau >= SYSDATETIME() THEN 0 ELSE 1 END,
+                h.TgBatDau DESC, h.MaHD DESC`,
+    );
+  }
+
   async findSeminar(id: number) {
     const rows = await this.db.query(
-      `SELECT s.MaSeminar, s.MaHD, s.ChuDe, s.NoiDung, s.DoiTuongTG, s.ThoiLuong,
+      `SELECT s.MaSeminar, s.MaHD, s.ChuDe, s.NoiDung, s.DoiTuongTG, s.ThoiLuong,s.DienGia,s.ChuongTrinh,
               s.DVChuTri, s.DVPhoiHop, h.TenHoatDong, h.MoTa, h.TgBatDau, h.TgKetThuc,
-              h.HanDangKy, h.DiaDiem, h.SLToiDa, h.TrangThai
+              h.HanDangKy, h.DiaDiem, h.SLToiDa, h.TrangThai,
+              (SELECT t.MaTep,t.TenTep,t.UrlTep,t.LoaiTep FROM TEPSEMINAR t WHERE t.MaSeminar=s.MaSeminar FOR JSON PATH) AS TaiLieu
        FROM SEMINAR s JOIN HOATDONGHOCTHUAT h ON h.MaHD = s.MaHD
        WHERE s.MaSeminar = @p1`, [id]);
     return rows[0] ?? null;
@@ -113,10 +135,19 @@ export class FeaturesRepository {
       seminarRequest.input('duration', sql.Int, dto.thoiLuong ?? null);
       seminarRequest.input('hostUnit', sql.NVarChar(200), dto.dvChuTri ?? null);
       seminarRequest.input('coordinator', sql.NVarChar(200), dto.dvPhoiHop ?? null);
+      seminarRequest.input('speakers', sql.NVarChar(sql.MAX), JSON.stringify(dto.dienGia ?? []));
+      seminarRequest.input('agenda', sql.NVarChar(sql.MAX), JSON.stringify(dto.chuongTrinh ?? []));
       const seminar = await seminarRequest.query<{ MaSeminar: number }>(
-        `INSERT INTO SEMINAR(MaHD, ChuDe, NoiDung, DoiTuongTG, ThoiLuong, DVChuTri, DVPhoiHop)
+        `INSERT INTO SEMINAR(MaHD, ChuDe, NoiDung, DoiTuongTG, ThoiLuong, DVChuTri, DVPhoiHop,DienGia,ChuongTrinh)
          OUTPUT INSERTED.MaSeminar
-         VALUES(@activityId, @topic, @content, @audience, @duration, @hostUnit, @coordinator)`);
+         VALUES(@activityId, @topic, @content, @audience, @duration, @hostUnit, @coordinator,@speakers,@agenda)`);
+      const notificationRequest = new sql.Request(transaction);
+      notificationRequest.input('activityId', sql.BigInt, maHD);
+      notificationRequest.input('title', sql.NVarChar(250), dto.tenHoatDong);
+      await notificationRequest.query(`INSERT INTO THONGBAO(MaTK,MaHD,Loai,TieuDe,NoiDung)
+        SELECT DISTINCT tk.MaTK,@activityId,N'Hoạt động mới',@title,
+          CONCAT(N'Hoạt động mới đã được công bố. Thời gian: ',CONVERT(nvarchar(30),h.TgBatDau,126),N'; địa điểm: ',COALESCE(h.DiaDiem,N'Chưa cập nhật'))
+        FROM TAIKHOAN tk JOIN SINHVIEN sv ON sv.MaNgDung=tk.MaNgDung JOIN HOATDONGHOCTHUAT h ON h.MaHD=@activityId`);
       await transaction.commit();
       return this.findSeminar(seminar.recordset[0].MaSeminar);
     } catch (error) {
@@ -192,7 +223,16 @@ export class FeaturesRepository {
       `UPDATE HOSOQUYETTOAN
        SET TrangThai = N'Đã duyệt', NguoiDuyet = @p2, NgayDuyet = SYSDATETIMEOFFSET()
        OUTPUT INSERTED.MaHS, INSERTED.MaHD, INSERTED.TrangThai, INSERTED.NgayDuyet
-       WHERE MaHS = @p1 AND TrangThai IN (N'Dự thảo', N'Chờ duyệt')`, [id, accountId]);
+       WHERE MaHS = @p1 AND TrangThai = N'Chờ duyệt'`, [id, accountId]);
+    return rows[0] ?? null;
+  }
+
+  async submitSettlement(id: number, accountId: string) {
+    const rows = await this.db.query(
+      `UPDATE HOSOQUYETTOAN SET TrangThai=N'Chờ duyệt'
+       OUTPUT INSERTED.MaHS,INSERTED.MaHD,INSERTED.TrangThai
+       WHERE MaHS=@p1 AND NguoiLap=@p2 AND TrangThai=N'Dự thảo'
+         AND EXISTS(SELECT 1 FROM CHIPHITHUCTE cp WHERE cp.MaHS=HOSOQUYETTOAN.MaHS)`, [id,accountId]);
     return rows[0] ?? null;
   }
 
@@ -215,6 +255,12 @@ export class FeaturesRepository {
        LEFT JOIN GIAITHUONG gt ON gt.MaGT = kq.MaGT
        WHERE c.MaHD = @p1 AND kq.TrangThai IN (N'Đã xác nhận', N'Đã công bố')
        ORDER BY kq.XepHang, gt.TenGT`, [activityId]);
-    return { ...rows[0], giaiThuongVaKetQua: awards };
+    const attendees = await this.db.query(
+      `SELECT dk.MaDK,s.MSSV,nd.HoTen,l.TenLop,dk.NgayDK,dk.TrangThai AS TrangThaiDangKy,
+              dd.BatDauLuc,dd.TrangThai AS TrangThaiDiemDanh
+       FROM DKTHAMGIA dk JOIN SINHVIEN s ON s.MaSV=dk.MaSV JOIN NGUOIDUNG nd ON nd.MaNgDung=s.MaNgDung
+       JOIN LOP l ON l.MaLop=s.MaLop LEFT JOIN DIEMDANH dd ON dd.MaDK=dk.MaDK
+       WHERE dk.MaHD=@p1 AND dk.TrangThai NOT IN(N'Đã hủy',N'Từ chối') ORDER BY l.TenLop,nd.HoTen`,[activityId]);
+    return { ...rows[0], danhSachThamDu: attendees, giaiThuongVaKetQua: awards };
   }
 }

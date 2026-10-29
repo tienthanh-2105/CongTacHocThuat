@@ -1,5 +1,19 @@
 import { Type } from 'class-transformer';
-import { ArrayMaxSize, IsArray, IsDateString, IsInt, IsNotEmpty, IsNumber, IsOptional, IsString, Max, MaxLength, Min, MinLength } from 'class-validator';
+import { ArrayMaxSize, IsArray, IsDateString, IsInt, IsNotEmpty, IsNumber, IsOptional, IsString, Max, MaxLength, Min, MinLength, ValidateNested } from 'class-validator';
+
+export class SeminarSpeakerDto {
+  @IsString() @IsNotEmpty() @MaxLength(150) hoTen!: string;
+  @IsOptional() @IsString() @MaxLength(200) hocVi?: string;
+  @IsOptional() @IsString() @MaxLength(300) donVi?: string;
+  @IsOptional() @IsString() @MaxLength(1000) tieuSu?: string;
+  @IsOptional() @IsString() @MaxLength(250) chuDeTrinhBay?: string;
+}
+
+export class SeminarAgendaItemDto {
+  @IsString() @IsNotEmpty() @MaxLength(150) thoiGian!: string;
+  @IsString() @IsNotEmpty() @MaxLength(250) noiDung!: string;
+  @IsOptional() @IsString() @MaxLength(150) phuTrach?: string;
+}
 
 export class CreateSeminarDto {
   @IsString() @IsNotEmpty() @MaxLength(250)
@@ -40,6 +54,12 @@ export class CreateSeminarDto {
 
   @IsOptional() @IsString() @MaxLength(200)
   dvPhoiHop?: string;
+
+  @IsOptional() @IsArray() @ArrayMaxSize(30) @ValidateNested({ each: true }) @Type(() => SeminarSpeakerDto)
+  dienGia?: SeminarSpeakerDto[];
+
+  @IsOptional() @IsArray() @ArrayMaxSize(100) @ValidateNested({ each: true }) @Type(() => SeminarAgendaItemDto)
+  chuongTrinh?: SeminarAgendaItemDto[];
 }
 
 export class CreateExpenseDto {

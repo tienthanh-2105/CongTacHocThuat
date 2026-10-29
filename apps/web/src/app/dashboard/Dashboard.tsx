@@ -3,7 +3,9 @@ import { useEffect, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import { getCurrentUser, logout, type AuthUser } from "@/services/auth";
 import AccountPanel from "./AccountPanel";
-import { sections } from "./sections";
+import BusinessPanel from "./BusinessPanel";
+import StudentProfilesPanel from "./StudentProfilesPanel";
+import { canManageActivities, sectionsForRoles } from "./sections";
 import s from "./dashboard.module.css";
 
 function HomeIcon() {
@@ -35,16 +37,6 @@ function Icon({ type = 0 }: { type?: number }) {
     </svg>
   );
 }
-const activities = [
-  [
-    "Seminar: Generative AI trong giáo dục",
-    "08:00 – 12:00",
-    "186/220",
-    "Đang mở",
-  ],
-  ["Olympic Tin học cấp khoa 2026", "07:30 – 18:10", "94/120", "Sắp diễn ra"],
-  ["Workshop An toàn ứng dụng Web", "13:30 – 22:10", "64/100", "Đang mở"],
-];
 export default function Dashboard() {
   const router = useRouter();
   const [user, setUser] = useState<AuthUser | null>(null);
@@ -130,8 +122,15 @@ export default function Dashboard() {
         </div>
       </main>
     );
-  const selected = sections.find((item) => item.id === active)!;
-  const matches = sections.filter((item) =>
+  const visibleSections = sectionsForRoles(user.roles);
+  if (!visibleSections.length) {
+    return <main className={s.loading}><div><Icon type={1} /><h1>Tài khoản chưa được cấp quyền sử dụng chức năng web.</h1><button disabled={busy} onClick={signOut}>Đăng xuất</button></div></main>;
+  }
+  const activeSectionId = visibleSections.some((item) => item.id === active)
+    ? active
+    : visibleSections[0]?.id ?? "overview";
+  const selected = visibleSections.find((item) => item.id === activeSectionId)!;
+  const matches = visibleSections.filter((item) =>
     item.title.toLocaleLowerCase("vi").includes(query.toLocaleLowerCase("vi")),
   );
   return (
@@ -151,12 +150,12 @@ export default function Dashboard() {
           </div>
         </div>
         <nav aria-label="Chức năng hệ thống">
-          {sections.map((item, index) => (
+          {visibleSections.map((item, index) => (
             <button
               key={item.id}
               onClick={() => navigate(item.id)}
-              className={active === item.id ? s.active : ""}
-              aria-current={active === item.id ? "page" : undefined}
+              className={activeSectionId === item.id ? s.active : ""}
+              aria-current={activeSectionId === item.id ? "page" : undefined}
             >
               {item.id === "overview" ? <HomeIcon /> : <Icon type={index} />}
               {item.title}
@@ -266,15 +265,15 @@ export default function Dashboard() {
           <div className={s.heading}>
             <div>
               <h1>
-                {accountView === "info" ? "Thông tin cá nhân" : active === "overview" ? "Trang chủ" : selected.title}
+                {accountView === "info" ? "Thông tin cá nhân" : selected.title}
               </h1>
               <p>
-                {active === "overview"
+              {selected.id === "overview"
                   ? "Theo dõi hoạt động, mức độ tham gia và tiến độ học kỳ của toàn khoa."
                   : selected.detail}
               </p>
             </div>
-            {accountView !== "info" && active === "overview" && (
+            {accountView !== "info" && selected.id === "overview" && canManageActivities(user.roles) && (
               <button
                 className={s.primary}
                 onClick={() => navigate("competitions")}
@@ -289,181 +288,12 @@ export default function Dashboard() {
             </p>
           )}
           {accountView === "password" && <AccountPanel view="password" user={user} onClose={() => setAccountView(null)} />}
-          {accountView === "info" ? <AccountPanel view="info" user={user} onClose={() => setAccountView(null)} /> : active === "overview" ? (
-            <>
-              <div className={s.demo}>
-                Dữ liệu minh họa{" "}
-                <span>
-                  Chưa kết nối API nghiệp vụ. Các số liệu dưới đây chỉ dùng để
-                  xem trước giao diện.
-                </span>
-              </div>
-              <div className={s.metrics}>
-                {[
-                  ["Hoạt động học kỳ", "24", "+4 so với kỳ trước"],
-                  ["Sinh viên tham gia", "1.286", "82,4% toàn khoa"],
-                  ["Đề tài dự thi", "38", "12 đề tài đã duyệt"],
-                  ["Cần xử lý", "07", "3 kế hoạch quá hạn"],
-                ].map((item, index) => (
-                  <article key={item[0]} className={s.metric}>
-                    <div>
-                      {item[0]}
-                      <span className={s.metricIcon} data-tone={index}>
-                        <Icon type={index + 2} />
-                      </span>
-                    </div>
-                    <strong>{item[1]}</strong>
-                    <small data-tone={index}>{item[2]}</small>
-                  </article>
-                ))}
-              </div>
-              <div className={s.grid}>
-                <section className={s.card}>
-                  <div className={s.cardHeading}>
-                    <div>
-                      <h2>Lượt tham gia theo tháng</h2>
-                      <p>Tổng lượt đăng ký và điểm danh thực tế · Minh họa</p>
-                    </div>
-                    <span className={s.growth}>+18,6%</span>
-                  </div>
-                  <div
-                    className={s.chart}
-                    role="img"
-                    aria-label="Biểu đồ minh họa lượt tham gia từ tháng 3 đến tháng 9: 72, 104, 88, 123, 119, 156, 138 lượt"
-                  >
-                    {[72, 104, 88, 123, 119, 156, 138].map((value, index) => (
-                      <div className={s.barColumn} key={index}>
-                        <span>{value}</span>
-                        <div
-                          style={{ height: `${(value / 156) * 135}px` }}
-                          className={index === 5 ? s.highlightBar : s.bar}
-                        />
-                        <small>T{index + 3}</small>
-                      </div>
-                    ))}
-                  </div>
-                </section>
-                <section className={s.card}>
-                  <h2>Tiến độ kế hoạch</h2>
-                  <p>Theo từng bộ môn · Minh họa</p>
-                  <div className={s.progressList}>
-                    {[
-                      ["Công nghệ phần mềm", 88],
-                      ["Hệ thống thông tin", 72],
-                      ["Khoa học máy tính", 64],
-                      ["Mạng & truyền thông", 58],
-                    ].map(([name, value]) => (
-                      <div key={name}>
-                        <div>
-                          {name}
-                          <strong>{value}%</strong>
-                        </div>
-                        <div className={s.track}>
-                          <span style={{ width: `${value}%` }} />
-                        </div>
-                      </div>
-                    ))}
-                  </div>
-                </section>
-                <section className={s.card}>
-                  <div className={s.cardHeading}>
-                    <div>
-                      <h2>Hoạt động sắp tới</h2>
-                      <p>Lịch hoạt động minh họa</p>
-                    </div>
-                    <button
-                      className={s.textButton}
-                      onClick={() => navigate("competitions")}
-                    >
-                      Xem tất cả →
-                    </button>
-                  </div>
-                  <div className={s.tableScroll}>
-                    <table>
-                      <thead>
-                        <tr>
-                          <th>HOẠT ĐỘNG</th>
-                          <th>THỜI GIAN</th>
-                          <th>ĐĂNG KÝ</th>
-                          <th>TRẠNG THÁI</th>
-                        </tr>
-                      </thead>
-                      <tbody>
-                        {activities.map((row) => (
-                          <tr key={row[0]}>
-                            {row.map((cell, index) => (
-                              <td key={index}>
-                                {index === 3 ? (
-                                  <span
-                                    className={
-                                      cell === "Đang mở" ? s.status : s.soon
-                                    }
-                                  >
-                                    {cell}
-                                  </span>
-                                ) : (
-                                  cell
-                                )}
-                              </td>
-                            ))}
-                          </tr>
-                        ))}
-                      </tbody>
-                    </table>
-                  </div>
-                </section>
-                <section className={s.card}>
-                  <h2>Việc cần làm</h2>
-                  <p>Các đầu việc minh họa</p>
-                  {[
-                    ["Duyệt kế hoạch cuộc thi", "Kế hoạch năm học", "plans"],
-                    [
-                      "Phân công ban tổ chức",
-                      "Tổ chức cuộc thi",
-                      "competitions",
-                    ],
-                    [
-                      "Kiểm tra hồ sơ quyết toán",
-                      "Kinh phí & quyết toán",
-                      "expenses",
-                    ],
-                  ].map((item, index) => (
-                    <button
-                      className={s.task}
-                      key={item[0]}
-                      onClick={() => navigate(item[2])}
-                    >
-                      <span className={s.taskIcon}>
-                        <Icon type={index + 2} />
-                      </span>
-                      <span>
-                        {item[0]}
-                        <small>{item[1]}</small>
-                      </span>
-                      <span>›</span>
-                    </button>
-                  ))}
-                </section>
-              </div>
-            </>
+          {accountView === "info" ? (
+            <AccountPanel view="info" user={user} onClose={() => setAccountView(null)} />
+          ) : activeSectionId === "student-profiles" ? (
+            <StudentProfilesPanel />
           ) : (
-            <section className={`${s.card} ${s.empty}`}>
-              <span className={s.emptyIcon}>
-                <Icon type={sections.indexOf(selected)} />
-              </span>
-              <h2>{selected.title}</h2>
-              <p>{selected.detail}</p>
-              <span className={s.developing}>Đang phát triển</span>
-              <p>
-                Chức năng nghiệp vụ này chưa được triển khai và kết nối API.
-              </p>
-              <button
-                className={s.primary}
-                onClick={() => navigate("overview")}
-              >
-                Về trang chủ
-              </button>
-            </section>
+            <BusinessPanel sectionId={activeSectionId} user={user} />
           )}
         </main>
       </div>

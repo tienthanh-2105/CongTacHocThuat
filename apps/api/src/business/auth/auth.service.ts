@@ -1,6 +1,6 @@
 import { BadRequestException, Inject, Injectable, UnauthorizedException } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
-import { randomBytes } from 'node:crypto';
+import { createHash, randomBytes, timingSafeEqual } from 'node:crypto';
 import { compare, hash } from 'bcryptjs';
 import { AuthRepository } from '../../data/auth.repository';
 import type { ChangePasswordInput, LoginInput } from './auth.types';
@@ -11,6 +11,13 @@ const invalidCredentials = () => new UnauthorizedException('Tên đăng nhập h
 // Valid bcrypt hash: wrong email still incurs the same password comparison cost.
 const dummyHash = '$2b$12$LQv3c1yqBWVHxkd0LHAkCOYz6TtxjYDT1HWb9LmLQfUvZOeWR2O5u';
 
+function matchesLegacySha256(password: string, passwordHash: string): boolean {
+  if (!/^[a-f\d]{64}$/i.test(passwordHash)) return false;
+  const stored = Buffer.from(passwordHash, 'hex');
+  const candidate = createHash('sha256').update(password, 'utf8').digest();
+  return stored.length === candidate.length && timingSafeEqual(stored, candidate);
+}
+
 @Injectable()
 export class AuthService {
   constructor(@Inject(AuthRepository) private readonly repository: AuthRepository, @Inject(ConfigService) private readonly config: ConfigService) {}
@@ -18,9 +25,22 @@ export class AuthService {
   get secureCookie(): boolean { return this.config.get<string>('NODE_ENV') === 'production'; }
 
   async login(dto: LoginInput): Promise<{ token: string; user: CurrentUser; expiresAt: Date }> {
-    const user = await this.repository.findUserByUsername(dto.username);
-    const valid = await compare(dto.password, user?.passwordHash ?? dummyHash);
-    if (!user || !user.active || !valid) throw invalidCredentials();
+    let user = await this.repository.findUserByUsername(dto.username);
+    const bcryptValid = await compare(dto.password, user?.passwordHash ?? dummyHash);
+    if (!user || !user.active) throw invalidCredentials();
+    if (!bcryptValid) {
+      if (!matchesLegacySha256(dto.password, user.passwordHash)) throw invalidCredentials();
+      const upgradedHash = await hash(dto.password, 12);
+      const upgraded = await this.repository.upgradeLegacyPasswordHash(user.id, user.passwordHash, upgradedHash);
+      if (upgraded) {
+        user.passwordHash = upgradedHash;
+      } else {
+        // Another login or password change may have updated the row concurrently.
+        const refreshed = await this.repository.findUserById(user.id);
+        if (!refreshed?.active || !await compare(dto.password, refreshed.passwordHash)) throw invalidCredentials();
+        user = refreshed;
+      }
+    }
     const token = randomBytes(32).toString('hex');
     const expiresAt = new Date(Date.now() + this.lifetimeSeconds * 1000);
     // The version is checked on every request, including sessions created concurrently with a password change.

@@ -56,6 +56,8 @@ export class FeaturesService {
 
   listSeminars() { return this.repository.listSeminars(); }
 
+  listActivities() { return this.repository.listActivities(); }
+
   async getSeminar(id: number) {
     const seminar = await this.repository.findSeminar(id);
     if (!seminar) throw new NotFoundException(`Không tìm thấy seminar ${id}`);
@@ -99,6 +101,13 @@ export class FeaturesService {
     const settlement = await this.repository.approveSettlement(id, context.userId);
     if (!settlement) throw new NotFoundException('Không tìm thấy hồ sơ quyết toán đang chờ duyệt');
     return { message: 'Đã duyệt hồ sơ quyết toán', data: settlement };
+  }
+
+  async submitSettlement(context: SessionContext, id: number) {
+    this.requireRole(context, ['ADMIN', 'CAN_BO_KHOA', 'CANBOKHOA', 'GIANG_VIEN', 'GIANGVIEN']);
+    const settlement = await this.repository.submitSettlement(id, context.userId);
+    if (!settlement) throw new NotFoundException('Không tìm thấy hồ sơ nháp do bạn lập hoặc hồ sơ chưa có chi phí');
+    return { message: 'Đã gửi hồ sơ quyết toán chờ duyệt', data: settlement };
   }
 
   async getActivityReport(context: SessionContext, activityId: number) {

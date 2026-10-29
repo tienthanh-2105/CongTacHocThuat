@@ -33,6 +33,8 @@ async function bootstrap() {
         .build(),
     ),
   );
-  await app.listen(config.get<number>("PORT") ?? 3001, "127.0.0.1");
+  // Bind dual-stack localhost/LAN so browser `localhost` (which may resolve to
+  // ::1) and Android emulator/device API calls can reach the same server.
+  await app.listen(config.get<number>("PORT") ?? 3001, "::");
 }
 void bootstrap();

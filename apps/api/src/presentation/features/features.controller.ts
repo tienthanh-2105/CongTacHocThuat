@@ -40,6 +40,19 @@ export class NotificationsController {
   reminders(@Req() request: AuthRequest) { return this.service.getReminders(request.auth!); }
 }
 
+@ApiTags('activities')
+@ApiBearerAuth()
+@ApiCookieAuth()
+@UseGuards(SessionGuard)
+@Controller('activities')
+export class ActivitiesController {
+  constructor(@Inject(FeaturesService) private readonly service: FeaturesService) {}
+
+  @Get()
+  @ApiOperation({ summary: 'Danh sách cuộc thi, seminar và hoạt động sắp diễn ra' })
+  list() { return this.service.listActivities(); }
+}
+
 @ApiTags('seminars')
 @ApiBearerAuth()
 @ApiCookieAuth()
@@ -102,6 +115,12 @@ export class SettlementsController {
   @ApiOperation({ summary: 'Khoa duyệt hồ sơ quyết toán' })
   approve(@Req() request: AuthRequest, @Param('id', ParseIntPipe) id: number) {
     return this.service.approveSettlement(request.auth!, id);
+  }
+
+  @Post(':id/submit')
+  @ApiOperation({ summary: 'Người lập gửi hồ sơ quyết toán nháp để khoa duyệt' })
+  submit(@Req() request: AuthRequest, @Param('id', ParseIntPipe) id: number) {
+    return this.service.submitSettlement(request.auth!, id);
   }
 }
 

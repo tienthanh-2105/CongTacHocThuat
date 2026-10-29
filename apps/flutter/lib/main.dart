@@ -2,6 +2,8 @@ import 'dart:convert';
 import 'dart:io';
 
 import 'package:flutter/material.dart';
+import 'package:mobile_scanner/mobile_scanner.dart';
+import 'package:shared_preferences/shared_preferences.dart';
 
 const apiUrl = String.fromEnvironment(
   'API_URL',
@@ -49,6 +51,13 @@ class Api {
     ..connectionTimeout = const Duration(seconds: 12);
   static String? cookie;
   static String? accessToken;
+
+  static Future<void> clearSavedSession() async {
+    accessToken = null;
+    cookie = null;
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.remove('academic_access_token');
+  }
 
   static Future<dynamic> request(
     String path, {
@@ -101,7 +110,17 @@ class Api {
       body: {'username': username, 'password': password},
     );
     accessToken = data['accessToken'] as String?;
+    if (accessToken == null || accessToken!.isEmpty) {
+      throw Exception('Máy chủ không trả token đăng nhập.');
+    }
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.setString('academic_access_token', accessToken!);
     return Map<String, dynamic>.from(data['user'] as Map);
+  }
+
+  static Future<List<dynamic>> activities() async {
+    final data = await request('/activities');
+    return data is List ? data : <dynamic>[];
   }
 
   static Future<List<dynamic>> myRegistrations() async {
@@ -124,13 +143,48 @@ class Api {
     return data is List ? data : <dynamic>[];
   }
 
-  static Future<void> registerIndividual(int activityId, String type) async {
-    await request(
-      '/registrations/individual',
-      method: 'POST',
-      body: {'maHD': activityId, 'hinhThuc': type},
-    );
+  static Future<List<dynamic>> notifications() async {
+    final results = await Future.wait([
+      request('/notifications/mine'),
+      request('/notifications/my-reminders'),
+    ]);
+    final saved = results[0] is List ? results[0] as List : <dynamic>[];
+    final reminders = results[1] is List ? results[1] as List : <dynamic>[];
+    return [
+      ...saved.map((row) => {...(row as Map), '_kind': 'Thông báo'}),
+      ...reminders.map((row) => {...(row as Map), '_kind': 'Nhắc lịch'}),
+    ];
   }
+
+  static Future<dynamic> registerIndividual(int activityId, String type) =>
+      request(
+        '/registrations/individual',
+        method: 'POST',
+        body: {'maHD': activityId, 'hinhThuc': type},
+      );
+
+  static Future<dynamic> checkIn(String code) => request(
+        '/attendance/check-in',
+        method: 'POST',
+        body: {'code': code},
+      );
+
+  static Future<dynamic> registerTeam(
+    int competitionId,
+    String teamName,
+    List<String> memberNumbers,
+  ) =>
+      request('/registrations/team', method: 'POST', body: {
+        'maCThi': competitionId,
+        'tenDoi': teamName,
+        'thanhVienMSSV': memberNumbers,
+      });
+
+  static Future<dynamic> joinTeam(int teamId) => request(
+        '/registrations/team/join',
+        method: 'POST',
+        body: {'maDoi': teamId},
+      );
 }
 
 class AppGate extends StatefulWidget {
@@ -145,17 +199,22 @@ class _AppGateState extends State<AppGate> {
   @override
   void initState() {
     super.initState();
-    Api.request('/auth/me')
-        .then((value) {
-          if (mounted)
-            setState(
-              () => user = Map<String, dynamic>.from(value['user'] as Map),
-            );
-        })
-        .catchError((_) {})
-        .whenComplete(() {
-          if (mounted) setState(() => checking = false);
-        });
+    _restoreSession();
+  }
+
+  Future<void> _restoreSession() async {
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      Api.accessToken = prefs.getString('academic_access_token');
+      if (Api.accessToken != null) {
+        final value = await Api.request('/auth/me');
+        user = Map<String, dynamic>.from(value['user'] as Map);
+      }
+    } catch (_) {
+      await Api.clearSavedSession();
+    } finally {
+      if (mounted) setState(() => checking = false);
+    }
   }
 
   void onLogin(Map<String, dynamic> value) => setState(() => user = value);
@@ -163,8 +222,7 @@ class _AppGateState extends State<AppGate> {
     try {
       await Api.request('/auth/logout', method: 'POST', body: {});
     } catch (_) {}
-    Api.accessToken = null;
-    Api.cookie = null;
+    await Api.clearSavedSession();
     if (mounted) setState(() => user = null);
   }
 
@@ -264,7 +322,7 @@ class _LoginScreenState extends State<LoginScreen> {
                       controller: username,
                       textInputAction: TextInputAction.next,
                       decoration: const InputDecoration(
-                        labelText: 'Tên đăng nhập',
+                        labelText: 'MSSV / Tên đăng nhập',
                         prefixIcon: Icon(Icons.person_outline),
                       ),
                     ),
@@ -364,6 +422,12 @@ const features = <Feature>[
     Icons.how_to_reg_rounded,
     Color(0xff18a781),
     live: true,
+  ),
+  Feature(
+    'Quét QR điểm danh',
+    'Điểm danh hoạt động đã đăng ký bằng mã QR',
+    Icons.qr_code_scanner_rounded,
+    Color(0xff087e8b),
   ),
   Feature(
     'Hỗ trợ & cổ vũ',
@@ -494,6 +558,7 @@ class _DashboardScreenState extends State<DashboardScreen> {
                     user: widget.user,
                     onFeature: (title) => setState(() => selected = title),
                     onRegistrations: () => setState(() => tab = 1),
+                    onRegisterActivity: _registerActivity,
                   ),
         bottomNavigationBar: NavigationBar(
           selectedIndex: tab,
@@ -536,6 +601,221 @@ class _DashboardScreenState extends State<DashboardScreen> {
       );
     }
   }
+
+  Future<void> _registerActivity(Map<String, dynamic> activity) async {
+    final maHD = int.tryParse('${activity['MaHD'] ?? ''}');
+    final maCThi = int.tryParse('${activity['MaCThi'] ?? ''}');
+    if (maHD == null) return;
+
+    final action = await showDialog<String>(
+      context: context,
+      builder: (dialogContext) => AlertDialog(
+        title:
+            Text((activity['TenHoatDong'] ?? 'Đăng ký hoạt động').toString()),
+        content: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            if (maCThi != null) ...[
+              _actionTile(dialogContext, 'individual', Icons.person_outline,
+                  'Dự thi cá nhân'),
+              _actionTile(
+                  dialogContext, 'create-team', Icons.group_add, 'Tạo đội thi'),
+              _actionTile(dialogContext, 'join-team', Icons.group_outlined,
+                  'Tham gia đội bằng mã'),
+            ] else
+              _actionTile(dialogContext, 'attend', Icons.event_available,
+                  'Đăng ký tham dự'),
+            _actionTile(dialogContext, 'support', Icons.volunteer_activism,
+                'Đăng ký hỗ trợ'),
+            _actionTile(dialogContext, 'cheer', Icons.campaign_outlined,
+                'Đăng ký cổ vũ'),
+          ],
+        ),
+      ),
+    );
+    if (action == null) return;
+
+    try {
+      dynamic result;
+      switch (action) {
+        case 'create-team':
+          final input = await showDialog<TeamCreationInput>(
+            context: context,
+            builder: (_) => const TeamCreationDialog(),
+          );
+          if (input == null || maCThi == null) return;
+          result = await Api.registerTeam(maCThi, input.name, input.members);
+          break;
+        case 'join-team':
+          final teamId = await showDialog<int>(
+            context: context,
+            builder: (_) => const JoinTeamDialog(),
+          );
+          if (teamId == null) return;
+          result = await Api.joinTeam(teamId);
+          break;
+        case 'individual':
+          result = await Api.registerIndividual(maHD, 'Dự thi');
+          break;
+        case 'support':
+          result = await Api.registerIndividual(maHD, 'Hỗ trợ');
+          break;
+        case 'cheer':
+          result = await Api.registerIndividual(maHD, 'Cổ vũ');
+          break;
+        default:
+          result = await Api.registerIndividual(
+              maHD, maCThi == null ? 'Tham gia' : 'Dự thi');
+      }
+      if (!mounted) return;
+      setState(() => registrationsVersion++);
+      final data = result is Map ? result['data'] : null;
+      final teamCode = data is Map ? data['maDoi'] : null;
+      ScaffoldMessenger.of(context).showSnackBar(SnackBar(
+        content: Text(teamCode == null
+            ? 'Đăng ký thành công.'
+            : 'Tạo đội thành công. Mã đội của bạn: $teamCode'),
+        duration: const Duration(seconds: 5),
+      ));
+    } catch (error) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(SnackBar(
+        content: Text(error.toString().replaceFirst('Exception: ', '')),
+      ));
+    }
+  }
+
+  Widget _actionTile(
+    BuildContext context,
+    String value,
+    IconData icon,
+    String label,
+  ) =>
+      ListTile(
+        contentPadding: EdgeInsets.zero,
+        leading: Icon(icon, color: const Color(0xff3156c8)),
+        title: Text(label),
+        onTap: () => Navigator.pop(context, value),
+      );
+}
+
+class TeamCreationInput {
+  const TeamCreationInput(this.name, this.members);
+  final String name;
+  final List<String> members;
+}
+
+class TeamCreationDialog extends StatefulWidget {
+  const TeamCreationDialog({super.key});
+  @override
+  State<TeamCreationDialog> createState() => _TeamCreationDialogState();
+}
+
+class _TeamCreationDialogState extends State<TeamCreationDialog> {
+  final nameController = TextEditingController();
+  final memberController = TextEditingController();
+  String? error;
+
+  @override
+  void dispose() {
+    nameController.dispose();
+    memberController.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) => AlertDialog(
+        title: const Text('Tạo đội thi'),
+        content: Column(mainAxisSize: MainAxisSize.min, children: [
+          TextField(
+            controller: nameController,
+            decoration: const InputDecoration(labelText: 'Tên đội'),
+          ),
+          const SizedBox(height: 12),
+          TextField(
+            controller: memberController,
+            decoration: const InputDecoration(
+              labelText: 'MSSV thành viên',
+              helperText: 'Nhập một hoặc nhiều MSSV, cách nhau bằng dấu phẩy.',
+            ),
+          ),
+          if (error != null)
+            Padding(
+              padding: const EdgeInsets.only(top: 10),
+              child: Text(error!, style: const TextStyle(color: Colors.red)),
+            ),
+        ]),
+        actions: [
+          TextButton(
+              onPressed: () => Navigator.pop(context),
+              child: const Text('Hủy')),
+          FilledButton(
+            onPressed: () {
+              final members = memberController.text
+                  .split(',')
+                  .map((value) => value.trim())
+                  .where((value) => value.isNotEmpty)
+                  .toSet()
+                  .toList();
+              if (nameController.text.trim().length < 2 || members.isEmpty) {
+                setState(() =>
+                    error = 'Nhập tên đội và ít nhất một MSSV thành viên.');
+                return;
+              }
+              Navigator.pop(context,
+                  TeamCreationInput(nameController.text.trim(), members));
+            },
+            child: const Text('Tạo đội'),
+          ),
+        ],
+      );
+}
+
+class JoinTeamDialog extends StatefulWidget {
+  const JoinTeamDialog({super.key});
+  @override
+  State<JoinTeamDialog> createState() => _JoinTeamDialogState();
+}
+
+class _JoinTeamDialogState extends State<JoinTeamDialog> {
+  final codeController = TextEditingController();
+  String? error;
+
+  @override
+  void dispose() {
+    codeController.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) => AlertDialog(
+        title: const Text('Tham gia đội thi'),
+        content: TextField(
+          controller: codeController,
+          keyboardType: TextInputType.number,
+          decoration: InputDecoration(
+            labelText: 'Mã đội',
+            helperText: error,
+            helperStyle: const TextStyle(color: Colors.red),
+          ),
+        ),
+        actions: [
+          TextButton(
+              onPressed: () => Navigator.pop(context),
+              child: const Text('Hủy')),
+          FilledButton(
+            onPressed: () {
+              final code = int.tryParse(codeController.text.trim());
+              if (code == null || code < 1) {
+                setState(() => error = 'Mã đội phải là số nguyên dương.');
+                return;
+              }
+              Navigator.pop(context, code);
+            },
+            child: const Text('Tham gia'),
+          ),
+        ],
+      );
 }
 
 class RegistrationInput {
@@ -620,10 +900,12 @@ class HomeContent extends StatelessWidget {
     required this.user,
     required this.onFeature,
     required this.onRegistrations,
+    required this.onRegisterActivity,
   });
   final Map<String, dynamic> user;
   final ValueChanged<String> onFeature;
   final VoidCallback onRegistrations;
+  final ValueChanged<Map<String, dynamic>> onRegisterActivity;
 
   @override
   Widget build(BuildContext context) {
@@ -685,6 +967,8 @@ class HomeContent extends StatelessWidget {
             ],
           ),
         ),
+        const SizedBox(height: 24),
+        ActivityFeed(onRegister: onRegisterActivity),
         const SizedBox(height: 25),
         Row(
           mainAxisAlignment: MainAxisAlignment.spaceBetween,
@@ -787,6 +1071,358 @@ class HomeContent extends StatelessWidget {
   }
 }
 
+class ActivityFeed extends StatefulWidget {
+  const ActivityFeed({super.key, required this.onRegister});
+  final ValueChanged<Map<String, dynamic>> onRegister;
+
+  @override
+  State<ActivityFeed> createState() => _ActivityFeedState();
+}
+
+class _ActivityFeedState extends State<ActivityFeed> {
+  late Future<List<dynamic>> activities;
+
+  @override
+  void initState() {
+    super.initState();
+    activities = Api.activities();
+  }
+
+  Future<void> refresh() async {
+    setState(() => activities = Api.activities());
+    await activities;
+  }
+
+  @override
+  Widget build(BuildContext context) => Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            mainAxisAlignment: MainAxisAlignment.spaceBetween,
+            children: [
+              const Text('Cuộc thi & Seminar',
+                  style: TextStyle(fontSize: 19, fontWeight: FontWeight.w800)),
+              IconButton(
+                tooltip: 'Làm mới',
+                onPressed: refresh,
+                icon: const Icon(Icons.refresh_rounded),
+              ),
+            ],
+          ),
+          FutureBuilder<List<dynamic>>(
+            future: activities,
+            builder: (context, snapshot) {
+              if (snapshot.connectionState == ConnectionState.waiting) {
+                return const Padding(
+                  padding: EdgeInsets.all(24),
+                  child: Center(child: CircularProgressIndicator()),
+                );
+              }
+              if (snapshot.hasError) {
+                return Card(
+                  child: ListTile(
+                    leading: const Icon(Icons.cloud_off_outlined),
+                    title: const Text('Chưa tải được danh sách hoạt động'),
+                    subtitle: Text(snapshot.error
+                        .toString()
+                        .replaceFirst('Exception: ', '')),
+                    trailing: IconButton(
+                      onPressed: refresh,
+                      icon: const Icon(Icons.refresh),
+                    ),
+                  ),
+                );
+              }
+              final rows = snapshot.data ?? <dynamic>[];
+              if (rows.isEmpty) {
+                return Container(
+                  width: double.infinity,
+                  padding: const EdgeInsets.all(18),
+                  decoration: BoxDecoration(
+                    color: Colors.white,
+                    borderRadius: BorderRadius.circular(16),
+                    border: Border.all(color: const Color(0xffe8ebf2)),
+                  ),
+                  child:
+                      const Text('Hiện chưa có cuộc thi hoặc seminar sắp tới.'),
+                );
+              }
+              return Column(
+                children: rows.map((item) {
+                  final activity = item is Map
+                      ? Map<String, dynamic>.from(item)
+                      : <String, dynamic>{};
+                  return ActivityCard(
+                    activity: activity,
+                    onRegister: () => widget.onRegister(activity),
+                  );
+                }).toList(),
+              );
+            },
+          ),
+        ],
+      );
+}
+
+class ActivityCard extends StatelessWidget {
+  const ActivityCard({
+    super.key,
+    required this.activity,
+    required this.onRegister,
+  });
+  final Map<String, dynamic> activity;
+  final VoidCallback onRegister;
+
+  String _shortDate(dynamic value) => (value ?? 'Chưa cập nhật')
+      .toString()
+      .replaceFirst('T', ' ')
+      .split('.')
+      .first;
+
+  @override
+  Widget build(BuildContext context) {
+    final isCompetition = activity['MaCThi'] != null;
+    final isSeminar = activity['MaSeminar'] != null;
+    final kind =
+        isCompetition ? 'CUỘC THI' : (isSeminar ? 'SEMINAR' : 'HOẠT ĐỘNG');
+    final subtitle = [
+      _shortDate(activity['TgBatDau']),
+      (activity['DiaDiem'] ?? 'Chưa có địa điểm').toString(),
+      if (activity['HanDangKy'] != null)
+        'Hạn đăng ký: ${_shortDate(activity['HanDangKy'])}',
+    ].join(' · ');
+    final details = (activity['ChuDe'] ??
+            activity['TheLe'] ??
+            activity['MoTa'] ??
+            'Chưa có mô tả chi tiết.')
+        .toString();
+
+    return Card(
+      color: Colors.white,
+      elevation: 0,
+      margin: const EdgeInsets.only(bottom: 10),
+      shape: RoundedRectangleBorder(
+        borderRadius: BorderRadius.circular(16),
+        side: const BorderSide(color: Color(0xffe8ebf2)),
+      ),
+      child: InkWell(
+        borderRadius: BorderRadius.circular(16),
+        onTap: () => showDialog<void>(
+          context: context,
+          builder: (dialogContext) => AlertDialog(
+            title: Text((activity['TenHoatDong'] ?? 'Hoạt động').toString()),
+            content: SingleChildScrollView(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  Text(kind,
+                      style: const TextStyle(
+                          color: Color(0xff3156c8),
+                          fontWeight: FontWeight.w800)),
+                  const SizedBox(height: 12),
+                  Text('Thời gian: ${_shortDate(activity['TgBatDau'])}'),
+                  Text('Kết thúc: ${_shortDate(activity['TgKetThuc'])}'),
+                  Text('Địa điểm: ${activity['DiaDiem'] ?? 'Chưa cập nhật'}'),
+                  if (activity['HanDangKy'] != null)
+                    Text('Hạn đăng ký: ${_shortDate(activity['HanDangKy'])}'),
+                  const SizedBox(height: 12),
+                  Text(details),
+                  if (activity['SLToiDa'] != null)
+                    Text('Số lượng tối đa: ${activity['SLToiDa']}'),
+                ],
+              ),
+            ),
+            actions: [
+              TextButton(
+                onPressed: () => Navigator.pop(dialogContext),
+                child: const Text('Đóng'),
+              ),
+              FilledButton(
+                onPressed: () {
+                  Navigator.pop(dialogContext);
+                  onRegister();
+                },
+                child: const Text('Đăng ký'),
+              ),
+            ],
+          ),
+        ),
+        child: Padding(
+          padding: const EdgeInsets.all(14),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Row(children: [
+                Icon(
+                  isCompetition
+                      ? Icons.emoji_events_rounded
+                      : (isSeminar ? Icons.groups_rounded : Icons.event_note),
+                  color: const Color(0xff3156c8),
+                ),
+                const SizedBox(width: 8),
+                Text(kind,
+                    style: const TextStyle(
+                        fontSize: 10,
+                        letterSpacing: .7,
+                        color: Color(0xff3156c8),
+                        fontWeight: FontWeight.w800)),
+                const Spacer(),
+                TextButton(onPressed: onRegister, child: const Text('Đăng ký')),
+              ]),
+              Text(
+                (activity['TenHoatDong'] ?? 'Hoạt động học thuật').toString(),
+                style:
+                    const TextStyle(fontWeight: FontWeight.w800, fontSize: 16),
+              ),
+              const SizedBox(height: 6),
+              Text(subtitle,
+                  maxLines: 2,
+                  overflow: TextOverflow.ellipsis,
+                  style: const TextStyle(
+                      fontSize: 12, color: Color(0xff667085), height: 1.4)),
+              const SizedBox(height: 5),
+              Text(details,
+                  maxLines: 2,
+                  overflow: TextOverflow.ellipsis,
+                  style: const TextStyle(
+                      fontSize: 12, color: Color(0xff475467), height: 1.4)),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+class QrAttendanceContent extends StatefulWidget {
+  const QrAttendanceContent({super.key, required this.onBack});
+  final VoidCallback onBack;
+  @override
+  State<QrAttendanceContent> createState() => _QrAttendanceContentState();
+}
+
+class _QrAttendanceContentState extends State<QrAttendanceContent> {
+  final MobileScannerController controller = MobileScannerController(
+    formats: const [BarcodeFormat.qrCode],
+  );
+  bool processing = false;
+  bool checkedIn = false;
+  String? message;
+
+  Future<void> _onDetect(BarcodeCapture capture) async {
+    if (processing || checkedIn) return;
+    String? code;
+    for (final barcode in capture.barcodes) {
+      final value = barcode.rawValue;
+      if (value != null && value.isNotEmpty) {
+        code = value;
+        break;
+      }
+    }
+    if (code == null || code.isEmpty) return;
+    setState(() {
+      processing = true;
+      message = 'Đang xác nhận điểm danh…';
+    });
+    await controller.stop();
+    try {
+      final result = await Api.checkIn(code);
+      if (!mounted) return;
+      setState(() {
+        checkedIn = true;
+        message = (result is Map && result['message'] is String)
+            ? result['message'] as String
+            : 'Điểm danh thành công. +5 điểm rèn luyện đã được gửi chờ xác nhận.';
+      });
+    } catch (error) {
+      if (!mounted) return;
+      setState(() {
+        message = error.toString().replaceFirst('Exception: ', '');
+      });
+    } finally {
+      if (mounted) setState(() => processing = false);
+    }
+  }
+
+  Future<void> _scanAgain() async {
+    setState(() {
+      checkedIn = false;
+      message = null;
+    });
+    await controller.start();
+  }
+
+  @override
+  void dispose() {
+    controller.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) => ListView(
+        padding: const EdgeInsets.all(20),
+        children: [
+          IconButton(
+            onPressed: widget.onBack,
+            icon: const Icon(Icons.arrow_back),
+            alignment: Alignment.centerLeft,
+          ),
+          const Text('Quét mã QR điểm danh',
+              style: TextStyle(
+                  fontSize: 23,
+                  fontWeight: FontWeight.w800,
+                  color: Color(0xff17264b))),
+          const SizedBox(height: 8),
+          const Text(
+              'Quét mã do ban tổ chức cung cấp. Bạn cần đăng ký hoạt động trước khi điểm danh.',
+              style: TextStyle(color: Color(0xff667085), height: 1.5)),
+          const SizedBox(height: 18),
+          ClipRRect(
+            borderRadius: BorderRadius.circular(22),
+            child: SizedBox(
+              height: 360,
+              child: MobileScanner(
+                controller: controller,
+                onDetect: _onDetect,
+              ),
+            ),
+          ),
+          if (message != null) ...[
+            const SizedBox(height: 16),
+            Container(
+              padding: const EdgeInsets.all(16),
+              decoration: BoxDecoration(
+                color: checkedIn
+                    ? const Color(0xffe8f7ef)
+                    : const Color(0xfff0f4ff),
+                borderRadius: BorderRadius.circular(16),
+              ),
+              child: Row(
+                children: [
+                  Icon(
+                    checkedIn ? Icons.check_circle : Icons.info_outline,
+                    color: checkedIn
+                        ? const Color(0xff16834b)
+                        : const Color(0xff3156c8),
+                  ),
+                  const SizedBox(width: 10),
+                  Expanded(child: Text(message!)),
+                ],
+              ),
+            ),
+          ],
+          const SizedBox(height: 16),
+          if (checkedIn || (message != null && !processing))
+            OutlinedButton.icon(
+              onPressed: _scanAgain,
+              icon: const Icon(Icons.refresh),
+              label: const Text('Quét lại'),
+            ),
+        ],
+      );
+}
+
 class FeatureDetail extends StatefulWidget {
   const FeatureDetail({super.key, required this.title, required this.onBack});
   final String title;
@@ -804,11 +1440,14 @@ class _FeatureDetailState extends State<FeatureDetail> {
     super.initState();
     if (widget.title == 'Điểm rèn luyện') data = Api.myTrainingPoints();
     if (widget.title == 'Seminar học thuật') data = Api.seminars();
-    if (widget.title == 'Tin tức & thông báo') data = Api.reminders();
+    if (widget.title == 'Tin tức & thông báo') data = Api.notifications();
   }
 
   @override
   Widget build(BuildContext context) {
+    if (widget.title == 'Quét QR điểm danh') {
+      return QrAttendanceContent(onBack: widget.onBack);
+    }
     final title = widget.title;
     final feature = features.firstWhere((item) => item.title == title);
     return ListView(
@@ -895,12 +1534,16 @@ class _FeatureDetailState extends State<FeatureDetail> {
               return Column(
                   children: rows.map((row) {
                 final isSeminar = title == 'Seminar học thuật';
-                final eventName =
-                    (row['TenHoatDong'] ?? row['ChuDe'] ?? 'Hoạt động')
-                        .toString();
+                final isNotification = title == 'Tin tức & thông báo';
+                final eventName = (isNotification
+                        ? row['TieuDe'] ?? row['TenHoatDong'] ?? row['LoaiNhac']
+                        : row['TenHoatDong'] ?? row['ChuDe'] ?? 'Hoạt động')
+                    .toString();
                 final subtitle = isSeminar
                     ? '${row['ChuDe'] ?? ''} · ${row['TgBatDau'] ?? ''}\n${row['DiaDiem'] ?? 'Chưa có địa điểm'}'
-                    : '${row['TgBatDau'] ?? ''} · ${row['DiaDiem'] ?? ''}';
+                    : isNotification
+                        ? '${row['NoiDung'] ?? row['LoaiNhac'] ?? ''} · ${row['GuiLuc'] ?? row['TgBatDau'] ?? ''}'
+                        : '${row['LoaiNhac'] ?? ''} · ${row['TgBatDau'] ?? ''} · ${row['DiaDiem'] ?? ''}';
                 return Card(
                     color: Colors.white,
                     elevation: 0,

@@ -27,6 +27,7 @@ const requiredTables = [
   'MAQR', 'DIEMDANH', 'GIAITHUONG', 'KETQUAHOCTHUAT', 'DIEMRENLUYEN',
   'HOSOQUYETTOAN', 'CHIPHITHUCTE', 'PHIENDANGNHAP',
 ];
+const workflowTables = ['SCHEMAMIGRATION', 'CHITIETKEHOACH', 'VONGTHI', 'BAITHI', 'CHAMDIEMVONG', 'HANGDOICHODANGKY', 'THONGBAO', 'TEPSEMINAR'];
 
 async function getApplicationTables(pool) {
   const result = await pool.request().query(
@@ -49,8 +50,26 @@ async function check(pool) {
   const found = await getApplicationTables(pool);
   const missing = reportMissing(found);
   console.log(`Application tables: ${found.length}/${requiredTables.length}`);
-  if (missing.length) throw new Error(`Missing SQL Server tables: ${missing.join(', ')}. Run npm run db:migrate after verifying the target database.`);
+  if (missing.length) {
+    const legacy = await isKnownLegacySchema(pool);
+    if (legacy) throw new Error('Detected the provided legacy SQL schema. Run npm run db:migrate to add the API compatibility columns and workflow tables.');
+    throw new Error(`Missing SQL Server tables: ${missing.join(', ')}. Run npm run db:migrate after verifying the target database.`);
+  }
+  const workflowResult = await pool.request().query(`SELECT TABLE_NAME FROM INFORMATION_SCHEMA.TABLES WHERE TABLE_SCHEMA='dbo' AND TABLE_TYPE='BASE TABLE'`);
+  const workflowFound = new Set(workflowResult.recordset.map(row => row.TABLE_NAME.toUpperCase()));
+  const workflowMissing = workflowTables.filter(name => !workflowFound.has(name));
+  if (workflowMissing.length) throw new Error(`Missing workflow tables: ${workflowMissing.join(', ')}. Run npm run db:migrate.`);
   console.log('SQL Server schema is ready.');
+}
+
+async function isKnownLegacySchema(pool) {
+  const missing = reportMissing(await getApplicationTables(pool)).sort();
+  if (missing.join(',') !== ['BANCUOCTHI', 'CHIPHITHUCTE'].sort().join(',')) return false;
+  const result = await pool.request().query(`SELECT
+    CASE WHEN OBJECT_ID(N'dbo.KINHPHITHUCTE',N'U') IS NOT NULL
+      AND COL_LENGTH(N'dbo.HOATDONGHOCTHUAT',N'TgDuKien') IS NOT NULL
+      AND COL_LENGTH(N'dbo.CUOCTHI',N'VongThi') IS NOT NULL THEN 1 ELSE 0 END AS IsLegacy`);
+  return result.recordset[0]?.IsLegacy === 1;
 }
 
 async function migrate(pool) {
@@ -68,24 +87,43 @@ async function migrate(pool) {
     );
     const found = await getApplicationTables(transaction);
     const missing = reportMissing(found);
+    const legacy = found.length > 0 && found.length < requiredTables.length && await isKnownLegacySchema(transaction);
 
-    if (found.length === requiredTables.length) {
-      await transaction.commit();
-      console.log('SQL Server schema already contains all required tables; nothing changed.');
-      return;
-    }
-    if (found.length > 0) {
+    if (found.length > 0 && found.length !== requiredTables.length && !legacy) {
       throw new Error(`Database has a partial application schema (${found.length}/${requiredTables.length}). No tables were changed. Missing: ${missing.join(', ')}`);
     }
-
-    const file = path.resolve(__dirname, '../migrations/001_sqlserver_initial_schema.sql');
-    const source = fs.readFileSync(file, 'utf8');
-    const batches = source.split(/^\s*GO\s*;?\s*$/gim).map(batch => batch.trim()).filter(Boolean);
-    for (const batch of batches) await new sql.Request(transaction).batch(batch);
+    if (found.length === 0) {
+      const file = path.resolve(__dirname, '../migrations/001_sqlserver_initial_schema.sql');
+      const source = fs.readFileSync(file, 'utf8');
+      const batches = source.split(/^\s*GO\s*;?\s*$/gim).map(batch => batch.trim()).filter(Boolean);
+      for (const batch of batches) await new sql.Request(transaction).batch(batch);
+      console.log(`Created ${requiredTables.length} SQL Server tables from ${path.basename(file)}.`);
+    }
+    await new sql.Request(transaction).query(`
+      IF OBJECT_ID(N'dbo.SCHEMAMIGRATION', N'U') IS NULL
+        CREATE TABLE dbo.SCHEMAMIGRATION (MaMigration NVARCHAR(100) NOT NULL PRIMARY KEY, ApDungLuc DATETIMEOFFSET NOT NULL DEFAULT SYSDATETIMEOFFSET());
+    `);
+    const migrations = legacy
+      ? ['003_legacy_sqlserver_compat.sql', '002_workflow_extensions.sql', '004_workflow_roles_status.sql']
+      : ['002_workflow_extensions.sql', '004_workflow_roles_status.sql'];
+    for (const fileName of migrations) {
+      const migration = path.resolve(__dirname, '../migrations', fileName);
+      if (!fs.existsSync(migration)) continue;
+      const migrationName = fileName.replace(/\.sql$/i, '');
+      const applied = await new sql.Request(transaction).input('name', sql.NVarChar(100), migrationName)
+        .query('SELECT 1 AS found FROM dbo.SCHEMAMIGRATION WHERE MaMigration = @name');
+      if (applied.recordset.length) continue;
+      const source = fs.readFileSync(migration, 'utf8');
+      const batches = source.split(/^\s*GO\s*;?\s*$/gim).map(batch => batch.trim()).filter(Boolean);
+      for (const batch of batches) await new sql.Request(transaction).batch(batch);
+      await new sql.Request(transaction).input('name', sql.NVarChar(100), migrationName)
+        .query('INSERT INTO dbo.SCHEMAMIGRATION(MaMigration) VALUES(@name)');
+      console.log(`Applied ${fileName}.`);
+    }
     await transaction.commit();
-    console.log(`Created ${requiredTables.length} SQL Server tables from ${path.basename(file)}.`);
+    if (found.length === requiredTables.length || legacy) console.log('SQL Server schema is ready.');
   } catch (error) {
-    await transaction.rollback();
+    try { await transaction.rollback(); } catch { /* Keep the SQL Server error that caused the rollback. */ }
     throw error;
   }
 }

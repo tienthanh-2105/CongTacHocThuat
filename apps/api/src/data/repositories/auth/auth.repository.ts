@@ -31,7 +31,17 @@ JOIN VAITRO r ON r.MaVaiTro = a.MaVaiTro
 LEFT JOIN NGUOIDUNG n ON n.MaNgDung = a.MaNgDung`;
 
 function account(row: AccountRow) {
-  return { ...row, roles: [{ role: { code: row.role } }] };
+  const roleCodes: Record<string, string> = {
+    'QUANTRIVIEN': 'ADMIN',
+    'CANBOKHOA': 'CANBOKHOA',
+    'GIANGVIEN': 'GIANGVIEN',
+    'SINHVIEN': 'SINHVIEN',
+    'PHONGKHCN': 'PHONGKHCN',
+    'BANGIAMHIEU': 'HIEUTRUONG',
+    'PHONGCTSV': 'PHONGCTSV',
+  };
+  const normalized = row.role.normalize('NFD').replace(/[\u0300-\u036f]/g, '').toUpperCase().replace(/[^A-Z0-9]/g, '');
+  return { ...row, roles: [{ role: { code: roleCodes[normalized] ?? normalized } }] };
 }
 
 @Injectable()
@@ -41,6 +51,14 @@ export class AuthRepository {
   async findUserByUsername(username: string) {
     const rows = await this.db.query<AccountRow>(`${accountSelect} WHERE a.TenDangNhap = @p1`, [username]);
     return rows[0] ? account(rows[0]) : null;
+  }
+
+  async upgradeLegacyPasswordHash(userId: string, legacyHash: string, passwordHash: string): Promise<boolean> {
+    const rows = await this.db.query(
+      'UPDATE TAIKHOAN SET MatKhau = @p3 WHERE MaTK = @p1 AND MatKhau = @p2',
+      [userId, legacyHash, passwordHash],
+    );
+    return rows.length > 0;
   }
 
   async findUserById(id: string) {

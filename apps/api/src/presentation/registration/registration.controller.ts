@@ -11,12 +11,13 @@ import {
   Req,
   UseGuards,
 } from '@nestjs/common';
-import { ApiCookieAuth, ApiOperation, ApiResponse, ApiTags } from '@nestjs/swagger';
+import { ApiBearerAuth, ApiCookieAuth, ApiOperation, ApiResponse, ApiTags } from '@nestjs/swagger';
 import { RegistrationService } from '../../business/registration/registration.service';
 import { SessionGuard } from '../auth/auth.guards';
 import type { AuthRequest } from '../auth/auth.http';
 import {
   AssignSupportDto,
+  JoinCompetitionTeamDto,
   RegisterIndividualDto,
   RegisterTeamDto,
   UpdateRegistrationStatusDto,
@@ -24,6 +25,7 @@ import {
 
 @ApiTags('registrations')
 @ApiCookieAuth()
+@ApiBearerAuth()
 @Controller('registrations')
 @UseGuards(SessionGuard)
 export class RegistrationController {
@@ -59,6 +61,13 @@ export class RegistrationController {
     return this.service.registerTeam(request.auth!.userId, dto);
   }
 
+  @Post('team/join')
+  @HttpCode(201)
+  @ApiOperation({ summary: 'Sinh viên tham gia đội thi hiện có bằng mã đội' })
+  joinTeam(@Req() request: AuthRequest, @Body() dto: JoinCompetitionTeamDto) {
+    return this.service.joinCompetitionTeam(request.auth!.userId, dto);
+  }
+
   @Get('my-registrations')
   @ApiOperation({ summary: 'Sinh viên xem danh sách các hoạt động/cuộc thi mình đã đăng ký' })
   @ApiResponse({ status: 200, description: 'Danh sách các lượt đăng ký của sinh viên hiện tại' })
@@ -70,9 +79,10 @@ export class RegistrationController {
   @ApiOperation({ summary: 'Ban tổ chức / Cán bộ xem toàn bộ danh sách đăng ký của một hoạt động' })
   @ApiResponse({ status: 200, description: 'Danh sách chi tiết thí sinh và đội thi đăng ký' })
   getRegistrationsByActivity(
+    @Req() request: AuthRequest,
     @Param('activityId', ParseIntPipe) activityId: number,
   ) {
-    return this.service.getRegistrationsByActivity(activityId);
+    return this.service.getRegistrationsByActivity(request.auth!, activityId);
   }
 
   @Patch(':id/status')
@@ -80,10 +90,11 @@ export class RegistrationController {
   @ApiResponse({ status: 200, description: 'Cập nhật trạng thái thành công' })
   @ApiResponse({ status: 404, description: 'Không tìm thấy đơn đăng ký' })
   updateRegistrationStatus(
+    @Req() request: AuthRequest,
     @Param('id', ParseIntPipe) id: number,
     @Body() dto: UpdateRegistrationStatusDto,
   ) {
-    return this.service.updateRegistrationStatus(id, dto.trangThai);
+    return this.service.updateRegistrationStatus(request.auth!, id, dto.trangThai);
   }
 
   @Post('support-assignment')
@@ -91,16 +102,17 @@ export class RegistrationController {
   @ApiOperation({ summary: 'Khoa / Ban tổ chức phân bổ chỉ tiêu sinh viên cổ vũ/hỗ trợ về các Lớp' })
   @ApiResponse({ status: 201, description: 'Phân bổ chỉ tiêu thành công' })
   @ApiResponse({ status: 404, description: 'Không tìm thấy hoạt động' })
-  assignSupport(@Body() dto: AssignSupportDto) {
-    return this.service.assignSupport(dto);
+  assignSupport(@Req() request: AuthRequest, @Body() dto: AssignSupportDto) {
+    return this.service.assignSupport(request.auth!, dto);
   }
 
   @Get('support-assignments/:activityId')
   @ApiOperation({ summary: 'Xem danh sách các lớp được phân bổ cổ vũ/hỗ trợ của hoạt động' })
   @ApiResponse({ status: 200, description: 'Danh sách các lớp phân công cổ vũ' })
   getSupportAssignments(
+    @Req() request: AuthRequest,
     @Param('activityId', ParseIntPipe) activityId: number,
   ) {
-    return this.service.getSupportAssignments(activityId);
+    return this.service.getSupportAssignments(request.auth!, activityId);
   }
 }
