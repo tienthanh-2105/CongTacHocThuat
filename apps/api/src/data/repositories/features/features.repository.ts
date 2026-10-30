@@ -68,8 +68,7 @@ export class FeaturesRepository {
   async listSeminars() {
     return this.db.query(
       `SELECT TOP (100) s.MaSeminar, s.MaHD, s.ChuDe, s.NoiDung, s.DoiTuongTG, s.ThoiLuong,s.DienGia,s.ChuongTrinh,
-              s.DVChuTri, s.DVPhoiHop, h.TenHoatDong, h.MoTa, h.TgBatDau, h.TgKetThuc,
-              h.HanDangKy, h.DiaDiem, h.SLToiDa, h.TrangThai,
+              s.DVChuTri, s.DVPhoiHop, h.TenHoatDong, h.NoiDung AS MoTa, h.TgDuKien, h.DiaDiem, h.SLSVDuKien, h.TrangThai,
               (SELECT t.MaTep,t.TenTep,t.UrlTep,t.LoaiTep FROM TEPSEMINAR t WHERE t.MaSeminar=s.MaSeminar FOR JSON PATH) AS TaiLieu
        FROM SEMINAR s JOIN HOATDONGHOCTHUAT h ON h.MaHD = s.MaHD
        ORDER BY h.TgBatDau DESC`);
@@ -77,16 +76,15 @@ export class FeaturesRepository {
 
   async listActivities() {
     return this.db.query(
-      `SELECT TOP (100) h.MaHD, h.TenHoatDong, h.MoTa, h.TgBatDau, h.TgKetThuc,
-              h.HanDangKy, h.DiaDiem, h.SLToiDa, h.TrangThai,
+      `SELECT TOP (100) h.MaHD, h.TenHoatDong, h.NoiDung, h.TgDuKien,
+              h.DiaDiem, h.SLSVDuKien, h.TrangThai,
               c.MaCThi, c.TenCuocThi, c.HinhThucThi, c.TheLe,
               s.MaSeminar, s.ChuDe
        FROM HOATDONGHOCTHUAT h
        LEFT JOIN CUOCTHI c ON c.MaHD = h.MaHD
        LEFT JOIN SEMINAR s ON s.MaHD = h.MaHD
        WHERE ISNULL(h.TrangThai,N'') <> N'Đã hủy'
-       ORDER BY CASE WHEN h.TgBatDau >= SYSDATETIME() THEN 0 ELSE 1 END,
-                h.TgBatDau DESC, h.MaHD DESC`,
+       ORDER BY h.MaHD DESC`,
     );
   }
 

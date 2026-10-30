@@ -86,10 +86,10 @@ const activityOptionId = (row: Row, sectionId: string) => {
 };
 const inputClass = s.businessInput;
 
-function Field({ title, name, type = "text", required = false, defaultValue, min, step }: {
-  title: string; name: string; type?: string; required?: boolean; defaultValue?: string; min?: string; step?: string;
+function Field({ title, name, type = "text", required = false, defaultValue, min, step, placeholder }: {
+  title: string; name: string; type?: string; required?: boolean; defaultValue?: string; min?: string; step?: string; placeholder?: string;
 }) {
-  return <label className={s.businessField}><span>{title}</span><input className={inputClass} name={name} type={type} required={required} defaultValue={defaultValue} min={min} step={step} /></label>;
+  return <label className={s.businessField}><span>{title}</span><input className={inputClass} name={name} type={type} required={required} defaultValue={defaultValue} min={min} step={step} placeholder={placeholder} /></label>;
 }
 
 function PasswordField({ title, name, required = false, minLength }: { title: string; name: string; required?: boolean; minLength?: number }) {
@@ -257,7 +257,7 @@ function AccountManagementList({
   </>;
 }
 
-export default function BusinessPanel({ sectionId, user }: { sectionId: string; user: AuthUser }) {
+export default function BusinessPanel({ sectionId, user, initialActivityId, initialActivityName }: { sectionId: string; user: AuthUser; initialActivityId?: number | null; initialActivityName?: string }) {
   const [rows, setRows] = useState<Row[]>([]);
   const [detail, setDetail] = useState<Row | null>(null);
   const [attendanceQr, setAttendanceQr] = useState<{ image: string; expiresAt: string; activityId: string } | null>(null);
@@ -270,6 +270,9 @@ export default function BusinessPanel({ sectionId, user }: { sectionId: string; 
   const [secondary, setSecondary] = useState<Row[]>([]);
   const [studentProfiles, setStudentProfiles] = useState<Row[]>([]);
   const [newAccountRoleId, setNewAccountRoleId] = useState("");
+  const [approvedActivities, setApprovedActivities] = useState<Row[]>([]);
+  const [selectedApprovedActivities, setSelectedApprovedActivities] = useState<string[]>([]);
+  const [budgetDialogOpen, setBudgetDialogOpen] = useState(false);
   const loadSequence = useRef(0);
 
   const load = useCallback(async () => {
@@ -306,7 +309,9 @@ export default function BusinessPanel({ sectionId, user }: { sectionId: string; 
           setStudentProfiles(Array.isArray(profiles) ? profiles as Row[] : []);
         }
       } else {
-        const value = await workflowRequest<unknown>("/activities");
+        const value = sectionId === "expenses"
+          ? await workflowRequest<unknown>("/academic-activities/budgets")
+          : await workflowRequest<unknown>("/activities");
         let activities = Array.isArray(value) ? value as Row[] : [];
         if (sectionId === "competitions" || sectionId === "results") {
           activities = activities.filter((row) => activityOptionId(row, sectionId) !== null);
@@ -334,7 +339,30 @@ export default function BusinessPanel({ sectionId, user }: { sectionId: string; 
     }
   }, [sectionId]);
 
-  useEffect(() => { void load(); setDetail(null); setAttendanceQr(null); setSelectedId(""); setSelectedRegistrationId(""); setNotice(""); }, [load]);
+  useEffect(() => {
+    setDetail(null);
+    setAttendanceQr(null);
+    setSelectedId("");
+    setSelectedRegistrationId("");
+    setNotice("");
+    let active = true;
+    void Promise.resolve().then(() => {
+      if (active) void load();
+    });
+    return () => { active = false; };
+  }, [load]);
+
+  useEffect(() => {
+    if (sectionId === "expenses" && initialActivityId) {
+      const id = String(initialActivityId);
+      setSelectedId(id);
+      void workflowRequest<unknown>(`/settlements/${id}`).then((value) => setDetail(value && typeof value === "object" ? value as Row : null)).catch(() => undefined);
+    }
+  }, [sectionId, initialActivityId]);
+
+  useEffect(() => {
+    if (sectionId === "expenses" && initialActivityId) setBudgetDialogOpen(true);
+  }, [sectionId, initialActivityId]);
 
   async function run(path: string, method: string, body?: unknown, message = "Đã lưu.") {
     setBusy(true); setError(""); setNotice("");
@@ -382,7 +410,7 @@ export default function BusinessPanel({ sectionId, user }: { sectionId: string; 
     }
   }
 
-  const activitySelect = sectionId !== "plans" && sectionId !== "seminars" && sectionId !== "news" && sectionId !== "reports" && sectionId !== "overview";
+  const activitySelect = sectionId !== "plans" && sectionId !== "seminars" && sectionId !== "news" && sectionId !== "reports" && sectionId !== "overview" && sectionId !== "expenses";
   const selectedActivity = rows.find((row) => activityOptionId(row, sectionId) === selectedId);
   const registrationRows = Array.isArray(detail) ? detail as Row[] : [];
   const registrationOptions = registrationRows.filter((row) => readValue(row, "MaDK") !== undefined);
@@ -395,6 +423,12 @@ export default function BusinessPanel({ sectionId, user }: { sectionId: string; 
   });
   const displayRows = sectionId === "overview" ? sortByActivityTime(rows) : rows;
   const assignableRoles = secondary.filter((role) => roleCode(role) !== "SINHVIEN");
+  const budgetGroups = Array.from(rows.reduce((groups, row) => {
+    const id = String(readValue(row, "MaHD") ?? "");
+    if (!groups.has(id)) groups.set(id, []);
+    groups.get(id)!.push(row);
+    return groups;
+  }, new Map<string, Row[]>()));
 
   if (sectionId === "seminars" && !canManageActivities(user.roles)) {
     return <div className={s.businessPanel}>
@@ -409,6 +443,8 @@ export default function BusinessPanel({ sectionId, user }: { sectionId: string; 
   }
 
   return <div className={s.businessPanel}>
+    {sectionId === "expenses" && <div style={{ display: "flex", justifyContent: "flex-end", marginBottom: "16px" }}><button className={s.primary} onClick={() => setBudgetDialogOpen(true)}>＋ Tạo kinh phí hoạt động</button></div>}
+    
     {error && <p className={s.error} role="alert">{error}</p>}
     {notice && <p className={s.success} role="status">{notice}</p>}
     {sectionId === "users" && <>
@@ -449,14 +485,15 @@ export default function BusinessPanel({ sectionId, user }: { sectionId: string; 
     {sectionId === "plans" && <>
       <section className={s.card}>
         <h2>Tạo kế hoạch</h2>
-        <form className={s.businessForm} onSubmit={(e) => submit(e, (v) => run("/plans", "POST", { tenKeHoach: v.get("tenKeHoach"), namHoc: v.get("namHoc"), hocKy: v.get("hocKy"), maKhoa: Number(v.get("maKhoa")), maBM: v.get("maBM") ? Number(v.get("maBM")) : undefined }))}>
-          <Field title="Tên kế hoạch" name="tenKeHoach" required /><Field title="Năm học" name="namHoc" defaultValue="2026-2027" required /><Field title="Học kỳ" name="hocKy" defaultValue="HK1" /><Field title="Mã khoa" name="maKhoa" type="number" min="1" required /><Field title="Mã bộ môn (nếu có)" name="maBM" type="number" min="1" />
+        <form className={s.businessForm} onSubmit={(e) => submit(e, (v) => run("/plans", "POST", { soKeHoach: v.get("soKeHoach"), tenKeHoach: v.get("tenKeHoach"), ngayBanHanh: v.get("ngayBanHanh") || undefined, namHoc: v.get("namHoc"), hocKy: v.get("hocKy"), canCu: v.get("canCu"), mucDich: v.get("mucDich"), yeuCau: v.get("yeuCau"), noiDung: v.get("noiDung"), maKhoa: Number(v.get("maKhoa")), maBM: v.get("maBM") ? Number(v.get("maBM")) : undefined }))}>
+          <Field title="Số kế hoạch" name="soKeHoach" required /><Field title="Tên kế hoạch" name="tenKeHoach" required /><Field title="Ngày ban hành" name="ngayBanHanh" type="date" /><Field title="Năm học" name="namHoc" defaultValue="2026-2027" required /><Field title="Học kỳ" name="hocKy" defaultValue="HK1" /><Field title="Mã khoa" name="maKhoa" type="number" min="1" required /><Field title="Mã bộ môn (nếu có)" name="maBM" type="number" min="1" /><Field title="Căn cứ" name="canCu" /><Field title="Mục đích" name="mucDich" /><Field title="Yêu cầu" name="yeuCau" /><Field title="Nội dung" name="noiDung" />
           <button className={s.primary} disabled={busy}>Tạo bản nháp</button>
         </form>
       </section>
       <section className={s.card}>
-        <h2>Kế hoạch đã lập</h2><Listing rows={rows} empty="Chưa có kế hoạch." onSelect={(row) => { const id = identifier(row, "MaKeHoach"); setSelectedId(String(id)); void selected("/plans/"); }} />
+        <h2>Kế hoạch đã lập</h2>{rows.length ? <div className={s.businessList}>{rows.map((row, index) => { const id = String(identifier(row, "MaKeHoach")); return <article key={`plan-${id}-${index}`}><div><strong>{label(row, "TenKeHoach")}</strong><span>{label(row, "SoKeHoach")} · {label(row, "NamHoc")} · {label(row, "TrangThai")}</span></div><div className={s.businessActions}><button type="button" className={s.secondaryButton} onClick={() => { setSelectedId(id); setSelectedApprovedActivities([]); void selected("/plans/"); void workflowRequest<Row[]>("/academic-activities").then((items) => setApprovedActivities(items.filter((item) => label(item, "TrangThai") === "Đã duyệt"))).catch(() => setApprovedActivities([])); }}>Xem</button><button type="button" className={s.secondaryButton} disabled={label(row, "TrangThai") === "Đã duyệt"} onClick={() => { setSelectedId(id); void selected("/plans/"); }}>Chỉnh sửa</button></div></article>; })}</div> : <p className={s.emptyMessage}>Chưa có kế hoạch.</p>}
         {detail && <><pre className={s.jsonDetail}>{JSON.stringify(detail, null, 2)}</pre>
+          {approvedActivities.length > 0 && <div className={s.card} style={{ marginBottom: "16px", padding: "16px" }}><h3>Hoạt động đã được Trưởng khoa duyệt</h3>{approvedActivities.map((activity) => { const id = String(readValue(activity, "MaHD")); return <label key={id} style={{ display: "flex", gap: "10px", padding: "8px 0", alignItems: "center" }}><input type="checkbox" checked={selectedApprovedActivities.includes(id)} onChange={(e) => setSelectedApprovedActivities((current) => e.target.checked ? [...current, id] : current.filter((value) => value !== id))} /><span><strong>{label(activity, "TenHoatDong")}</strong> · {label(activity, "LoaiHoatDong")} · Mã HĐ {id}</span></label>; })}<button type="button" className={s.primary} disabled={busy || !selectedApprovedActivities.length} onClick={async () => { for (const id of selectedApprovedActivities) { const activity = approvedActivities.find((item) => String(readValue(item, "MaHD")) === id); if (activity) await run(`/plans/${selectedId}/activities`, "POST", { tenHoatDong: label(activity, "TenHoatDong"), noiDung: readValue(activity, "NoiDung"), thoiGianDuKien: readValue(activity, "TgDuKien") || undefined, diaDiem: readValue(activity, "DiaDiem"), doiTuong: readValue(activity, "DoiTuongThamDu"), chiTieu: readValue(activity, "SLSVDuKien") ? Number(readValue(activity, "SLSVDuKien")) : undefined, duToan: 0 }); } setSelectedApprovedActivities([]); await selected(`/plans/${selectedId}/`); }}>Thêm vào kế hoạch</button></div>}
           <form className={s.businessForm} onSubmit={(e) => submit(e, (v) => run(`/plans/${selectedId}/activities`, "POST", { tenHoatDong: v.get("tenHoatDong"), noiDung: v.get("noiDung"), thoiGianDuKien: v.get("batDau") || undefined, thoiGianKetThuc: v.get("ketThuc") || undefined, hanDangKy: v.get("hanDangKy") || undefined, diaDiem: v.get("diaDiem"), doiTuong: v.get("doiTuong"), chiTieu: v.get("chiTieu") ? Number(v.get("chiTieu")) : undefined, nguoiPhuTrach: v.get("nguoiPhuTrach"), duToan: Number(v.get("duToan") || 0) }))}>
             <h3>Thêm hoạt động và dự toán</h3><Field title="Tên hoạt động" name="tenHoatDong" required /><Field title="Nội dung" name="noiDung" /><Field title="Bắt đầu" name="batDau" type="datetime-local" /><Field title="Kết thúc" name="ketThuc" type="datetime-local" /><Field title="Hạn đăng ký" name="hanDangKy" type="datetime-local" /><Field title="Địa điểm" name="diaDiem" /><Field title="Đối tượng" name="doiTuong" /><Field title="Chỉ tiêu" name="chiTieu" type="number" min="1" /><Field title="Người phụ trách" name="nguoiPhuTrach" /><Field title="Dự toán (đồng)" name="duToan" type="number" min="0" step="0.01" required /><button className={s.primary} disabled={busy}>Thêm hoạt động</button>
           </form>
@@ -505,7 +542,9 @@ export default function BusinessPanel({ sectionId, user }: { sectionId: string; 
 
     {sectionId === "results" && selectedId && <section className={s.card}><h2>Kết quả cuộc thi</h2><button className={s.secondaryButton} onClick={async()=>{const value=await workflowRequest<unknown>(`/competitions/${selectedId}/results`);setDetail({rows:value});}}>Tải kết quả đã công bố</button>{canManageActivities(user.roles) && <><form className={s.businessForm} onSubmit={(e) => submit(e, (v) => run(`/competitions/${selectedId}/results`, "POST", { maDoi: v.get("maDoi") ? Number(v.get("maDoi")) : undefined, maDK: v.get("maDK") ? Number(v.get("maDK")) : undefined, maGT: v.get("maGT") ? Number(v.get("maGT")) : undefined, loaiKQ: v.get("loaiKQ"), xepHang: v.get("xepHang") ? Number(v.get("xepHang")) : undefined, diem: v.get("diem") ? Number(v.get("diem")) : undefined, ghiChu: v.get("ghiChu") }))}><Field title="Mã đội" name="maDoi" type="number" min="1" /><Field title="Mã đăng ký cá nhân" name="maDK" type="number" min="1" /><Field title="Mã giải" name="maGT" type="number" min="1" /><Field title="Loại kết quả" name="loaiKQ" /><Field title="Xếp hạng" name="xepHang" type="number" min="1" /><Field title="Điểm" name="diem" type="number" min="0" step="0.01" /><Field title="Ghi chú" name="ghiChu" /><button className={s.primary}>Tạo kết quả nháp</button></form><form className={s.businessForm} onSubmit={(e) => submit(e, (v) => run(`/competitions/results/${v.get("maKQ")}/publish`, "PATCH", {}))}><Field title="Mã kết quả để công bố" name="maKQ" type="number" min="1" required /><button className={s.secondaryButton}>Công bố kết quả</button></form></>}</section>}
 
-    {sectionId === "expenses" && selectedId && <section className={s.card}><h2>Chi phí và quyết toán</h2>{detail && !Array.isArray(detail) && <><p>Tổng chi: {label(detail,"totalAmount")} · Mã hồ sơ: {label((detail.settlement as Row)??{},"MaHS")}</p><Listing rows={Array.isArray(detail.expenses)?detail.expenses as Row[]:[]} empty="Chưa ghi nhận chi phí." /></>}<form className={s.businessForm} onSubmit={(e) => submit(e, async (v) => { const created=await run("/expenses", "POST", { maHD: Number(selectedId), noiDung: v.get("noiDung"), soTien: Number(v.get("soTien")), ngChi: v.get("ngChi"), chungTu: v.get("chungTu") ? String(v.get("chungTu")).split(",").map((x)=>x.trim()) : [] }); if(created) await selected("/settlements/"); })}><Field title="Nội dung chi" name="noiDung" required /><Field title="Số tiền" name="soTien" type="number" min="0.01" step="0.01" required /><Field title="Ngày chi" name="ngChi" type="date" required /><Field title="Đường dẫn chứng từ (phân cách bằng dấu phẩy)" name="chungTu" /><button className={s.primary}>Ghi nhận chi phí</button></form>{detail && !Array.isArray(detail) && Boolean(detail.settlement) && <div className={s.businessActions}><button className={s.secondaryButton} onClick={()=>void run(`/settlements/${(detail.settlement as Row).MaHS}/submit`,"POST",{})}>Gửi duyệt</button>{canApproveSettlements(user.roles) && <button className={s.secondaryButton} onClick={()=>void run(`/settlements/${(detail.settlement as Row).MaHS}/approve`,"PATCH",{})}>Duyệt quyết toán</button>}</div>}</section>}
+    {sectionId === "expenses" && <section className={s.card}><h2>Kinh phí hoạt động</h2>{budgetGroups.length ? <div className={s.businessList}>{budgetGroups.map(([activityId, items]) => { const total = items.reduce((sum, item) => sum + Number(readValue(item, "SoTien") ?? 0), 0); const first = items[0]; return <article key={activityId}><div><strong>{label(first, "TenHoatDong")}</strong><span>Mã HĐ: {activityId} · {items.length} nội dung · Tổng dự trù: {total.toLocaleString("vi-VN")} đồng</span><small>{items.map((item) => `${label(item, "NoiDung")} (${label(item, "SoTien")} đồng)`).join(" · ")}</small></div><button className={s.primary} disabled={busy} onClick={() => void run(`/academic-activities/${activityId}/submit`, "PATCH", undefined, "Đã gửi toàn bộ kinh phí của hoạt động lên khoa xét duyệt.")}>Gửi khoa xét duyệt</button></article>; })}</div> : <p className={s.emptyMessage}>Chưa có dữ liệu kinh phí hoạt động.</p>}</section>}
+
+    {sectionId === "expenses" && budgetDialogOpen && <div className={s.modalOverlay} role="dialog" aria-modal="true"><div className={s.modalCard} style={{ maxWidth: "720px", width: "min(720px, calc(100vw - 32px))", maxHeight: "calc(100vh - 40px)", overflowY: "auto", borderRadius: "18px", boxShadow: "0 24px 70px rgba(15, 23, 42, .22)" }}><div className={s.modalHeader} style={{ padding: "20px 24px", background: "linear-gradient(135deg, #eff6ff, #ffffff)" }}><div><div style={{ color: "#2563eb", fontSize: "12px", fontWeight: 700, letterSpacing: ".08em", textTransform: "uppercase" }}>Dự trù ngân sách</div><h3 style={{ margin: "5px 0 0", fontSize: "20px", color: "#0f172a" }}>Tạo kinh phí hoạt động</h3></div><button type="button" className={s.modalCloseBtn} onClick={() => setBudgetDialogOpen(false)}>✕</button></div><form onSubmit={async (event) => { event.preventDefault(); if (!initialActivityId) { setError("Chưa xác định hoạt động cần tạo kinh phí."); return; } const form = new FormData(event.currentTarget); const result = await run(`/academic-activities/${initialActivityId}/budget`, "POST", { maHD: Number(form.get("maHD")), noiDung: form.get("noiDung"), soLuong: form.get("soLuong") ? Number(form.get("soLuong")) : undefined, donViTinh: form.get("donViTinh"), donGia: form.get("donGia") ? Number(form.get("donGia")) : undefined, soTien: Number(form.get("soTien")), thuyetMinh: form.get("thuyetMinh"), nguonKinhPhi: form.get("nguonKinhPhi"), ghiChu: form.get("ghiChu") }, "Đã tạo kinh phí hoạt động."); if (result) setBudgetDialogOpen(false); }}><div className={s.modalBody} style={{ padding: "22px 24px 8px" }}><div style={{ display: "grid", gridTemplateColumns: "140px 1fr", gap: "14px" }}><Field title="Mã HĐ" name="maHD" defaultValue={String(initialActivityId ?? "")} required /><Field title="Nội dung kinh phí (tên hoạt động học thuật)" name="noiDung" defaultValue={initialActivityName || ""} required /></div><div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: "14px" }}><Field title="Số lượng" name="soLuong" type="number" min="0" step="0.01" /><Field title="Đơn vị tính" name="donViTinh" placeholder="bộ, người..." /><Field title="Đơn giá" name="donGia" type="number" min="0" step="0.01" /></div><Field title="Số tiền dự trù *" name="soTien" type="number" min="0" step="0.01" required /><Field title="Thuyết minh" name="thuyetMinh" placeholder="Giải thích cơ sở lập dự toán..." /><Field title="Nguồn kinh phí" name="nguonKinhPhi" defaultValue="Kinh phí học thuật" /><Field title="Ghi chú" name="ghiChu" /><button type="button" className={s.secondaryButton} onClick={() => undefined}>+ Thêm dòng</button></div><div className={s.modalFooter} style={{ padding: "16px 24px 20px", borderTop: "1px solid #eef2f7", background: "#fbfdff" }}><button type="button" className={s.secondaryButton} onClick={() => setBudgetDialogOpen(false)}>Hủy</button><button type="submit" className={s.primary} disabled={busy}>{busy ? "Đang lưu…" : "Lưu kinh phí"}</button></div></form></div></div>}
 
     {sectionId === "seminars" && <><section className={s.card}><h2>Tạo Seminar</h2><form className={s.businessForm} onSubmit={(e) => submit(e, (v) => run("/seminars", "POST", { tenHoatDong:v.get("tenHoatDong"), chuDe:v.get("chuDe"), tgBatDau:v.get("tgBatDau"), tgKetThuc:v.get("tgKetThuc"), hanDangKy:v.get("hanDangKy")||undefined, diaDiem:v.get("diaDiem"), slToiDa:v.get("slToiDa")?Number(v.get("slToiDa")):undefined, noiDung:v.get("noiDung"), doiTuongTG:v.get("doiTuongTG"), dvChuTri:v.get("dvChuTri"), dvPhoiHop:v.get("dvPhoiHop"), dienGia:v.get("dienGia")?JSON.parse(String(v.get("dienGia"))):[], chuongTrinh:v.get("chuongTrinh")?JSON.parse(String(v.get("chuongTrinh"))):[]}))}><Field title="Tên hoạt động" name="tenHoatDong" required/><Field title="Chủ đề" name="chuDe" required/><Field title="Bắt đầu" name="tgBatDau" type="datetime-local" required/><Field title="Kết thúc" name="tgKetThuc" type="datetime-local" required/><Field title="Hạn đăng ký" name="hanDangKy" type="datetime-local"/><Field title="Địa điểm" name="diaDiem"/><Field title="Chỉ tiêu" name="slToiDa" type="number" min="1"/><Field title="Nội dung" name="noiDung"/><Field title="Đối tượng" name="doiTuongTG"/><Field title="Đơn vị chủ trì" name="dvChuTri"/><Field title="Đơn vị phối hợp" name="dvPhoiHop"/><Field title="Diễn giả (JSON mảng)" name="dienGia" defaultValue="[]"/><Field title="Chương trình (JSON mảng)" name="chuongTrinh" defaultValue="[]"/><button className={s.primary} disabled={busy}>Tạo và công bố Seminar</button></form></section><section className={s.card}><h2>Seminar đã lập</h2><Listing rows={rows} empty="Chưa có Seminar." onSelect={(row)=>setSelectedId(String(row.MaSeminar))}/>{selectedId && <><form className={s.businessForm} onSubmit={(e)=>submit(e,(v)=>run(`/seminars/${selectedId}/materials`,"POST",{tenTep:v.get("tenTep"),urlTep:v.get("urlTep"),loaiTep:v.get("loaiTep")}))}><h3>Thêm tài liệu cho Seminar #{selectedId}</h3><Field title="Tên tài liệu" name="tenTep" required/><Field title="URL tài liệu" name="urlTep" required/><Field title="Loại tài liệu" name="loaiTep"/><button className={s.primary}>Lưu tài liệu</button></form>{user.roles.includes("SINHVIEN") && <button className={s.secondaryButton} onClick={()=>void run(`/seminars/${selectedId}/register`,"POST",{},"Đã gửi đăng ký tham gia seminar.")}>Đăng ký seminar này</button>}</>}</section></>}
 
@@ -533,3 +572,9 @@ function Listing({ rows, empty, onSelect }: { rows: Row[]; empty: string; onSele
     </article>;
   })}</div>;
 }
+
+
+
+
+
+

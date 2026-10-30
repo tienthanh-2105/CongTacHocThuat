@@ -12,6 +12,7 @@ type AccountRow = {
   passwordVersion: number;
   active: boolean;
   role: string;
+  department: string | null;
 };
 
 const accountSelect = `SELECT 
@@ -25,10 +26,22 @@ const accountSelect = `SELECT
     THEN CAST(1 AS BIT) 
     ELSE CAST(0 AS BIT) 
   END AS active,
-  r.TenVaiTro AS role
+  r.TenVaiTro AS role,
+  COALESCE(
+    (SELECT STRING_AGG(bm2.TenBM, N', ') WITHIN GROUP (ORDER BY bm2.MaBM) 
+     FROM GIANGVIEN_BOMON gb2 JOIN BOMON bm2 ON bm2.MaBM = gb2.MaBM 
+     WHERE gb2.MaGV = gv.MaGV),
+    bm.TenBM,
+    k.TenKhoa,
+    N'Khoa CNTT'
+  ) AS department
 FROM TAIKHOAN a 
 JOIN VAITRO r ON r.MaVaiTro = a.MaVaiTro
-LEFT JOIN NGUOIDUNG n ON n.MaNgDung = a.MaNgDung`;
+LEFT JOIN NGUOIDUNG n ON n.MaNgDung = a.MaNgDung
+LEFT JOIN GIANGVIEN gv ON gv.MaNgDung = n.MaNgDung
+LEFT JOIN BOMON bm ON bm.MaBM = gv.MaBM
+LEFT JOIN CANBOKHOA cb ON cb.MaNgDung = n.MaNgDung
+LEFT JOIN KHOA k ON k.MaKhoa = cb.MaKhoa`;
 
 function account(row: AccountRow) {
   const roleCodes: Record<string, string> = {
@@ -41,7 +54,7 @@ function account(row: AccountRow) {
     'PHONGCTSV': 'PHONGCTSV',
   };
   const normalized = row.role.normalize('NFD').replace(/[\u0300-\u036f]/g, '').toUpperCase().replace(/[^A-Z0-9]/g, '');
-  return { ...row, roles: [{ role: { code: roleCodes[normalized] ?? normalized } }] };
+  return { ...row, department: row.department ?? undefined, roles: [{ role: { code: roleCodes[normalized] ?? normalized } }] };
 }
 
 @Injectable()

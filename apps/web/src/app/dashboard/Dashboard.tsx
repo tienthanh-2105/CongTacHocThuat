@@ -5,7 +5,11 @@ import { getCurrentUser, logout, type AuthUser } from "@/services/auth";
 import AccountPanel from "./AccountPanel";
 import BusinessPanel from "./BusinessPanel";
 import StudentProfilesPanel from "./StudentProfilesPanel";
-import { canManageActivities, sectionsForRoles } from "./sections";
+import StaffProfilesPanel from "./StaffProfilesPanel";
+import ClassesManagementPanel from "./ClassesManagementPanel";
+import UsersManagementPanel from "./UsersManagementPanel";
+import AcademicActivitiesPanel from "./AcademicActivitiesPanel";
+import { canManageActivities, sectionsForRoles, sections, type DashboardSection } from "./sections";
 import s from "./dashboard.module.css";
 
 function HomeIcon() {
@@ -49,7 +53,10 @@ export default function Dashboard() {
   const [query, setQuery] = useState("");
   const headerRef = useRef<HTMLElement>(null);
   const [accountView, setAccountView] = useState<"info" | "password" | null>(null);
+  const [openParentId, setOpenParentId] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
+  const [expenseActivityId, setExpenseActivityId] = useState<number | null>(null);
+  const [expenseActivityName, setExpenseActivityName] = useState("");
   useEffect(() => {
     let alive = true;
     getCurrentUser()
@@ -98,10 +105,36 @@ export default function Dashboard() {
     }
   }
   function navigate(id: string) {
+    const targetSection = sections.find((s) => s.id === id);
+    if (targetSection?.parentId) {
+      setOpenParentId(targetSection.parentId);
+    } else if (sections.some((s) => s.parentId === id)) {
+      setOpenParentId(id);
+    } else {
+      setOpenParentId(null);
+    }
     setAccountView(null);
     setActive(id);
     setMenu(false);
     setQuery("");
+  }
+  function openExpenses(activityId: number, activityName: string) {
+    setExpenseActivityId(activityId);
+    setExpenseActivityName(activityName);
+    navigate("expenses");
+  }
+  function handleSidebarClick(item: DashboardSection) {
+    const hasChildren = visibleSections.some((sub) => sub.parentId === item.id);
+    if (hasChildren) {
+      if (item.id === activeSectionId) {
+        setOpenParentId((prev) => (prev === item.id ? null : item.id));
+      } else {
+        setOpenParentId(item.id);
+        navigate(item.id);
+      }
+    } else {
+      navigate(item.id);
+    }
   }
   if (!user)
     return (
@@ -150,17 +183,50 @@ export default function Dashboard() {
           </div>
         </div>
         <nav aria-label="Chức năng hệ thống">
-          {visibleSections.map((item, index) => (
-            <button
-              key={item.id}
-              onClick={() => navigate(item.id)}
-              className={activeSectionId === item.id ? s.active : ""}
-              aria-current={activeSectionId === item.id ? "page" : undefined}
-            >
-              {item.id === "overview" ? <HomeIcon /> : <Icon type={index} />}
-              {item.title}
-            </button>
-          ))}
+          {visibleSections.map((item, index) => {
+            const isSub = Boolean(item.parentId);
+            if (isSub && item.parentId !== openParentId) {
+              return null;
+            }
+            const hasChildren = visibleSections.some((sub) => sub.parentId === item.id);
+            const isOpen = openParentId === item.id;
+            return (
+              <button
+                key={item.id}
+                onClick={() => handleSidebarClick(item)}
+                className={`${activeSectionId === item.id ? s.active : ""} ${isSub ? s.sidebarSubItem : ""}`}
+                aria-current={activeSectionId === item.id ? "page" : undefined}
+              >
+                {item.id === "overview" ? (
+                  <HomeIcon />
+                ) : isSub ? null : (
+                  <Icon type={index} />
+                )}
+                <span style={isSub ? { fontWeight: 700 } : undefined}>{item.title}</span>
+                {hasChildren && (
+                  <svg
+                    style={{
+                      marginLeft: "auto",
+                      width: "14px",
+                      height: "14px",
+                      transition: "transform 0.2s ease",
+                      transform: isOpen ? "rotate(180deg)" : "rotate(0deg)",
+                      opacity: 0.65,
+                      flexShrink: 0,
+                    }}
+                    viewBox="0 0 24 24"
+                    fill="none"
+                    stroke="currentColor"
+                    strokeWidth="2.5"
+                    strokeLinecap="round"
+                    strokeLinejoin="round"
+                  >
+                    <polyline points="6 9 12 15 18 9" />
+                  </svg>
+                )}
+              </button>
+            );
+          })}
         </nav>
         <div className={s.year}>
           <small>HỌC KỲ ĐANG ÁP DỤNG · MINH HỌA</small>
@@ -262,26 +328,34 @@ export default function Dashboard() {
           </div>
         </header>
         <main className={s.main}>
-          <div className={s.heading}>
-            <div>
-              <h1>
-                {accountView === "info" ? "Thông tin cá nhân" : selected.title}
-              </h1>
-              <p>
-              {selected.id === "overview"
-                  ? "Theo dõi hoạt động, mức độ tham gia và tiến độ học kỳ của toàn khoa."
-                  : selected.detail}
-              </p>
+          {activeSectionId !== "users" && activeSectionId !== "staff-profiles" && activeSectionId !== "student-profiles" && activeSectionId !== "classes" && !activeSectionId.startsWith("academic-") && accountView !== "info" && (
+            <div className={s.heading}>
+              <div>
+                <h1>{selected.title}</h1>
+                {selected.id !== "expenses" && <p>
+                  {selected.id === "overview"
+                    ? "Theo dõi hoạt động, mức độ tham gia và tiến độ học kỳ của toàn khoa."
+                    : selected.detail}
+                </p>}
+              </div>
+              {selected.id === "overview" && canManageActivities(user.roles) && (
+                <button
+                  className={s.primary}
+                  onClick={() => navigate("competitions")}
+                >
+                  ＋ Tạo hoạt động
+                </button>
+              )}
             </div>
-            {accountView !== "info" && selected.id === "overview" && canManageActivities(user.roles) && (
-              <button
-                className={s.primary}
-                onClick={() => navigate("competitions")}
-              >
-                ＋ Tạo hoạt động
-              </button>
-            )}
-          </div>
+          )}
+          {accountView === "info" && (
+            <div className={s.heading}>
+              <div>
+                <h1>Thông tin cá nhân</h1>
+                <p>Xem thông tin tài khoản và phân quyền của bạn.</p>
+              </div>
+            </div>
+          )}
           {error && (
             <p role="alert" className={s.error}>
               {error}
@@ -290,10 +364,24 @@ export default function Dashboard() {
           {accountView === "password" && <AccountPanel view="password" user={user} onClose={() => setAccountView(null)} />}
           {accountView === "info" ? (
             <AccountPanel view="info" user={user} onClose={() => setAccountView(null)} />
+          ) : activeSectionId === "users" ? (
+            <UsersManagementPanel currentUserId={user.id} />
+          ) : activeSectionId === "staff-profiles" ? (
+            <StaffProfilesPanel />
           ) : activeSectionId === "student-profiles" ? (
             <StudentProfilesPanel />
+          ) : activeSectionId === "classes" ? (
+            <ClassesManagementPanel />
+          ) : activeSectionId === "academic-activities" ? (
+            <AcademicActivitiesPanel view="activities" user={user} onNavigateExpenses={openExpenses} onNavigateTab={(tab) => navigate(tab === "activities" ? "academic-activities" : tab === "steering" ? "academic-steering" : tab === "organizing" ? "academic-organizing" : "academic-support")} />
+          ) : activeSectionId === "academic-steering" ? (
+            <AcademicActivitiesPanel view="steering" user={user} onNavigateTab={(tab) => navigate(tab === "activities" ? "academic-activities" : tab === "steering" ? "academic-steering" : tab === "organizing" ? "academic-organizing" : "academic-support")} />
+          ) : activeSectionId === "academic-organizing" ? (
+            <AcademicActivitiesPanel view="organizing" user={user} onNavigateTab={(tab) => navigate(tab === "activities" ? "academic-activities" : tab === "steering" ? "academic-steering" : tab === "organizing" ? "academic-organizing" : "academic-support")} />
+          ) : activeSectionId === "academic-support" ? (
+            <AcademicActivitiesPanel view="support" user={user} onNavigateTab={(tab) => navigate(tab === "activities" ? "academic-activities" : tab === "steering" ? "academic-steering" : tab === "organizing" ? "academic-organizing" : "academic-support")} />
           ) : (
-            <BusinessPanel sectionId={activeSectionId} user={user} />
+            <BusinessPanel sectionId={activeSectionId} user={user} initialActivityId={expenseActivityId} initialActivityName={expenseActivityName} />
           )}
         </main>
       </div>

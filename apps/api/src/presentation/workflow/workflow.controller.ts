@@ -3,7 +3,7 @@ import { ApiBearerAuth, ApiCookieAuth, ApiOperation, ApiTags } from '@nestjs/swa
 import { SessionGuard } from '../auth/auth.guards';
 import type { AuthRequest } from '../auth/auth.http';
 import { WorkflowService } from '../../business/workflow/workflow.service';
-import { ActivityChangeDto, AdjustTrainingPointDto, AwardTrainingPointDto, CheckInDto, CompetitionResultDto, CreateAttendanceCodeDto, CreatePlanActivityDto, CreatePlanDto, CreateRoundDto, ReviewPlanDto, ScoreWorkDto, SubmitWorkDto, SeminarMaterialDto, CreateAccountDto, CreateStudentAccountDto, CreateStudentProfileDto, CreateLinkedStudentProfileDto, ChangeAccountRoleDto, LinkAccountStudentProfileDto, ResetAccountPasswordDto, SetAccountStatusDto, ManualAttendanceDto } from './workflow.dto';
+import { ActivityChangeDto, AdjustTrainingPointDto, AwardTrainingPointDto, CheckInDto, CompetitionResultDto, CreateAttendanceCodeDto, CreatePlanActivityDto, CreatePlanDto, CreateRoundDto, ReviewPlanDto, ScoreWorkDto, SubmitWorkDto, SeminarMaterialDto, CreateAccountDto, CreateStudentAccountDto, CreateStudentProfileDto, CreateLinkedStudentProfileDto, UpdateStudentRecordDto, ChangeAccountRoleDto, LinkAccountStudentProfileDto, ResetAccountPasswordDto, SetAccountStatusDto, ManualAttendanceDto, CreateClassDto, UpdateClassDto, UpdateStaffRecordDto, CreateStaffRecordDto, CreateStaffAccountDto, CreateAcademicActivityDto, UpdateAcademicActivityDto, CreateCommitteeMemberDto, UpdateCommitteeMemberDto, CreateActivityBudgetDto } from './workflow.dto';
 
 @ApiTags('admin-accounts') @ApiBearerAuth() @ApiCookieAuth() @UseGuards(SessionGuard)
 @Controller('admin/accounts')
@@ -15,6 +15,21 @@ export class AdminAccountsController {
   @Get('unlinked-student-accounts') unlinkedStudentAccounts(@Req() r:AuthRequest){return this.service.listUnlinkedStudentAccounts(r.auth!);}
   @Get('student-classes') studentClasses(@Req() r:AuthRequest){return this.service.listStudentClasses(r.auth!);}
   @Get('student-records') studentRecords(@Req() r:AuthRequest){return this.service.listStudentRecords(r.auth!);}
+  @Patch('student-records/:id') updateStudentRecord(@Req() r:AuthRequest,@Param('id',ParseIntPipe) id:number,@Body() dto:UpdateStudentRecordDto){return this.service.updateStudentRecord(r.auth!,id,dto);}
+  @Post('student-records/:id/account') createStudentRecordAccount(@Req() r:AuthRequest,@Param('id',ParseIntPipe) id:number,@Body() dto:CreateStaffAccountDto){return this.service.createStudentRecordAccount(r.auth!,id,dto);}
+  @Delete('student-records/:id') deleteStudentRecord(@Req() r:AuthRequest,@Param('id',ParseIntPipe) id:number){return this.service.deleteStudentRecord(r.auth!,id);}
+  @Get('classes') classes(@Req() r:AuthRequest){return this.service.listClasses(r.auth!);}
+  @Get('classes/:id/students') classStudents(@Req() r:AuthRequest,@Param('id',ParseIntPipe) id:number){return this.service.listClassStudents(r.auth!,id);}
+  @Get('faculties') faculties(@Req() r:AuthRequest){return this.service.listFaculties(r.auth!);}
+  @Post('classes') createClass(@Req() r:AuthRequest,@Body() dto:CreateClassDto){return this.service.createClass(r.auth!,dto);}
+  @Patch('classes/:id') updateClass(@Req() r:AuthRequest,@Param('id',ParseIntPipe) id:number,@Body() dto:UpdateClassDto){return this.service.updateClass(r.auth!,id,dto);}
+  @Delete('classes/:id') deleteClass(@Req() r:AuthRequest,@Param('id',ParseIntPipe) id:number){return this.service.deleteClass(r.auth!,id);}
+  @Get('staff-records') staffRecords(@Req() r:AuthRequest){return this.service.listStaffRecords(r.auth!);}
+  @Post('staff-records') createStaffRecord(@Req() r:AuthRequest,@Body() dto:CreateStaffRecordDto){return this.service.createStaffRecord(r.auth!,dto);}
+  @Post('staff-records/:id/account') createStaffAccount(@Req() r:AuthRequest,@Param('id',ParseIntPipe) id:number,@Body() dto:CreateStaffAccountDto){return this.service.createStaffAccount(r.auth!,id,dto);}
+  @Patch('staff-records/:id') updateStaffRecord(@Req() r:AuthRequest,@Param('id',ParseIntPipe) id:number,@Body() dto:UpdateStaffRecordDto){return this.service.updateStaffRecord(r.auth!,id,dto);}
+  @Delete('staff-records/:id') deleteStaffRecord(@Req() r:AuthRequest,@Param('id',ParseIntPipe) id:number){return this.service.deleteStaffRecord(r.auth!,id);}
+  @Get('departments') departments(@Req() r:AuthRequest){return this.service.listDepartments(r.auth!);}
   @Post('student-profiles') createStudentProfile(@Req() r:AuthRequest,@Body() dto:CreateStudentProfileDto){return this.service.createStudentProfile(r.auth!,dto);}
   @Post('student') createStudentAccount(@Req() r:AuthRequest,@Body() dto:CreateStudentAccountDto){return this.service.createStudentAccount(r.auth!,dto);}
   @Post('student/with-account') createLinkedStudentProfile(@Req() r:AuthRequest,@Body() dto:CreateLinkedStudentProfileDto){return this.service.createLinkedStudentProfile(r.auth!,dto);}
@@ -121,3 +136,119 @@ export class ActivityChangesController {
   constructor(@Inject(WorkflowService) private readonly service:WorkflowService){}
   @Patch(':activityId/time-change') change(@Req() r:AuthRequest,@Param('activityId',ParseIntPipe) id:number,@Body() dto:ActivityChangeDto){return this.service.changeActivityAndNotify(r.auth!,id,dto);}
 }
+
+@ApiTags('academic-activities') @ApiBearerAuth() @ApiCookieAuth() @UseGuards(SessionGuard)
+@Controller('academic-activities')
+export class AcademicActivitiesController {
+  constructor(@Inject(WorkflowService) private readonly service: WorkflowService) {}
+
+  @Get()
+  list(@Req() r: AuthRequest) {
+    return this.service.listAcademicActivities(r.auth!);
+  }
+
+  @Get('next-id')
+  nextId(@Req() r: AuthRequest) {
+    return this.service.nextAcademicActivityId(r.auth!);
+  }
+
+  @Get('budgets')
+  listActivityBudgets(@Req() r: AuthRequest) {
+    return this.service.listActivityBudgets(r.auth!);
+  }
+
+  @Post()
+  create(@Req() r: AuthRequest, @Body() dto: CreateAcademicActivityDto) {
+    return this.service.createAcademicActivity(r.auth!, dto);
+  }
+
+  @Post(':id/budget')
+  createActivityBudget(@Req() r: AuthRequest, @Param('id', ParseIntPipe) id: number, @Body() dto: CreateActivityBudgetDto) {
+    return this.service.createActivityBudget(r.auth!, id, dto);
+  }
+
+  @Patch(':id')
+  update(@Req() r: AuthRequest, @Param('id', ParseIntPipe) id: number, @Body() dto: UpdateAcademicActivityDto) {
+    return this.service.updateAcademicActivity(r.auth!, id, dto);
+  }
+
+  @Patch(':id/submit')
+  submit(@Req() r: AuthRequest, @Param('id', ParseIntPipe) id: number) {
+    return this.service.submitAcademicActivity(r.auth!, id);
+  }
+
+  @Patch(':id/approve')
+  approve(@Req() r: AuthRequest, @Param('id', ParseIntPipe) id: number) {
+    return this.service.approveAcademicActivity(r.auth!, id);
+  }
+
+  @Delete(':id')
+  remove(@Req() r: AuthRequest, @Param('id', ParseIntPipe) id: number) {
+    return this.service.deleteAcademicActivity(r.auth!, id);
+  }
+
+  // --- Ban chỉ đạo ---
+  @Get('steering-committee')
+  listSteering(@Req() r: AuthRequest, @Query('activityId') actId?: string) {
+    return this.service.listSteeringCommittee(r.auth!, actId ? Number(actId) : undefined);
+  }
+
+  @Post('steering-committee')
+  addSteering(@Req() r: AuthRequest, @Body() dto: CreateCommitteeMemberDto) {
+    return this.service.addSteeringMember(r.auth!, dto);
+  }
+
+  @Patch('steering-committee/:id')
+  updateSteering(@Req() r: AuthRequest, @Param('id', ParseIntPipe) id: number, @Body() dto: UpdateCommitteeMemberDto) {
+    return this.service.updateCommitteeMember(r.auth!, 'BANCHIDAO', 'MaChiDao', id, dto);
+  }
+
+  @Delete('steering-committee/:id')
+  removeSteering(@Req() r: AuthRequest, @Param('id', ParseIntPipe) id: number) {
+    return this.service.deleteSteeringMember(r.auth!, id);
+  }
+
+  // --- Ban tổ chức ---
+  @Get('organizing-committee')
+  listOrganizing(@Req() r: AuthRequest, @Query('activityId') actId?: string) {
+    return this.service.listOrganizingCommittee(r.auth!, actId ? Number(actId) : undefined);
+  }
+
+  @Post('organizing-committee')
+  addOrganizing(@Req() r: AuthRequest, @Body() dto: CreateCommitteeMemberDto) {
+    return this.service.addOrganizingMember(r.auth!, dto);
+  }
+
+  @Patch('organizing-committee/:id')
+  updateOrganizing(@Req() r: AuthRequest, @Param('id', ParseIntPipe) id: number, @Body() dto: UpdateCommitteeMemberDto) {
+    return this.service.updateCommitteeMember(r.auth!, 'BANTOCHUC', 'MaBanTC', id, dto);
+  }
+
+  @Delete('organizing-committee/:id')
+  removeOrganizing(@Req() r: AuthRequest, @Param('id', ParseIntPipe) id: number) {
+    return this.service.deleteOrganizingMember(r.auth!, id);
+  }
+
+  // --- Ban hỗ trợ ---
+  @Get('support-committee')
+  listSupport(@Req() r: AuthRequest, @Query('activityId') actId?: string) {
+    return this.service.listSupportCommittee(r.auth!, actId ? Number(actId) : undefined);
+  }
+
+  @Post('support-committee')
+  addSupport(@Req() r: AuthRequest, @Body() dto: CreateCommitteeMemberDto) {
+    return this.service.addSupportMember(r.auth!, dto);
+  }
+
+  @Patch('support-committee/:id')
+  updateSupport(@Req() r: AuthRequest, @Param('id', ParseIntPipe) id: number, @Body() dto: UpdateCommitteeMemberDto) {
+    return this.service.updateCommitteeMember(r.auth!, 'BANHOTRO', 'MaBanHoTro', id, dto);
+  }
+
+  @Delete('support-committee/:id')
+  removeSupport(@Req() r: AuthRequest, @Param('id', ParseIntPipe) id: number) {
+    return this.service.deleteSupportMember(r.auth!, id);
+  }
+}
+
+
