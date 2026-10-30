@@ -28,6 +28,9 @@ function planApprovalHistory(row: Row | null) {
     return [] as Row[];
   }
 }
+function normalizedAcademicYear(value: unknown) {
+  return String(value ?? "").replace(/\s/g, "").replace(/[–—]/g, "-").toLocaleLowerCase("vi");
+}
 const readValue = (row: Row, ...keys: string[]) => {
   for (const key of keys) {
     const actualKey = Object.keys(row).find((candidate) => candidate.toLowerCase() === key.toLowerCase());
@@ -232,6 +235,85 @@ function formatCurrency(value: unknown) {
   if (value === undefined || value === null || value === "") return "—";
   const amount = Number(value);
   return Number.isFinite(amount) ? `${amount.toLocaleString("vi-VN")} đ` : String(value);
+}
+
+function annualPlanDocument(plan: Row, activities: Row[], legacyDetails: Row[]) {
+  const year = label(plan, "NamHoc");
+  const planTitle = label(plan, "TenKeHoach");
+  const status = label(plan, "TrangThai");
+  const totalBudget = activities.reduce((sum, activity) => sum + (Number(readValue(activity, "KinhPhiDuTru")) || 0), 0)
+    + legacyDetails.reduce((sum, activity) => sum + (Number(readValue(activity, "DuToan")) || 0), 0);
+  const committee = (activity: Row, key: string, title: string) => {
+    const members = readValue(activity, key);
+    if (!Array.isArray(members) || !members.length) return `<p><strong>${title}:</strong> Chưa cập nhật</p>`;
+    const list = members.map((member) => {
+      const person = member as Row;
+      const name = [readValue(person, "HocVi"), readValue(person, "HoTen")].filter(Boolean).join(" ") || "Chưa cập nhật";
+      const role = [readValue(person, "ChucDanh"), readValue(person, "ChucVu"), readValue(person, "NhiemVu")].filter(Boolean).join(" · ");
+      return `<li>${escapeHtml(name)}${role ? ` - ${escapeHtml(role)}` : ""}</li>`;
+    }).join("");
+    return `<div class="committee"><strong>${title}</strong><ul>${list}</ul></div>`;
+  };
+  const activitySections = activities.map((activity, index) => {
+    const start = formatDateTime(readValue(activity, "TgDuKien", "TgBatDau")) ?? "Chưa cập nhật";
+    const end = formatDateTime(readValue(activity, "TgKetThuc"));
+    return `<article class="activity">
+      <h2>${index + 1}. ${escapeHtml(label(activity, "TenHoatDong"))}</h2>
+      <table class="facts"><tbody>
+        <tr><th>Loại hoạt động</th><td>${escapeHtml(label(activity, "LoaiHoatDong"))}</td><th>Năm học / học kỳ</th><td>${escapeHtml(label(activity, "NamHoc"))} / ${escapeHtml(label(activity, "HocKy"))}</td></tr>
+        <tr><th>Thời gian</th><td>${escapeHtml(start)}${end ? ` - ${escapeHtml(end)}` : ""}</td><th>Địa điểm</th><td>${escapeHtml(label(activity, "DiaDiem"))}</td></tr>
+        <tr><th>Đối tượng</th><td>${escapeHtml(label(activity, "DoiTuongThamDu"))}</td><th>Số lượng dự kiến</th><td>${escapeHtml(label(activity, "SLSVDuKien"))}</td></tr>
+        <tr><th>Kinh phí dự trù</th><td colspan="3">${escapeHtml(formatCurrency(readValue(activity, "KinhPhiDuTru")))}</td></tr>
+      </tbody></table>
+      <h3>Nội dung</h3><p>${escapeHtml(readValue(activity, "NoiDung") ?? "Chưa cập nhật")}</p>
+      <h3>Tiến độ thực hiện</h3><p>${escapeHtml(readValue(activity, "TienDoTH") ?? "Chưa cập nhật")}</p>
+      <div class="committees">${committee(activity, "banChiDao", "Ban chỉ đạo")}${committee(activity, "banToChuc", "Ban tổ chức")}${committee(activity, "banHoTro", "Ban hỗ trợ")}</div>
+    </article>`;
+  }).join("");
+  const legacyRows = legacyDetails.filter((detail) => !activities.some((activity) =>
+    label(activity, "TenHoatDong").trim().toLocaleLowerCase("vi") === label(detail, "TenHoatDong").trim().toLocaleLowerCase("vi"),
+  )).map((detail, index) => `<tr>
+    <td>${index + 1}</td><td>${escapeHtml(label(detail, "TenHoatDong"))}<br/>${escapeHtml(label(detail, "NoiDung"))}</td>
+    <td>${escapeHtml(formatDateTime(readValue(detail, "ThoiGianDuKien")) ?? "Chưa cập nhật")}${readValue(detail, "ThoiGianKetThuc") ? ` - ${escapeHtml(formatDateTime(readValue(detail, "ThoiGianKetThuc")) ?? "")}` : ""}</td>
+    <td>${escapeHtml(label(detail, "DiaDiem"))}</td><td>${escapeHtml(formatCurrency(readValue(detail, "DuToan")))}</td>
+  </tr>`).join("");
+  const draftLabel = status === "Đã duyệt" ? "KẾ HOẠCH ĐÃ ĐƯỢC PHÊ DUYỆT" : `BẢN DỰ THẢO - ${status.toLocaleUpperCase("vi")}`;
+  return `<!doctype html><html lang="vi"><head><meta charset="utf-8"/><title>Ke-hoach-hoc-thuat-${escapeHtml(year)}</title><style>
+    @page{size:A4;margin:17mm 16mm}*{box-sizing:border-box}body{font-family:Arial,"Times New Roman",sans-serif;color:#172033;font-size:11pt;line-height:1.45;margin:0}h1{font-size:17pt;text-align:center;margin:24px 0 7px;text-transform:uppercase}h2{font-size:13pt;margin:18px 0 8px;color:#172e50}h3{font-size:11pt;margin:12px 0 5px}p{margin:4px 0 9px;white-space:pre-wrap}.header{display:grid;grid-template-columns:1fr 1.2fr;text-align:center;gap:20px;font-size:10pt;font-weight:bold}.header div{padding:3px}.header .sub{font-weight:normal}.status{text-align:center;font-size:10pt;font-weight:bold;color:${status === "Đã duyệt" ? "#166534" : "#a16207"};margin:8px 0}.meta{text-align:center;margin:0 0 16px}.facts{width:100%;border-collapse:collapse;margin:8px 0 12px;font-size:10pt}.facts th,.facts td{border:1px solid #788395;padding:6px;vertical-align:top}.facts th{width:17%;background:#f1f5f9;text-align:left}.activity{break-inside:avoid-page;border-top:1px solid #cbd5e1;padding-top:8px;margin-top:15px}.committees{display:grid;grid-template-columns:1fr 1fr;gap:8px}.committee{break-inside:avoid}.committee ul{margin:4px 0 10px;padding-left:20px}.legacy{width:100%;border-collapse:collapse;font-size:10pt}.legacy th,.legacy td{border:1px solid #788395;padding:6px;vertical-align:top}.legacy th{background:#f1f5f9}.signature{display:grid;grid-template-columns:repeat(3,1fr);gap:12px;text-align:center;margin-top:38px;break-inside:avoid}.signature div{min-height:105px}.signature strong{display:block;text-transform:uppercase}.signspace{height:65px}.footer{font-size:9pt;color:#526174;margin-top:22px;text-align:center}@media print{a{color:inherit;text-decoration:none}}
+  </style></head><body>
+    <div class="header"><div>TRƯỜNG ĐẠI HỌC CÔNG THƯƠNG<br/>THÀNH PHỐ HỒ CHÍ MINH<br/><span class="sub">${escapeHtml(label(plan, "TenKhoa"))}</span></div><div>CỘNG HÒA XÃ HỘI CHỦ NGHĨA VIỆT NAM<br/><span class="sub">Độc lập - Tự do - Hạnh phúc</span></div></div>
+    <h1>Kế hoạch tổ chức các hoạt động học thuật dành cho sinh viên năm học ${escapeHtml(year)}</h1>
+    <p class="meta">${escapeHtml(label(plan, "SoKeHoach"))}${readValue(plan, "NgayBanHanh") ? ` · Ngày ban hành ${escapeHtml(formatDateTime(readValue(plan, "NgayBanHanh")) ?? "")}` : ""}</p>
+    <div class="status">${escapeHtml(draftLabel)}</div>
+    <p><strong>Tên kế hoạch:</strong> ${escapeHtml(planTitle)}</p><p><strong>Khoa:</strong> ${escapeHtml(label(plan, "TenKhoa"))}${readValue(plan, "TenBM") ? ` · Bộ môn: ${escapeHtml(label(plan, "TenBM"))}` : ""}</p>
+    ${readValue(plan, "CanCu") ? `<h2>Căn cứ</h2><p>${escapeHtml(readValue(plan, "CanCu"))}</p>` : ""}
+    ${(readValue(plan, "MucDich") || readValue(plan, "YeuCau")) ? `<h2>1. Mục đích, yêu cầu</h2>${readValue(plan, "MucDich") ? `<p><strong>Mục đích:</strong> ${escapeHtml(readValue(plan, "MucDich"))}</p>` : ""}${readValue(plan, "YeuCau") ? `<p><strong>Yêu cầu:</strong> ${escapeHtml(readValue(plan, "YeuCau"))}</p>` : ""}` : ""}
+    ${readValue(plan, "NoiDung") ? `<h2>2. Nội dung kế hoạch</h2><p>${escapeHtml(readValue(plan, "NoiDung"))}</p>` : ""}
+    <h2>${readValue(plan, "NoiDung") ? "3" : "2"}. Danh mục hoạt động học thuật đã được khoa duyệt</h2>
+    ${activitySections || `<p>Chưa có hoạt động học thuật được gộp vào kế hoạch.</p>`}
+    ${legacyRows ? `<h2>${readValue(plan, "NoiDung") ? "4" : "3"}. Các hạng mục khác của kế hoạch</h2><table class="legacy"><thead><tr><th>#</th><th>Hoạt động / nội dung</th><th>Thời gian</th><th>Địa điểm</th><th>Dự toán</th></tr></thead><tbody>${legacyRows}</tbody></table>` : ""}
+    <h2>Kinh phí dự trù tổng hợp</h2><p><strong>Tổng dự toán các hoạt động:</strong> ${escapeHtml(formatCurrency(totalBudget))}</p>
+    <div class="signature"><div><strong>TRƯỞNG KHOA</strong><div class="signspace"></div><span>Ký, ghi rõ họ tên</span></div><div><strong>PHÒNG KHCN</strong><div class="signspace"></div><span>Ký, ghi rõ họ tên</span></div><div><strong>BAN GIÁM HIỆU</strong><div class="signspace"></div><span>Ký, ghi rõ họ tên</span></div></div>
+    <p class="footer">Biểu mẫu được tổng hợp từ các hoạt động học thuật đã được khoa duyệt trong hệ thống quản lý công tác học thuật.</p>
+  </body></html>`;
+}
+
+function exportAnnualPlanPdf(plan: Row, activities: Row[], legacyDetails: Row[]) {
+  const printWindow = window.open("", "_blank", "width=1050,height=800");
+  if (!printWindow) return false;
+  printWindow.document.open();
+  printWindow.document.write(annualPlanDocument(plan, activities, legacyDetails));
+  printWindow.document.close();
+  let didPrint = false;
+  const print = () => {
+    if (didPrint || printWindow.closed) return;
+    didPrint = true;
+    printWindow.focus();
+    printWindow.print();
+  };
+  printWindow.addEventListener("load", () => window.setTimeout(print, 200), { once: true });
+  window.setTimeout(print, 800);
+  return true;
 }
 
 function PasswordField({ title, name, required = false, minLength }: { title: string; name: string; required?: boolean; minLength?: number }) {
@@ -560,6 +642,30 @@ export default function BusinessPanel({ sectionId, user, initialActivityId }: { 
     } catch (cause) { setError(cause instanceof Error ? cause.message : "Không tải được chi tiết."); }
   }
 
+  async function openPlan(id: string) {
+    setSelectedId(id);
+    setDetail(null);
+    setError("");
+    try {
+      const canLoadActivityOptions = user.roles.some((role) => ["ADMIN", "CANBOKHOA"].includes(role.toUpperCase()));
+      const [planValue, activityValue] = await Promise.all([
+        workflowRequest<unknown>(`/plans/${id}`),
+        canLoadActivityOptions ? workflowRequest<unknown>("/academic-activities").catch(() => []) : Promise.resolve([]),
+      ]);
+      const plan = planValue && typeof planValue === "object" && !Array.isArray(planValue) ? planValue as Row : null;
+      if (!plan) throw new Error("Không thể tải thông tin kế hoạch.");
+      const activities = Array.isArray(activityValue) ? activityValue as Row[] : [];
+      const linkedActivities = readValue(plan, "hoatDongHocThuat");
+      setDetail(plan);
+      setApprovedActivities(activities.filter((activity) => label(activity, "TrangThai") === "Đã duyệt"));
+      setSelectedApprovedActivities(Array.isArray(linkedActivities)
+        ? linkedActivities.map((activity) => String(readValue(activity as Row, "MaHD"))).filter((activityId) => activityId !== "undefined")
+        : []);
+    } catch (cause) {
+      setError(cause instanceof Error ? cause.message : "Không tải được kế hoạch.");
+    }
+  }
+
   async function submit(event: FormEvent<HTMLFormElement>, action: (values: FormData) => Promise<unknown>) {
     event.preventDefault();
     await action(new FormData(event.currentTarget));
@@ -594,9 +700,28 @@ export default function BusinessPanel({ sectionId, user, initialActivityId }: { 
   });
   const displayRows = sectionId === "overview" ? sortByActivityTime(rows) : rows;
   const canManagePlans = user.roles.some((role) => ["ADMIN", "CANBOKHOA", "GIANGVIEN"].includes(role));
+  const canSelectApprovedActivities = user.roles.some((role) => ["ADMIN", "CANBOKHOA"].includes(role.toUpperCase()));
+  const canPublishPlanNews = user.roles.some((role) => ["ADMIN", "CANBOKHOA", "TRUONGKHOA", "HIEUTRUONG"].includes(role.toUpperCase()));
   const planStatus = detail ? label(detail, "TrangThai") : "";
   const planActivities = detail && Array.isArray(readValue(detail, "hoatDong")) ? readValue(detail, "hoatDong") as Row[] : [];
-  const planBudgetTotal = planActivities.reduce((sum, activity) => sum + (Number(readValue(activity, "DuToan")) || 0), 0);
+  const planLinkedActivities = detail && Array.isArray(readValue(detail, "hoatDongHocThuat")) ? readValue(detail, "hoatDongHocThuat") as Row[] : [];
+  const visibleLegacyPlanActivities = planActivities.filter((activity) => !planLinkedActivities.some((linked) =>
+    label(linked, "TenHoatDong").trim().toLocaleLowerCase("vi") === label(activity, "TenHoatDong").trim().toLocaleLowerCase("vi"),
+  ));
+  const planBudgetTotal = visibleLegacyPlanActivities.reduce((sum, activity) => sum + (Number(readValue(activity, "DuToan")) || 0), 0)
+    + planLinkedActivities.reduce((sum, activity) => sum + (Number(readValue(activity, "KinhPhiDuTru")) || 0), 0);
+  const planCandidateActivities = approvedActivities.filter((activity) => {
+    if (label(activity, "TrangThai") !== "Đã duyệt") return false;
+    const activityYear = readValue(activity, "NamHoc");
+    if (activityYear && normalizedAcademicYear(activityYear) !== normalizedAcademicYear(readValue(detail ?? {}, "NamHoc"))) return false;
+    const activityFaculty = readValue(activity, "MaKhoa");
+    const planFaculty = readValue(detail ?? {}, "MaKhoa");
+    if (planFaculty && String(activityFaculty ?? "") !== String(planFaculty)) return false;
+    const planDepartment = readValue(detail ?? {}, "MaBM");
+    if (planDepartment && String(readValue(activity, "MaBM")) !== String(planDepartment)) return false;
+    const activityPlan = readValue(activity, "MaKeHoachKhoa", "MaKeHoach");
+    return !activityPlan || String(activityPlan) === selectedId;
+  });
   const canEditPlan = canManagePlans && ["Dự thảo", "Cần bổ sung"].includes(planStatus);
   const currentPlanStage = planApprovalStages.find((stage) => stage.status === planStatus);
   const canReviewPlan = Boolean(currentPlanStage && (user.roles.includes("ADMIN") || currentPlanStage.roles.some((role) => user.roles.includes(role))));
@@ -692,7 +817,7 @@ export default function BusinessPanel({ sectionId, user, initialActivityId }: { 
         </form>
       </section>}
       <section className={s.card}>
-        <h2>Kế hoạch đã lập</h2>{rows.length ? <div className={s.businessList}>{rows.map((row, index) => { const id = String(identifier(row, "MaKeHoach")); const status = label(row, "TrangThai"); return <article key={`plan-${id}-${index}`}><div><strong>{label(row, "TenKeHoach")}</strong><span>{label(row, "SoKeHoach")} · {label(row, "NamHoc")} · {status}</span></div><div className={s.businessActions}><button type="button" className={s.secondaryButton} onClick={() => { setSelectedId(id); setSelectedApprovedActivities([]); void selected("/plans/", id); void workflowRequest<Row[]>("/academic-activities").then((items) => setApprovedActivities(items.filter((item) => label(item, "TrangThai") === "Đã duyệt"))).catch(() => setApprovedActivities([])); }}>Xem</button>{canManagePlans && ["Dự thảo", "Cần bổ sung"].includes(status) && <button type="button" className={s.secondaryButton} onClick={() => { setSelectedId(id); void selected("/plans/", id); }}>Chỉnh sửa</button>}</div></article>; })}</div> : <p className={s.emptyMessage}>Chưa có kế hoạch.</p>}
+        <h2>Kế hoạch đã lập</h2>{rows.length ? <div className={s.businessList}>{rows.map((row, index) => { const id = String(identifier(row, "MaKeHoach")); const status = label(row, "TrangThai"); return <article key={`plan-${id}-${index}`}><div><strong>{label(row, "TenKeHoach")}</strong><span>{label(row, "SoKeHoach")} · {label(row, "NamHoc")} · {status}</span></div><div className={s.businessActions}><button type="button" className={s.secondaryButton} onClick={() => void openPlan(id)}>Xem kế hoạch</button>{canManagePlans && ["Dự thảo", "Cần bổ sung"].includes(status) && <button type="button" className={s.secondaryButton} onClick={() => void openPlan(id)}>Chỉnh sửa</button>}</div></article>; })}</div> : <p className={s.emptyMessage}>Chưa có kế hoạch.</p>}
         {detail && readValue(detail, "TenKeHoach") !== undefined && <>
           <section className={s.planDetailCard} aria-label="Thông tin kế hoạch năm học">
             <header className={s.planDetailHeader}>
@@ -719,10 +844,10 @@ export default function BusinessPanel({ sectionId, user, initialActivityId }: { 
             </div>
           </section>
           <section className={s.planActivitiesCard} aria-label="Hoạt động và dự toán của kế hoạch">
-            <header className={s.planActivitiesHeader}><div><h3>Hoạt động và dự toán</h3><span>{planActivities.length} hoạt động trong kế hoạch</span></div><strong>Tổng dự toán: {formatCurrency(planBudgetTotal)}</strong></header>
-            {planActivities.length ? <div className={s.planActivityTableWrap}><table className={s.planActivityTable}>
+            <header className={s.planActivitiesHeader}><div><h3>Hạng mục kế hoạch nhập trực tiếp</h3><span>{visibleLegacyPlanActivities.length} hạng mục</span></div><strong>Tổng dự toán: {formatCurrency(visibleLegacyPlanActivities.reduce((sum, activity) => sum + (Number(readValue(activity, "DuToan")) || 0), 0))}</strong></header>
+            {visibleLegacyPlanActivities.length ? <div className={s.planActivityTableWrap}><table className={s.planActivityTable}>
               <thead><tr><th>Hoạt động / nội dung</th><th>Thời gian</th><th>Hạn đăng ký</th><th>Địa điểm / đối tượng</th><th>Chỉ tiêu</th><th>Người phụ trách</th><th>Dự toán</th><th>Trạng thái</th></tr></thead>
-              <tbody>{planActivities.map((activity, index) => {
+              <tbody>{visibleLegacyPlanActivities.map((activity, index) => {
                 const activityId = String(readValue(activity, "MaChiTiet") ?? index);
                 const start = formatDateTime(readValue(activity, "ThoiGianDuKien"));
                 const end = formatDateTime(readValue(activity, "ThoiGianKetThuc"));
@@ -736,10 +861,10 @@ export default function BusinessPanel({ sectionId, user, initialActivityId }: { 
                   <td>{label(activity, "ChiTieu")}</td>
                   <td>{label(activity, "NguoiPhuTrach")}</td>
                   <td>{formatCurrency(readValue(activity, "DuToan"))}</td>
-                  <td><span className={s.planActivityStatus}>{status}</span>{canManagePlans && planStatus === "Đã duyệt" && status !== "Đã tạo" && <button type="button" className={s.secondaryButton} disabled={busy} onClick={async () => { const result = await run(`/plans/details/${activityId}/publish`, "POST", {}, "Đã tạo hoạt động từ kế hoạch đã duyệt."); if (result) await selected(`/plans/${selectedId}/`); }}>Tạo hoạt động</button>}</td>
+                  <td><span className={s.planActivityStatus}>{status}</span></td>
                 </tr>;
               })}</tbody>
-            </table></div> : <p className={s.emptyMessage}>Kế hoạch chưa có hoạt động chi tiết.</p>}
+            </table></div> : <p className={s.emptyMessage}>Kế hoạch chưa có hạng mục nhập trực tiếp.</p>}
           </section>
           <div className={s.planApprovalFlow}>
             <h3>Quy trình ký duyệt kế hoạch</h3>
@@ -754,11 +879,52 @@ export default function BusinessPanel({ sectionId, user, initialActivityId }: { 
               </li>;
             })}</ol>
           </div>
-          {canEditPlan && approvedActivities.length > 0 && <div className={s.card} style={{ marginBottom: "16px", padding: "16px" }}><h3>Hoạt động đã được duyệt</h3>{approvedActivities.map((activity) => { const id = String(readValue(activity, "MaHD")); return <label key={id} style={{ display: "flex", gap: "10px", padding: "8px 0", alignItems: "center" }}><input type="checkbox" checked={selectedApprovedActivities.includes(id)} onChange={(e) => setSelectedApprovedActivities((current) => e.target.checked ? [...current, id] : current.filter((value) => value !== id))} /><span><strong>{label(activity, "TenHoatDong")}</strong> · {label(activity, "LoaiHoatDong")} · Mã HĐ {id}</span></label>; })}<button type="button" className={s.primary} disabled={busy || !selectedApprovedActivities.length} onClick={async () => { for (const id of selectedApprovedActivities) { const activity = approvedActivities.find((item) => String(readValue(item, "MaHD")) === id); if (activity) await run(`/plans/${selectedId}/activities`, "POST", { tenHoatDong: label(activity, "TenHoatDong"), noiDung: readValue(activity, "NoiDung"), thoiGianDuKien: readValue(activity, "TgDuKien") || undefined, diaDiem: readValue(activity, "DiaDiem"), doiTuong: readValue(activity, "DoiTuongThamDu"), chiTieu: readValue(activity, "SLSVDuKien") ? Number(readValue(activity, "SLSVDuKien")) : undefined, duToan: 0 }); } setSelectedApprovedActivities([]); await selected(`/plans/${selectedId}/`); }}>Thêm vào kế hoạch</button></div>}
-          {canEditPlan && <form className={s.businessForm} onSubmit={(e) => submit(e, (v) => run(`/plans/${selectedId}/activities`, "POST", { tenHoatDong: v.get("tenHoatDong"), noiDung: v.get("noiDung"), thoiGianDuKien: v.get("batDau") || undefined, thoiGianKetThuc: v.get("ketThuc") || undefined, hanDangKy: v.get("hanDangKy") || undefined, diaDiem: v.get("diaDiem"), doiTuong: v.get("doiTuong"), chiTieu: v.get("chiTieu") ? Number(v.get("chiTieu")) : undefined, nguoiPhuTrach: v.get("nguoiPhuTrach"), duToan: Number(v.get("duToan") || 0) }))}>
-            <h3>Thêm hoạt động và dự toán</h3><Field title="Tên hoạt động" name="tenHoatDong" required /><Field title="Nội dung" name="noiDung" /><Field title="Bắt đầu" name="batDau" type="datetime-local" /><Field title="Kết thúc" name="ketThuc" type="datetime-local" /><Field title="Hạn đăng ký" name="hanDangKy" type="datetime-local" /><Field title="Địa điểm" name="diaDiem" /><Field title="Đối tượng" name="doiTuong" /><Field title="Chỉ tiêu" name="chiTieu" type="number" min="1" /><Field title="Người phụ trách" name="nguoiPhuTrach" /><Field title="Dự toán (đồng)" name="duToan" type="number" min="0" step="0.01" required /><button className={s.primary} disabled={busy}>Thêm hoạt động</button>
-          </form>}
-          <div className={s.businessActions}>{canEditPlan && <button className={s.primary} disabled={busy} onClick={async () => { const result = await run(`/plans/${selectedId}/submit`, "POST", {}, "Kế hoạch đã được chuyển đến Trưởng khoa để ký và duyệt."); if (result) await selected("/plans/"); }}>Trình ký duyệt</button>}{canReviewPlan && currentPlanStage && <><button className={s.primary} disabled={busy} onClick={async () => { const result = await run(`/plans/${selectedId}/review`, "PATCH", { action: "approve" }, `Đã hoàn tất bước: ${currentPlanStage.title}.`); if (result) await selected("/plans/"); }}>{currentPlanStage.title}</button><button className={s.secondaryButton} disabled={busy} onClick={async () => { const result = await run(`/plans/${selectedId}/review`, "PATCH", { action: "request_changes", ghiChu: "Vui lòng bổ sung thông tin." }, "Đã yêu cầu bổ sung."); if (result) await selected("/plans/"); }}>Yêu cầu bổ sung</button></>}</div>
+          <section className={s.planActivitiesCard} aria-label="Chọn hoạt động học thuật đã được khoa duyệt">
+            <header className={s.planActivitiesHeader}><div><h3>Gộp hoạt động học thuật đã được khoa duyệt</h3><span>{planLinkedActivities.length} hoạt động đã gộp vào kế hoạch năm học {label(detail, "NamHoc")}</span></div><strong>Tổng dự trù: {formatCurrency(planBudgetTotal)}</strong></header>
+            {canSelectApprovedActivities && canEditPlan && <>
+              <p>Hoạt động do giảng viên đề xuất và khoa duyệt sẽ xuất hiện bên dưới. Chọn hoạt động cùng năm học/khoa, sau đó lưu danh sách trước khi trình ký.</p>
+              {planCandidateActivities.length ? <div className={s.planActivityTableWrap}><table className={s.planActivityTable}>
+                <thead><tr><th>Chọn</th><th>Hoạt động / nội dung</th><th>Thời gian / địa điểm</th><th>Đối tượng / số lượng</th><th>Dự trù</th><th>Trạng thái</th></tr></thead>
+                <tbody>{planCandidateActivities.map((activity) => {
+                  const activityId = String(readValue(activity, "MaHD"));
+                  return <tr key={`approved-plan-activity-${activityId}`}>
+                    <td style={{ textAlign: "center" }}><input type="checkbox" aria-label={`Chọn ${label(activity, "TenHoatDong")}`} checked={selectedApprovedActivities.includes(activityId)} onChange={(event) => setSelectedApprovedActivities((current) => event.target.checked ? [...new Set([...current, activityId])] : current.filter((id) => id !== activityId))} /></td>
+                    <td><strong>{label(activity, "TenHoatDong")}</strong><small>{label(activity, "LoaiHoatDong")} · Mã HĐ {activityId}</small><small>{label(activity, "NoiDung")}</small></td>
+                    <td>{formatDateTime(readValue(activity, "TgDuKien", "TgBatDau")) ?? "Chưa cập nhật"}<small>{label(activity, "DiaDiem")}</small></td>
+                    <td>{label(activity, "DoiTuongThamDu")}<small>{label(activity, "SLSVDuKien")} người dự kiến</small></td>
+                    <td>{formatCurrency(readValue(activity, "KinhPhiDuTru"))}</td>
+                    <td><span className={s.planActivityStatus}>{label(activity, "TrangThai")}</span></td>
+                  </tr>;
+                })}</tbody>
+              </table></div> : <p className={s.emptyMessage}>Chưa có hoạt động đã duyệt phù hợp với khoa và năm học này.</p>}
+              <button type="button" className={s.primary} disabled={busy} onClick={() => void run(`/plans/${selectedId}/activities/select`, "POST", { maHDs: selectedApprovedActivities.map(Number) }, "Đã lưu các hoạt động đã duyệt vào kế hoạch năm học.")}>Lưu danh sách hoạt động vào kế hoạch</button>
+            </>}
+            {planLinkedActivities.length ? <div className={s.planActivityTableWrap} style={{ marginTop: "16px" }}><table className={s.planActivityTable}>
+              <thead><tr><th>Hoạt động đã gộp</th><th>Thời gian / địa điểm</th><th>Đối tượng / số lượng</th><th>Dự trù</th><th>Trạng thái duyệt</th></tr></thead>
+              <tbody>{planLinkedActivities.map((activity) => {
+                const activityId = String(readValue(activity, "MaHD"));
+                return <tr key={`linked-plan-activity-${activityId}`}>
+                  <td><strong>{label(activity, "TenHoatDong")}</strong><small>{label(activity, "LoaiHoatDong")} · Mã HĐ {activityId}</small><small>{label(activity, "NoiDung")}</small></td>
+                  <td>{formatDateTime(readValue(activity, "TgDuKien", "TgBatDau")) ?? "Chưa cập nhật"}<small>{label(activity, "DiaDiem")}</small></td>
+                  <td>{label(activity, "DoiTuongThamDu")}<small>{label(activity, "SLSVDuKien")} người dự kiến</small></td>
+                  <td>{formatCurrency(readValue(activity, "KinhPhiDuTru"))}</td>
+                  <td><span className={s.planActivityStatus}>{label(activity, "TrangThai")}</span></td>
+                </tr>;
+              })}</tbody>
+            </table></div> : <p className={s.emptyMessage}>Chưa gộp hoạt động đã được khoa duyệt vào kế hoạch.</p>}
+            <div className={s.businessActions} style={{ marginTop: "16px" }}>
+              <button type="button" className={s.secondaryButton} disabled={!planLinkedActivities.length && !visibleLegacyPlanActivities.length} onClick={() => {
+                if (exportAnnualPlanPdf(detail, planLinkedActivities, visibleLegacyPlanActivities)) setNotice("Đã mở bản in kế hoạch. Trong hộp thoại in, chọn ‘Save as PDF’ hoặc ‘Lưu dưới dạng PDF’ để tải tệp.");
+                else setError("Trình duyệt đã chặn cửa sổ xuất PDF. Hãy cho phép cửa sổ bật lên rồi thử lại.");
+              }}>Xuất kế hoạch PDF</button>
+              {canPublishPlanNews && planStatus === "Đã duyệt" && <button type="button" className={s.primary} disabled={busy || !planLinkedActivities.length} onClick={async () => {
+                const result = await run(`/plans/${selectedId}/publish-news`, "POST", {}, "Đã xử lý đăng thông tin kế hoạch.");
+                if (result && typeof result === "object" && !Array.isArray(result)) setNotice(String(readValue(result as Row, "message") ?? "Đã xử lý đăng thông tin kế hoạch."));
+              }}>Đăng thông tin lên Tin tức & thông báo</button>}
+            </div>
+            {planStatus !== "Đã duyệt" && <p className={s.studentProfilesHint}>Chỉ đăng tin cho sinh viên sau khi kế hoạch hoàn tất các bước ký duyệt đến Ban giám hiệu.</p>}
+          </section>
+          <div className={s.businessActions}>{canEditPlan && <button className={s.primary} disabled={busy || planLinkedActivities.length === 0} title={planLinkedActivities.length === 0 ? "Trước khi trình ký, hãy gộp ít nhất một hoạt động học thuật đã được khoa duyệt." : undefined} onClick={async () => { const result = await run(`/plans/${selectedId}/submit`, "POST", {}, "Kế hoạch đã được chuyển đến Trưởng khoa để ký và duyệt."); if (result) await selected("/plans/"); }}>Trình ký duyệt</button>}{canReviewPlan && currentPlanStage && <><button className={s.primary} disabled={busy} onClick={async () => { const result = await run(`/plans/${selectedId}/review`, "PATCH", { action: "approve" }, `Đã hoàn tất bước: ${currentPlanStage.title}.`); if (result) await selected("/plans/"); }}>{currentPlanStage.title}</button><button className={s.secondaryButton} disabled={busy} onClick={async () => { const result = await run(`/plans/${selectedId}/review`, "PATCH", { action: "request_changes", ghiChu: "Vui lòng bổ sung thông tin." }, "Đã yêu cầu bổ sung."); if (result) await selected("/plans/"); }}>Yêu cầu bổ sung</button></>}</div>
         </>}
       </section>
     </>}

@@ -939,7 +939,27 @@ export class WorkflowService {
     const plan=(await this.db.query(`SELECT p.*,k.TenKhoa,bm.TenBM FROM KEHOACHHOCTHUAT p JOIN KHOA k ON k.MaKhoa=p.MaKhoa LEFT JOIN BOMON bm ON bm.MaBM=p.MaBM WHERE p.MaKeHoach=@p1`,[planId]))[0];
     if(!plan) throw new NotFoundException('Không tìm thấy kế hoạch');
     const activities=await this.db.query(`SELECT * FROM CHITIETKEHOACH WHERE MaKeHoach=@p1 ORDER BY MaChiTiet`,[planId]);
-    return {...plan,hoatDong:activities};
+    const approvedActivities=await this.db.query(`SELECT h.* FROM HOATDONGHOCTHUAT h
+      WHERE COALESCE(h.MaKeHoachKhoa,h.MaKeHoach)=@p1 AND h.TrangThai IN(N'Đã duyệt',N'Đã công bố')
+      ORDER BY h.TgDuKien,h.MaHD`,[planId]);
+    const activityIds=approvedActivities.map((activity:{MaHD:number})=>activity.MaHD);
+    let activitiesWithCommittees: Record<string,unknown>[]=approvedActivities as Record<string,unknown>[];
+    if(activityIds.length){
+      const params=[planId,...activityIds];
+      const inList=activityIds.map((_,index)=>`@p${index+2}`).join(',');
+      const [steering,organizing,support]=await Promise.all([
+        this.db.query(`SELECT MaHD,HoTen,HocVi,ChucDanh,ChucVu FROM BANCHIDAO WHERE MaHD IN(${inList}) ORDER BY MaHD,MaChiDao`,params),
+        this.db.query(`SELECT MaHD,HoTen,HocVi,ChucDanh,ChucVu,NhiemVu FROM BANTOCHUC WHERE MaHD IN(${inList}) ORDER BY MaHD,MaBanTC`,params),
+        this.db.query(`SELECT MaHD,HoTen,HocVi,ChucDanh,ChucVu FROM BANHOTRO WHERE MaHD IN(${inList}) ORDER BY MaHD,MaBanHoTro`,params),
+      ]);
+      activitiesWithCommittees=approvedActivities.map((activity:Record<string,unknown>)=>({
+        ...activity,
+        banChiDao:steering.filter((member:Record<string,unknown>)=>String(member.MaHD)===String(activity.MaHD)),
+        banToChuc:organizing.filter((member:Record<string,unknown>)=>String(member.MaHD)===String(activity.MaHD)),
+        banHoTro:support.filter((member:Record<string,unknown>)=>String(member.MaHD)===String(activity.MaHD)),
+      }));
+    }
+    return {...plan,hoatDong:activities,hoatDongHocThuat:activitiesWithCommittees};
   }
   async createPlan(context: SessionContext, dto: CreatePlanDto) {
     this.require(context, ['ADMIN','CAN_BO_KHOA','CANBOKHOA','GIANG_VIEN','GIANGVIEN','TRUONG_BO_MON','TRUONGBOMON']);
@@ -971,6 +991,113 @@ export class WorkflowService {
     if (!rows[0]) throw new NotFoundException('Không tìm thấy kế hoạch');
     return rows[0];
   }
+  async selectPlanActivities(context:SessionContext,planId:number,dto:{maHDs:number[]}) {
+    this.require(context,['ADMIN','CANBOKHOA']);
+    const activityIds=[...new Set(dto.maHDs.map(Number))];
+    if(activityIds.some((id)=>!Number.isSafeInteger(id)||id<1)) throw new BadRequestException('Danh sách mã hoạt động không hợp lệ');
+    const tx=new sql.Transaction(this.db.pool); await tx.begin();
+    try {
+      const plan=(await new sql.Request(tx).input('planId',sql.BigInt,planId)
+        .query<{MaKhoa:number;MaBM:number|null;NamHoc:string;TrangThai:string}>(`SELECT MaKhoa,MaBM,NamHoc,TrangThai FROM KEHOACHHOCTHUAT WITH(UPDLOCK,HOLDLOCK) WHERE MaKeHoach=@planId`)).recordset[0];
+      if(!plan) throw new NotFoundException('Không tìm thấy kế hoạch');
+      if(!['Dự thảo','Cần bổ sung'].includes(plan.TrangThai)) throw new BadRequestException('Chỉ được chọn hoạt động khi kế hoạch còn là bản nháp hoặc đang cần bổ sung');
+
+      let selected: Array<{MaHD:number;TrangThai:string;NamHoc:string|null;MaBM:number|null;MaKhoa:number|null;MaKeHoach:number|null;MaKeHoachKhoa:number|null}> = [];
+      if(activityIds.length){
+        const request=new sql.Request(tx).input('planId',sql.BigInt,planId);
+        activityIds.forEach((id,index)=>request.input(`activity${index}`,sql.BigInt,id));
+        const idParams=activityIds.map((_,index)=>`@activity${index}`).join(',');
+        selected=(await request.query(`SELECT h.MaHD,h.TrangThai,h.NamHoc,COALESCE(h.MaBM,gv.MaBM) AS MaBM,
+            COALESCE(activityBm.MaKhoa,creatorBm.MaKhoa,cb.MaKhoa) AS MaKhoa,h.MaKeHoach,h.MaKeHoachKhoa
+          FROM HOATDONGHOCTHUAT h WITH(UPDLOCK,HOLDLOCK)
+          LEFT JOIN TAIKHOAN owner ON owner.MaTK=h.NguoiLap
+          LEFT JOIN GIANGVIEN gv ON gv.MaNgDung=owner.MaNgDung
+          LEFT JOIN BOMON activityBm ON activityBm.MaBM=h.MaBM
+          LEFT JOIN BOMON creatorBm ON creatorBm.MaBM=gv.MaBM
+          LEFT JOIN CANBOKHOA cb ON cb.MaNgDung=owner.MaNgDung
+          WHERE h.MaHD IN(${idParams})`)).recordset;
+        if(selected.length!==activityIds.length) throw new NotFoundException('Có hoạt động không tồn tại hoặc đã bị xóa');
+        const normalizedYear=(value:unknown)=>String(value??'').replace(/\s/g,'').replace(/[–—]/g,'-');
+        for(const activity of selected){
+          if(activity.TrangThai!=='Đã duyệt') throw new BadRequestException(`Hoạt động #${activity.MaHD} chưa được khoa duyệt`);
+          if(activity.NamHoc && normalizedYear(activity.NamHoc)!==normalizedYear(plan.NamHoc)) throw new BadRequestException(`Hoạt động #${activity.MaHD} không thuộc năm học ${plan.NamHoc}`);
+          if(!activity.MaKhoa || Number(activity.MaKhoa)!==Number(plan.MaKhoa)) throw new BadRequestException(`Không thể gộp hoạt động #${activity.MaHD}: hoạt động phải thuộc khoa của kế hoạch`);
+          if(plan.MaBM && Number(activity.MaBM)!==Number(plan.MaBM)) throw new BadRequestException(`Hoạt động #${activity.MaHD} không thuộc bộ môn của kế hoạch`);
+          const linkedPlan=activity.MaKeHoachKhoa??activity.MaKeHoach;
+          if(linkedPlan && Number(linkedPlan)!==planId) throw new ConflictException(`Hoạt động #${activity.MaHD} đã được gộp vào kế hoạch khác`);
+        }
+      }
+
+      const notSelected=activityIds.length?` AND MaHD NOT IN(${activityIds.map((_,index)=>`@activity${index}`).join(',')})`:'';
+      const detach=new sql.Request(tx).input('planId',sql.BigInt,planId);
+      activityIds.forEach((id,index)=>detach.input(`activity${index}`,sql.BigInt,id));
+      await detach.query(`UPDATE HOATDONGHOCTHUAT SET MaKeHoachKhoa=NULL
+        WHERE MaKeHoachKhoa=@planId AND TrangThai=N'Đã duyệt'${notSelected}`);
+      const detachLegacy=new sql.Request(tx).input('planId',sql.BigInt,planId);
+      activityIds.forEach((id,index)=>detachLegacy.input(`activity${index}`,sql.BigInt,id));
+      await detachLegacy.query(`UPDATE HOATDONGHOCTHUAT SET MaKeHoach=NULL
+        WHERE MaKeHoach=@planId AND MaKeHoachKhoa IS NULL AND TrangThai=N'Đã duyệt'${notSelected}`);
+
+      if(activityIds.length){
+        const assign=new sql.Request(tx).input('planId',sql.BigInt,planId);
+        activityIds.forEach((id,index)=>assign.input(`activity${index}`,sql.BigInt,id));
+        const idParams=activityIds.map((_,index)=>`@activity${index}`).join(',');
+        const result=await assign.query(`UPDATE HOATDONGHOCTHUAT SET MaKeHoachKhoa=@planId
+          WHERE MaHD IN(${idParams}) AND TrangThai=N'Đã duyệt'
+            AND (MaKeHoachKhoa IS NULL OR MaKeHoachKhoa=@planId)
+            AND (MaKeHoach IS NULL OR MaKeHoach=@planId);
+          SELECT @@ROWCOUNT AS updated;`);
+        if(Number(result.recordset[0]?.updated)!==activityIds.length) throw new ConflictException('Danh sách hoạt động vừa thay đổi; hãy tải lại kế hoạch rồi thử lại');
+      }
+      await tx.commit();
+      return {maKeHoach:planId,soHoatDong:activityIds.length,message:'Đã cập nhật danh sách hoạt động học thuật của kế hoạch'};
+    } catch(error) { try{await tx.rollback();}catch{/* keep the original workflow error */} throw error; }
+  }
+  async publishPlanNews(context:SessionContext,planId:number) {
+    this.require(context,['ADMIN','CANBOKHOA','TRUONGKHOA','HIEUTRUONG']);
+    const tx=new sql.Transaction(this.db.pool); await tx.begin();
+    try {
+      const plan=(await new sql.Request(tx).input('planId',sql.BigInt,planId)
+        .query<{MaKeHoach:number;MaKhoa:number;TenKeHoach:string;NamHoc:string;TrangThai:string;TenKhoa:string}>(`SELECT p.MaKeHoach,p.MaKhoa,p.TenKeHoach,p.NamHoc,p.TrangThai,k.TenKhoa
+          FROM KEHOACHHOCTHUAT p WITH(UPDLOCK,HOLDLOCK) JOIN KHOA k ON k.MaKhoa=p.MaKhoa WHERE p.MaKeHoach=@planId`)).recordset[0];
+      if(!plan) throw new NotFoundException('Không tìm thấy kế hoạch');
+      if(plan.TrangThai!=='Đã duyệt') throw new BadRequestException('Chỉ được đăng thông báo sau khi Ban giám hiệu phê duyệt kế hoạch');
+      const activityCount=(await new sql.Request(tx).input('planId',sql.BigInt,planId)
+        .query<{Total:number}>(`SELECT COUNT(*) AS Total FROM HOATDONGHOCTHUAT WHERE COALESCE(MaKeHoachKhoa,MaKeHoach)=@planId AND TrangThai IN(N'Đã duyệt',N'Đã công bố')`)).recordset[0]?.Total??0;
+      if(!activityCount) throw new BadRequestException('Hãy gộp ít nhất một hoạt động đã được khoa duyệt vào kế hoạch trước khi đăng tin');
+      const title=`Kế hoạch năm học ${plan.NamHoc}: ${plan.TenKeHoach}`;
+      const inserted=await new sql.Request(tx).input('planId',sql.BigInt,planId)
+        .input('faculty',sql.NVarChar(150),plan.TenKhoa).input('year',sql.NVarChar(20),plan.NamHoc)
+        .input('facultyId',sql.BigInt,plan.MaKhoa)
+        .input('type',sql.NVarChar(40),'Kế hoạch học thuật').input('title',sql.NVarChar(250),title)
+        .query(`INSERT INTO THONGBAO(MaTK,MaHD,Loai,TieuDe,NoiDung)
+          OUTPUT INSERTED.MaThongBao
+          SELECT DISTINCT t.MaTK,h.MaHD,@type,@title,
+            CONCAT(N'Kế hoạch năm học ',@year,N' của ',@faculty,N' đã được phê duyệt. Hoạt động: ',h.TenHoatDong,
+              N'. Thời gian: ',COALESCE(CONVERT(nvarchar(30),h.TgDuKien,126),N'Chưa cập nhật'),
+              N'. Địa điểm: ',COALESCE(h.DiaDiem,N'Chưa cập nhật'),
+              N'. Đối tượng: ',COALESCE(h.DoiTuongThamDu,N'Sinh viên'),
+              N'. Nội dung: ',COALESCE(h.NoiDung,N'Vui lòng xem chi tiết hoạt động trên cổng học thuật.'))
+          FROM TAIKHOAN t JOIN SINHVIEN s ON s.MaNgDung=t.MaNgDung
+          JOIN LOP l ON l.MaLop=s.MaLop AND l.MaKhoa=@facultyId
+          CROSS JOIN HOATDONGHOCTHUAT h
+          WHERE t.TrangThai=N'Hoạt động' AND COALESCE(h.MaKeHoachKhoa,h.MaKeHoach)=@planId
+            AND h.TrangThai IN(N'Đã duyệt',N'Đã công bố')
+            AND NOT EXISTS(SELECT 1 FROM THONGBAO old WHERE old.MaTK=t.MaTK AND old.MaHD=h.MaHD AND old.Loai=@type AND old.TieuDe=@title)`);
+      const existing=(await new sql.Request(tx).input('planId',sql.BigInt,planId).input('facultyId',sql.BigInt,plan.MaKhoa)
+        .input('type',sql.NVarChar(40),'Kế hoạch học thuật').input('title',sql.NVarChar(250),title)
+        .query<{Total:number}>(`SELECT COUNT(*) AS Total FROM THONGBAO n JOIN TAIKHOAN t ON t.MaTK=n.MaTK
+          JOIN SINHVIEN s ON s.MaNgDung=t.MaNgDung JOIN LOP l ON l.MaLop=s.MaLop
+          JOIN HOATDONGHOCTHUAT h ON h.MaHD=n.MaHD
+          WHERE t.TrangThai=N'Hoạt động' AND l.MaKhoa=@facultyId AND n.Loai=@type AND n.TieuDe=@title
+            AND COALESCE(h.MaKeHoachKhoa,h.MaKeHoach)=@planId`)).recordset[0]?.Total??0;
+      await tx.commit();
+      const message=inserted.recordset.length
+        ? `Đã gửi ${inserted.recordset.length} thông báo cho sinh viên về ${activityCount} hoạt động.`
+        : existing ? 'Thông tin kế hoạch đã được gửi trước đó; hệ thống không tạo thông báo trùng.' : 'Chưa có tài khoản sinh viên đang hoạt động để nhận thông báo.';
+      return {maKeHoach:planId,soHoatDong:activityCount,soThongBaoMoi:inserted.recordset.length,message};
+    } catch(error) { try{await tx.rollback();}catch{/* keep the original workflow error */} throw error; }
+  }
   async publishPlanActivity(context:SessionContext,detailId:number) {
     this.require(context,['ADMIN','CAN_BO_KHOA','CANBOKHOA','GIANG_VIEN','GIANGVIEN']);
     const detail=(await this.db.query<{MaChiTiet:number;MaKeHoach:number;TenHoatDong:string;NoiDung:string|null;ThoiGianDuKien:Date|null;ThoiGianKetThuc:Date|null;HanDangKy:Date|null;DiaDiem:string|null;ChiTieu:number|null;DuToan:number;TrangThai:string;PlanStatus:string}>(
@@ -1001,9 +1128,24 @@ export class WorkflowService {
   }
   async submitPlan(context: SessionContext, planId: number) {
     this.require(context, ['ADMIN','CAN_BO_KHOA','CANBOKHOA','GIANG_VIEN','GIANGVIEN','TRUONG_BO_MON','TRUONGBOMON']);
-    const rows = await this.db.query(`UPDATE KEHOACHHOCTHUAT SET TrangThai=N'Chờ Trưởng khoa ký duyệt',LichSuDuyet=JSON_MODIFY(COALESCE(LichSuDuyet,N'[]'),'append $',JSON_QUERY(@p2)) OUTPUT INSERTED.MaKeHoach,INSERTED.TrangThai WHERE MaKeHoach=@p1 AND TrangThai IN (N'Dự thảo',N'Cần bổ sung')`, [planId,JSON.stringify({action:'submit',userId:context.userId,role:context.user.roles[0],at:new Date().toISOString()})]);
-    if (!rows[0]) throw new NotFoundException('Không tìm thấy kế hoạch ở trạng thái có thể trình duyệt');
-    return rows[0];
+    const tx=new sql.Transaction(this.db.pool); await tx.begin();
+    try {
+      const plan=(await new sql.Request(tx).input('id',sql.BigInt,planId)
+        .query<{TrangThai:string}>(`SELECT TrangThai FROM KEHOACHHOCTHUAT WITH(UPDLOCK,HOLDLOCK) WHERE MaKeHoach=@id`)).recordset[0];
+      if(!plan) throw new NotFoundException('Không tìm thấy kế hoạch');
+      if(!['Dự thảo','Cần bổ sung'].includes(plan.TrangThai)) throw new BadRequestException('Kế hoạch không ở trạng thái có thể trình duyệt');
+      const activityCount=(await new sql.Request(tx).input('id',sql.BigInt,planId)
+        .query<{Total:number}>(`SELECT COUNT(*) AS Total FROM HOATDONGHOCTHUAT WITH(UPDLOCK,HOLDLOCK)
+          WHERE COALESCE(MaKeHoachKhoa,MaKeHoach)=@id AND TrangThai IN(N'Đã duyệt',N'Đã công bố')`)).recordset[0]?.Total??0;
+      if(!activityCount) throw new BadRequestException('Trước khi trình ký, hãy gộp ít nhất một hoạt động học thuật đã được khoa duyệt vào kế hoạch');
+      const event=JSON.stringify({action:'submit',userId:context.userId,role:context.user.roles[0],at:new Date().toISOString()});
+      const result=await new sql.Request(tx).input('id',sql.BigInt,planId).input('event',sql.NVarChar(sql.MAX),event)
+        .query(`UPDATE KEHOACHHOCTHUAT SET TrangThai=N'Chờ Trưởng khoa ký duyệt',LichSuDuyet=JSON_MODIFY(COALESCE(LichSuDuyet,N'[]'),'append $',JSON_QUERY(@event))
+          OUTPUT INSERTED.MaKeHoach,INSERTED.TrangThai WHERE MaKeHoach=@id AND TrangThai IN(N'Dự thảo',N'Cần bổ sung')`);
+      if(!result.recordset[0]) throw new ConflictException('Trạng thái kế hoạch vừa thay đổi; hãy tải lại và kiểm tra.');
+      await tx.commit();
+      return result.recordset[0];
+    } catch(error) { try{await tx.rollback();}catch{/* keep the original workflow error */} throw error; }
   }
   async reviewPlan(context: SessionContext, planId: number, dto: ReviewPlanDto) {
     const reviewers = ['ADMIN','CAN_BO_KHOA','CANBOKHOA','TRUONGKHOA','PHONG_KHCN','PHONGKHCN','HIEU_TRUONG','HIEUTRUONG'];
@@ -1294,8 +1436,11 @@ export class WorkflowService {
         h.NamHoc,
         h.TgBatDau,
         h.TgKetThuc,
-        kh.MaBM,
-        bm.TenBM,
+        h.MaKeHoach,
+        h.MaKeHoachKhoa,
+        COALESCE(h.MaBM,ownerGv.MaBM,kh.MaBM) AS MaBM,
+        COALESCE(activityBm.TenBM,ownerBm.TenBM,bm.TenBM) AS TenBM,
+        COALESCE(activityBm.MaKhoa,ownerBm.MaKhoa,bm.MaKhoa,kh.MaKhoa,ownerCb.MaKhoa) AS MaKhoa,
         h.TenHoatDong,
         h.LoaiHoatDong,
         h.NoiDung,
@@ -1310,6 +1455,11 @@ export class WorkflowService {
         (SELECT COUNT(*) FROM BANHOTRO bht WHERE bht.MaHD = h.MaHD) AS SoThanhVienHoTro
       FROM HOATDONGHOCTHUAT h
       LEFT JOIN KEHOACHHOCTHUAT kh ON kh.MaKeHoach = COALESCE(h.MaKeHoachKhoa, h.MaKeHoach)
+      LEFT JOIN BOMON activityBm ON activityBm.MaBM=h.MaBM
+      LEFT JOIN TAIKHOAN activityOwner ON activityOwner.MaTK=h.NguoiLap
+      LEFT JOIN GIANGVIEN ownerGv ON ownerGv.MaNgDung=activityOwner.MaNgDung
+      LEFT JOIN BOMON ownerBm ON ownerBm.MaBM=ownerGv.MaBM
+      LEFT JOIN CANBOKHOA ownerCb ON ownerCb.MaNgDung=activityOwner.MaNgDung
       LEFT JOIN BOMON bm ON bm.MaBM = kh.MaBM
       WHERE (@p2 = 1 AND h.TrangThai IN (N'Chờ duyệt', N'Đã duyệt', N'Đã công bố'))
          OR (@p2 = 0 AND h.NguoiLap = CAST(@p1 AS INT))

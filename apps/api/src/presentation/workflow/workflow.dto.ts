@@ -1,5 +1,5 @@
 import { Type } from 'class-transformer';
-import { IsArray, IsBoolean, IsDateString, IsEmail, IsIn, IsInt, IsNotEmpty, IsNumber, IsOptional, IsString, Max, MaxLength, Min, MinLength } from 'class-validator';
+import { ArrayMaxSize, ArrayUnique, IsArray, IsBoolean, IsDateString, IsEmail, IsIn, IsInt, IsNotEmpty, IsNumber, IsOptional, IsString, Max, MaxLength, Min, MinLength } from 'class-validator';
 
 export class CreatePlanDto {
   @IsOptional() @IsString() @MaxLength(50) soKeHoach?: string;
@@ -32,6 +32,10 @@ export class CreatePlanActivityDto {
 export class ReviewPlanDto {
   @IsIn(['approve', 'request_changes', 'reject']) action!: 'approve' | 'request_changes' | 'reject';
   @IsOptional() @IsString() @MaxLength(2000) ghiChu?: string;
+}
+
+export class SelectPlanActivitiesDto {
+  @IsArray() @ArrayMaxSize(200) @ArrayUnique() @IsInt({ each: true }) @Min(1, { each: true }) maHDs!: number[];
 }
 
 export class CreateRoundDto {
