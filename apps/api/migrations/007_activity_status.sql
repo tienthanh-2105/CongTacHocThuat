@@ -3,4 +3,4 @@ IF EXISTS (SELECT 1 FROM sys.check_constraints WHERE name = N'CK_HOATDONG_TRANGT
 IF EXISTS (SELECT 1 FROM sys.check_constraints WHERE name = N'CK_HD_TRANGTHAI')
   ALTER TABLE dbo.HOATDONGHOCTHUAT DROP CONSTRAINT CK_HD_TRANGTHAI;
 ALTER TABLE dbo.HOATDONGHOCTHUAT ADD CONSTRAINT CK_HOATDONG_TRANGTHAI
-  CHECK (TrangThai IN (N'Dự thảo', N'Đã duyệt', N'Từ chối'));
+  CHECK (TrangThai IN (N'Dự thảo', N'Chờ duyệt', N'Đã duyệt', N'Từ chối', N'Đã công bố'));

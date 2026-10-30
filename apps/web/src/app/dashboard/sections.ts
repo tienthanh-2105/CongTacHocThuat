@@ -1,6 +1,7 @@
 export type RoleCode =
   | "ADMIN"
   | "CANBOKHOA"
+  | "TRUONGKHOA"
   | "GIANGVIEN"
   | "SINHVIEN"
   | "PHONGKHCN"
@@ -17,7 +18,7 @@ export type DashboardSection = {
 
 const staff = ["ADMIN", "CANBOKHOA", "GIANGVIEN"] as const;
 const managers = ["ADMIN", "CANBOKHOA", "GIANGVIEN"] as const;
-const allStaff = ["ADMIN", "CANBOKHOA", "GIANGVIEN", "PHONGKHCN", "HIEUTRUONG", "PHONGCTSV"] as const;
+const allStaff = ["ADMIN", "CANBOKHOA", "TRUONGKHOA", "GIANGVIEN", "PHONGKHCN", "HIEUTRUONG", "PHONGCTSV"] as const;
 const allUsers = [...allStaff, "SINHVIEN"] as const;
 
 export const sections: DashboardSection[] = [
@@ -30,14 +31,14 @@ export const sections: DashboardSection[] = [
   { id: "academic-steering", title: "Ban chỉ đạo", detail: "Danh sách và phân công thành viên Ban chỉ đạo các hoạt động học thuật.", roles: ["ADMIN", "CANBOKHOA", "GIANGVIEN"], parentId: "academic-activities" },
   { id: "academic-organizing", title: "Ban tổ chức", detail: "Danh sách và phân công thành viên Ban tổ chức các hoạt động học thuật.", roles: ["ADMIN", "CANBOKHOA", "GIANGVIEN"], parentId: "academic-activities" },
   { id: "academic-support", title: "Ban hỗ trợ", detail: "Danh sách và phân công thành viên Ban hỗ trợ các hoạt động học thuật.", roles: ["ADMIN", "CANBOKHOA", "GIANGVIEN"], parentId: "academic-activities" },
-  { id: "plans", title: "Kế hoạch năm học", detail: "Lập kế hoạch và dự trù kinh phí theo bộ môn; duyệt và tổng hợp kế hoạch chung của khoa.", roles: ["ADMIN", "CANBOKHOA", "GIANGVIEN"] },
+  { id: "plans", title: "Kế hoạch năm học", detail: "Lập kế hoạch và dự trù kinh phí theo bộ môn; Trưởng khoa ký duyệt, Phòng KHCN ký duyệt và Ban giám hiệu phê duyệt.", roles: ["ADMIN", "CANBOKHOA", "TRUONGKHOA", "GIANGVIEN", "PHONGKHCN", "HIEUTRUONG"] },
   { id: "competitions", title: "Tổ chức cuộc thi", detail: "Lập kế hoạch chi tiết, thành lập các ban và phân công công việc cho giảng viên.", roles: [...staff] },
   { id: "registrations", title: "Đăng ký dự thi", detail: "Quản lý thí sinh đăng ký theo cá nhân và đội nhóm.", roles: [...staff] },
   { id: "support", title: "Hỗ trợ & cổ vũ", detail: "Đăng ký tham dự, phân bổ hoạt động hỗ trợ và cổ vũ.", roles: [...staff] },
   { id: "attendance", title: "Điểm danh", detail: "Tạo mã QR cho hoạt động hoặc ghi nhận điểm danh theo danh sách ký tên.", roles: [...staff] },
   { id: "training-points", title: "Điểm rèn luyện", detail: "Ghi nhận điểm rèn luyện khi sinh viên dự thi, hỗ trợ và cổ vũ.", roles: ["ADMIN", "PHONGCTSV"] },
   { id: "results", title: "Đề tài & kết quả", detail: "Quản lý đề tài dự thi, kết quả cuộc thi và các đội đạt giải.", roles: [...allUsers] },
-  { id: "expenses", title: "Kinh phí hoạt động", detail: "Quản lý toàn bộ dự trù kinh phí của các hoạt động học thuật.", roles: [...staff] },
+  { id: "expenses", title: "Kinh phí hoạt động", detail: "Lập dự trù riêng theo hoạt động, gửi khoa duyệt và xuất file tổng hợp các khoản đã duyệt.", roles: [...staff, "TRUONGKHOA"] },
   { id: "seminars", title: "Seminar học thuật", detail: "Quản lý thông tin, thời gian, địa điểm và người tham dự seminar.", roles: [...allUsers] },
   { id: "news", title: "Tin tức & thông báo", detail: "Quản lý tin tức và thông báo tổ chức cuộc thi, seminar học thuật.", roles: [...allUsers] },
   { id: "reports", title: "Thống kê & báo cáo", detail: "Thống kê, lập biên bản và báo cáo hoạt động, chi phí trong năm theo bộ môn và khoa.", roles: ["ADMIN", "CANBOKHOA", "GIANGVIEN", "PHONGCTSV"] },

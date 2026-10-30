@@ -37,10 +37,13 @@ Flutter: mở `apps/flutter` bằng Android Studio, cấu hình địa chỉ API
 ## Kiểm tra mã nguồn
 
 ```powershell
+npm run test:unit
 npm run typecheck
 npm run lint
 npm run build
 npm run check:mobile
 ```
+
+`npm run test:unit` chạy các kiểm thử nghiệp vụ dùng mock, không cần kết nối SQL Server. Checklist thao tác từng phân hệ nằm tại `docs/testing/test-cases-nghiep-vu.md`.
 
 `npm run test:api` dùng SQL Server thật và cần database được cấu hình sẵn. Lệnh này có thể tạo/xóa dữ liệu kiểm thử.

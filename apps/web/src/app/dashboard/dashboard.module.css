@@ -1021,6 +1021,26 @@
   box-shadow: 0 10px 20px #245fe533;
   transform: translateY(-1px);
 }
+.budgetExportButton {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 9px;
+  min-height: 46px;
+  padding: 11px 18px;
+  border-radius: 10px;
+  font-size: 13px;
+  letter-spacing: 0.1px;
+}
+.budgetExportButton svg {
+  width: 17px;
+  height: 17px;
+}
+.budgetExportButton:disabled {
+  cursor: not-allowed;
+  opacity: 0.55;
+  box-shadow: none;
+}
 .businessPanel { gap: 18px; }
 .card,
 .metric,
@@ -1611,6 +1631,13 @@
   overflow: hidden;
 }
 
+.usersPanelWrapper .tableCard .modernTable th:last-child,
+.usersPanelWrapper .tableCard .modernTable td:last-child {
+  width: 250px;
+  min-width: 250px;
+  overflow: visible;
+}
+
 .userCell {
   display: flex;
   align-items: baseline;
@@ -2088,3 +2115,90 @@
 .attendanceQr span { color: #71839a; font-size: 13px; }
 .attendanceQr a { color: #1769e8; font-size: 13px; font-weight: 600; text-decoration: none; }
 .attendanceQr a:hover { text-decoration: underline; }
+
+.planApprovalFlow {
+  margin: 18px 0;
+  padding: 18px;
+  border: 1px solid #dce6f4;
+  border-radius: 14px;
+  background: linear-gradient(145deg, #f8fbff, #fff);
+}
+.planApprovalFlow h3 { margin: 0 0 14px; color: #20344e; }
+.planApprovalFlow ol {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 12px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+.planApprovalFlow li {
+  display: flex;
+  flex-direction: column;
+  gap: 7px;
+  min-width: 0;
+  padding: 13px;
+  border: 1px solid #e3eaf4;
+  border-radius: 11px;
+  background: #fff;
+}
+.planApprovalFlow li strong { color: #344966; font-size: 14px; }
+.planApprovalFlow li span { color: #71839a; font-size: 12px; line-height: 1.5; }
+.planApprovalFlow li.planApprovalDone { border-color: #a8dfbf; background: #f1fbf4; }
+.planApprovalFlow li.planApprovalDone strong { color: #15703c; }
+.planApprovalFlow li.planApprovalCurrent { border-color: #86b7ff; background: #f1f7ff; box-shadow: inset 0 0 0 1px #d6e7ff; }
+.planApprovalFlow li.planApprovalCurrent strong { color: #1555b0; }
+.planDetailCard, .planActivitiesCard { margin: 16px 0; padding: 20px; border: 1px solid #dce6f3; border-radius: 13px; background: #fff; }
+.planDetailHeader, .planActivitiesHeader { display: flex; align-items: flex-start; justify-content: space-between; gap: 16px; margin-bottom: 18px; }
+.planDetailHeader > div > span { color: #547397; font-size: 11px; font-weight: 750; letter-spacing: .08em; }
+.planDetailHeader h3, .planActivitiesHeader h3 { margin: 4px 0; color: #183d70; font-size: 19px; }
+.planDetailHeader p, .planActivitiesHeader span { margin: 0; color: #70839a; font-size: 13px; }
+.planStatusBadge, .planActivityStatus { display: inline-flex; align-items: center; width: fit-content; border: 1px solid #d8e5f5; border-radius: 999px; padding: 6px 11px; background: #f2f7ff; color: #285784; font-size: 12px; font-weight: 700; white-space: nowrap; }
+.planDetailGrid { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 10px; }
+.planDetailItem { display: flex; flex-direction: column; gap: 5px; min-width: 0; padding: 12px 13px; border: 1px solid #e8eef6; border-radius: 9px; background: #f9fbfe; }
+.planDetailItem span { color: #71839a; font-size: 12px; }
+.planDetailItem strong { color: #263f5e; font-size: 14px; font-weight: 600; line-height: 1.5; overflow-wrap: anywhere; white-space: pre-wrap; }
+.planActivitiesHeader { align-items: center; margin-bottom: 14px; }
+.planActivitiesHeader > strong { color: #1555b0; font-size: 15px; }
+.planActivityTableWrap { width: 100%; overflow-x: auto; }
+.planActivityTable { width: 100%; min-width: 1040px; border-collapse: collapse; color: #29415f; font-size: 12px; }
+.planActivityTable th, .planActivityTable td { padding: 10px 9px; border: 1px solid #dce5f0; text-align: left; vertical-align: top; }
+.planActivityTable th { background: #edf4ff; color: #1f456f; font-size: 11px; text-align: center; white-space: nowrap; }
+.planActivityTable td strong, .planActivityTable td small { display: block; }
+.planActivityTable td strong { color: #203c5e; font-size: 13px; }
+.planActivityTable td small { margin-top: 4px; color: #71839a; line-height: 1.45; }
+.planActivityTable td:last-child { min-width: 130px; }
+.planActivityTable td:last-child .secondaryButton { margin-top: 7px; padding: 7px 9px; font-size: 11px; }
+.competitionResultsForm { margin-top: 18px; padding: 22px; border: 1px solid #dce6f3; border-radius: 12px; background: #fff; }
+.competitionResultsHeading { display: grid; justify-items: center; gap: 5px; margin: 0 0 20px; text-align: center; }
+.competitionResultsHeading > span { color: #60748c; font-size: 11px; font-weight: 750; letter-spacing: .09em; }
+.competitionResultsHeading h3 { margin: 4px 0; color: #183d70; font-size: 21px; letter-spacing: .035em; }
+.competitionResultsHeading strong { color: #294766; font-size: 16px; }
+.competitionResultsHeading small { color: #75869b; font-size: 12px; }
+.competitionResultsTableWrap { width: 100%; overflow-x: auto; }
+.competitionResultsTable { width: 100%; border-collapse: collapse; color: #29415f; font-size: 13px; }
+.competitionResultsTable th, .competitionResultsTable td { padding: 10px 9px; border: 1px solid #cfdae8; text-align: left; vertical-align: top; }
+.competitionResultsTable th { background: #edf4ff; color: #1f456f; font-weight: 700; text-align: center; white-space: nowrap; }
+.competitionResultsTable td:nth-child(1), .competitionResultsTable td:nth-child(3), .competitionResultsTable td:nth-child(5), .competitionResultsTable td:nth-child(6) { text-align: center; }
+.registrationTableWrap { width: 100%; overflow-x: auto; margin: 14px 0 18px; border: 1px solid #dce5f0; border-radius: 11px; }
+.registrationTable { width: 100%; min-width: 1050px; border-collapse: collapse; color: #29415f; font-size: 12px; }
+.registrationTable th, .registrationTable td { padding: 10px 9px; border: 1px solid #e1e8f1; text-align: left; vertical-align: top; }
+.registrationTable th { background: #edf4ff; color: #1f456f; font-size: 11px; font-weight: 700; text-align: center; white-space: nowrap; }
+.registrationTable td strong, .registrationTable td small { display: block; }
+.registrationTable td strong { color: #203c5e; font-size: 12px; }
+.registrationTable td small { margin-top: 4px; color: #71839a; line-height: 1.45; overflow-wrap: anywhere; }
+.registrationTable tbody tr:nth-child(even) { background: #fafcff; }
+.registrationTable tbody tr:hover { background: #f2f7ff; }
+.registrationTable tbody tr.registrationRowSelected { background: #edf5ff; }
+.registrationIdButton { padding: 3px 5px; border: 0; border-radius: 5px; background: transparent; color: #1d58c6; font: inherit; font-weight: 700; cursor: pointer; white-space: nowrap; }
+.registrationIdButton:hover { background: #e1edff; text-decoration: underline; }
+.registrationStatus { display: inline-flex; align-items: center; min-height: 24px; padding: 4px 8px; border: 1px solid #d8e5f5; border-radius: 999px; background: #f2f7ff; color: #285784; font-size: 11px; font-weight: 650; white-space: nowrap; }
+@media (max-width: 720px) {
+  .planApprovalFlow ol { grid-template-columns: 1fr; }
+  .planDetailCard, .planActivitiesCard { padding: 15px 12px; }
+  .planDetailGrid { grid-template-columns: 1fr; }
+  .planDetailHeader, .planActivitiesHeader { flex-direction: column; align-items: flex-start; }
+  .competitionResultsForm { padding: 15px 10px; }
+  .competitionResultsTable { min-width: 720px; }
+  .registrationTable { min-width: 1000px; }
+}

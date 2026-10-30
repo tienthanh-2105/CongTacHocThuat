@@ -193,6 +193,8 @@ export default function Dashboard() {
             return (
               <button
                 key={item.id}
+                data-section-id={item.id}
+                data-section-parent={item.parentId}
                 onClick={() => handleSidebarClick(item)}
                 className={`${activeSectionId === item.id ? s.active : ""} ${isSub ? s.sidebarSubItem : ""}`}
                 aria-current={activeSectionId === item.id ? "page" : undefined}

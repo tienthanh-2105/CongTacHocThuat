@@ -8,10 +8,26 @@ import { canApproveSettlements, canManageActivities } from "./sections";
 import s from "./dashboard.module.css";
 
 type Row = Record<string, unknown>;
+const planApprovalStages = [
+  { status: "Chờ Trưởng khoa ký duyệt", code: "faculty-dean", title: "Trưởng khoa ký và duyệt" , roles: ["TRUONGKHOA", "CANBOKHOA"] },
+  { status: "Chờ Phòng KHCN ký duyệt", code: "research-office", title: "Phòng KHCN ký duyệt", roles: ["PHONGKHCN"] },
+  { status: "Chờ Ban giám hiệu duyệt", code: "university-board", title: "Ban giám hiệu duyệt", roles: ["HIEUTRUONG"] },
+] as const;
 const label = (row: Row, ...keys: string[]) => {
   for (const key of keys) if (row[key] !== undefined && row[key] !== null && row[key] !== "") return String(row[key]);
   return "—";
 };
+function planApprovalHistory(row: Row | null) {
+  const raw = row ? readValue(row, "LichSuDuyet") : undefined;
+  if (Array.isArray(raw)) return raw.filter((item): item is Row => Boolean(item) && typeof item === "object");
+  if (typeof raw !== "string") return [] as Row[];
+  try {
+    const history: unknown = JSON.parse(raw);
+    return Array.isArray(history) ? history.filter((item): item is Row => Boolean(item) && typeof item === "object") : [];
+  } catch {
+    return [] as Row[];
+  }
+}
 const readValue = (row: Row, ...keys: string[]) => {
   for (const key of keys) {
     const actualKey = Object.keys(row).find((candidate) => candidate.toLowerCase() === key.toLowerCase());
@@ -20,6 +36,118 @@ const readValue = (row: Row, ...keys: string[]) => {
   }
   return undefined;
 };
+function csvCell(value: unknown) {
+  let text = String(value ?? "");
+  if (/^[=+@\-\t\r]/.test(text)) text = `'${text}`;
+  return `"${text.replaceAll('"', '""')}"`;
+}
+function downloadBudgetEstimate(rows: Row[], academicYear: string) {
+  const approved = rows.filter((row) => label(row, "TrangThaiDuTru") === "Đã duyệt");
+  if (!approved.length) return;
+  const columns = ["Năm học", "Hoạt động", "Mã hoạt động", "Nội dung dự trù", "Số lượng", "Đơn vị tính", "Đơn giá", "Số tiền", "Thuyết minh", "Nguồn kinh phí", "Ghi chú"];
+  const lines = [
+    ["TỔNG HỢP DỰ TRÙ KINH PHÍ ĐÃ ĐƯỢC KHOA DUYỆT"].map(csvCell).join(","),
+    ["Năm học", "Hoạt động", "Mã hoạt động", "Số khoản", "", "", "", "Tổng dự trù (đồng)"].map(csvCell).join(","),
+  ];
+  const grouped = approved.reduce((groups, row) => {
+    const id = String(readValue(row, "MaHD") ?? "");
+    const existing = groups.get(id) ?? [];
+    existing.push(row);
+    groups.set(id, existing);
+    return groups;
+  }, new Map<string, Row[]>());
+  for (const [activityId, activityRows] of grouped) {
+    const total = activityRows.reduce((sum, row) => sum + Number(readValue(row, "SoTien") ?? 0), 0);
+    lines.push([readValue(activityRows[0], "NamHoc"), readValue(activityRows[0], "TenHoatDong"), activityId, activityRows.length, "", "", "", total.toFixed(2)].map(csvCell).join(","));
+  }
+  lines.push("");
+  lines.push(["CHI TIẾT CÁC KHOẢN DỰ TRÙ"].map(csvCell).join(","));
+  lines.push(columns.map(csvCell).join(","));
+  let total = 0;
+  for (const row of approved) {
+    const amount = Number(readValue(row, "SoTien") ?? 0);
+    total += Number.isFinite(amount) ? amount : 0;
+    lines.push([
+      readValue(row, "NamHoc"), readValue(row, "TenHoatDong"), readValue(row, "MaHD"), readValue(row, "NoiDung"),
+      readValue(row, "SoLuong"), readValue(row, "DonViTinh"), readValue(row, "DonGia"), readValue(row, "SoTien"),
+      readValue(row, "ThuyetMinh"), readValue(row, "NguonKinhPhi"), readValue(row, "GhiChu"),
+    ].map(csvCell).join(","));
+  }
+  lines.push(["", "TỔNG CỘNG", "", "", "", "", "", total.toFixed(2), "", "", ""].map(csvCell).join(","));
+  const blob = new Blob(["\uFEFF", lines.join("\r\n")], { type: "text/csv;charset=utf-8" });
+  const url = URL.createObjectURL(blob);
+  const link = document.createElement("a");
+  link.href = url;
+  link.download = `Du-tru-kinh-phi${academicYear ? `-${academicYear.replace(/[^\p{L}\p{N}-]/gu, "-")}` : ""}.csv`;
+  document.body.appendChild(link);
+  link.click();
+  link.remove();
+  window.setTimeout(() => URL.revokeObjectURL(url), 1000);
+}
+function escapeHtml(value: unknown) {
+  const entities: Record<string, string> = {
+    "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;",
+  };
+  return String(value ?? "—").replace(/[&<>"']/g, (character) => entities[character] ?? character);
+}
+function competitionResultDocument(rows: Row[], competition: Row | undefined, competitionId: string) {
+  const competitionName = label(competition ?? {}, "TenCuocThi", "TenHoatDong");
+  const createdAt = new Intl.DateTimeFormat("vi-VN", {
+    dateStyle: "long", timeStyle: "short", timeZone: "Asia/Ho_Chi_Minh",
+  }).format(new Date());
+  const tableRows = rows.map((row, index) => `<tr>
+    <td class="center">${index + 1}</td>
+    <td>${escapeHtml(readValue(row, "TenDoi", "HoTen"))}</td>
+    <td class="center">${escapeHtml(readValue(row, "MSSV"))}</td>
+    <td>${escapeHtml(readValue(row, "TenGT", "CapGiai", "LoaiKQ"))}</td>
+    <td class="center">${escapeHtml(readValue(row, "XepHang"))}</td>
+    <td class="center">${escapeHtml(readValue(row, "Diem"))}</td>
+    <td>${escapeHtml(readValue(row, "GhiChu"))}</td>
+  </tr>`).join("");
+
+  return `<!doctype html>
+<html lang="vi"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Phiếu kết quả cuộc thi ${escapeHtml(competitionId)}</title>
+<style>
+  *{box-sizing:border-box}body{margin:0;padding:32px;background:#eef2f7;color:#172b4d;font:15px/1.55 Arial,"Segoe UI",sans-serif}
+  .sheet{max-width:1000px;margin:0 auto;padding:42px 48px;background:#fff;border:1px solid #d9e2ef;border-radius:12px;box-shadow:0 12px 35px #193b6417}
+  .institution{text-align:center;color:#475569;font-size:13px;font-weight:700;letter-spacing:.06em;text-transform:uppercase}
+  h1{margin:12px 0 4px;text-align:center;color:#123a70;font-size:25px;letter-spacing:.04em}
+  .subtitle{text-align:center;margin:0 0 28px;color:#526780;font-size:17px;font-weight:600}
+  .meta{display:grid;grid-template-columns:1fr 1fr;gap:8px 24px;margin:0 0 20px;padding:16px 18px;border:1px solid #dce6f3;border-radius:8px;background:#f7faff}
+  .meta strong{color:#294766}.meta span{color:#314963}
+  table{width:100%;border-collapse:collapse;font-size:13px}th,td{border:1px solid #bac8da;padding:10px 9px;vertical-align:top}th{background:#eaf1fb;color:#16375f;text-align:center;font-weight:700}.center{text-align:center}
+  .empty{padding:28px;text-align:center;border:1px dashed #b9c8dc;color:#60748c;border-radius:8px}
+  .signatures{display:grid;grid-template-columns:1fr 1fr;gap:40px;margin:42px 0 0;text-align:center}.signatures strong{display:block}.signatures span{display:block;margin-top:68px;color:#64748b;font-size:13px}
+  .actions{display:flex;justify-content:center;margin:22px auto 0}.actions button{border:0;border-radius:8px;padding:11px 18px;background:#1769e8;color:#fff;font:inherit;font-weight:700;cursor:pointer}
+  @media print{body{padding:0;background:#fff}.sheet{max-width:none;margin:0;padding:18mm;border:0;border-radius:0;box-shadow:none}.actions{display:none}thead{display:table-header-group}tr{break-inside:avoid}}
+  @media(max-width:680px){body{padding:12px}.sheet{padding:22px 16px}.meta{grid-template-columns:1fr}.signatures{gap:16px}}
+</style></head><body><main class="sheet">
+  <div class="institution">Công tác học thuật</div>
+  <h1>PHIẾU KẾT QUẢ CUỘC THI</h1>
+  <p class="subtitle">${escapeHtml(competitionName)}</p>
+  <div class="meta">
+    <span><strong>Mã cuộc thi:</strong> ${escapeHtml(competitionId)}</span>
+    <span><strong>Số kết quả đã công bố:</strong> ${rows.length}</span>
+    <span><strong>Ngày lập biểu:</strong> ${escapeHtml(createdAt)}</span>
+    <span><strong>Trạng thái:</strong> Kết quả đã công bố</span>
+  </div>
+  ${rows.length ? `<table><thead><tr><th>STT</th><th>Thí sinh / Đội thi</th><th>MSSV</th><th>Giải thưởng</th><th>Xếp hạng</th><th>Điểm</th><th>Ghi chú</th></tr></thead><tbody>${tableRows}</tbody></table>` : `<p class="empty">Cuộc thi này chưa có kết quả được công bố.</p>`}
+  <div class="signatures"><div><strong>ĐẠI DIỆN BAN TỔ CHỨC</strong><span>(Ký, ghi rõ họ tên)</span></div><div><strong>ĐẠI DIỆN KHOA</strong><span>(Ký, ghi rõ họ tên)</span></div></div>
+  <div class="actions"><button type="button" onclick="window.print()">In / Lưu thành PDF</button></div>
+</main></body></html>`;
+}
+function downloadCompetitionResultForm(rows: Row[], competition: Row | undefined, competitionId: string) {
+  const blob = new Blob([competitionResultDocument(rows, competition, competitionId)], { type: "text/html;charset=utf-8" });
+  const url = URL.createObjectURL(blob);
+  const link = document.createElement("a");
+  link.href = url;
+  link.download = `Phieu-ket-qua-cuoc-thi-${competitionId}.html`;
+  document.body.appendChild(link);
+  link.click();
+  link.remove();
+  window.setTimeout(() => URL.revokeObjectURL(url), 1000);
+}
 const timestamp = (value: unknown) => {
   if (value instanceof Date) return value.getTime();
   if (typeof value !== "string" && typeof value !== "number") return null;
@@ -67,6 +195,10 @@ function displayCode(row: Row, index: number) {
   }
   return String(index + 1).padStart(4, "0");
 }
+function formatReportNumber(value: unknown) {
+  const number = Number(value ?? 0);
+  return Number.isFinite(number) ? number.toLocaleString("vi-VN") : "0";
+}
 const roleId = (role: Row) => role.MaVaiTro ?? role.maVaiTro ?? role.Id ?? role.id;
 const roleCode = (role: Row) => label(role, "TenVaiTro", "tenVaiTro", "name").normalize("NFD").replace(/[\u0300-\u036f]/g, "").toUpperCase().replace(/[^A-Z0-9]/g, "");
 const identifier = (row: Row, ...keys: string[]) => Number(row[keys.find((key) => row[key] !== undefined) ?? "id"] ?? 0);
@@ -90,6 +222,16 @@ function Field({ title, name, type = "text", required = false, defaultValue, min
   title: string; name: string; type?: string; required?: boolean; defaultValue?: string; min?: string; step?: string; placeholder?: string;
 }) {
   return <label className={s.businessField}><span>{title}</span><input className={inputClass} name={name} type={type} required={required} defaultValue={defaultValue} min={min} step={step} placeholder={placeholder} /></label>;
+}
+
+function DetailItem({ title, value }: { title: string; value: string }) {
+  return <div className={s.planDetailItem}><span>{title}</span><strong>{value || "—"}</strong></div>;
+}
+
+function formatCurrency(value: unknown) {
+  if (value === undefined || value === null || value === "") return "—";
+  const amount = Number(value);
+  return Number.isFinite(amount) ? `${amount.toLocaleString("vi-VN")} đ` : String(value);
 }
 
 function PasswordField({ title, name, required = false, minLength }: { title: string; name: string; required?: boolean; minLength?: number }) {
@@ -257,9 +399,14 @@ function AccountManagementList({
   </>;
 }
 
-export default function BusinessPanel({ sectionId, user, initialActivityId, initialActivityName }: { sectionId: string; user: AuthUser; initialActivityId?: number | null; initialActivityName?: string }) {
+export default function BusinessPanel({ sectionId, user, initialActivityId }: { sectionId: string; user: AuthUser; initialActivityId?: number | null; initialActivityName?: string }) {
   const [rows, setRows] = useState<Row[]>([]);
   const [detail, setDetail] = useState<Row | null>(null);
+  const [competitionResults, setCompetitionResults] = useState<Row[] | null>(null);
+  const [resultsLoading, setResultsLoading] = useState(false);
+  const [trainingPointReport, setTrainingPointReport] = useState<Row[] | null>(null);
+  const [trainingPointReportLoading, setTrainingPointReportLoading] = useState(false);
+  const [registrationDataKind, setRegistrationDataKind] = useState<"registrations" | "waitlist" | null>(null);
   const [attendanceQr, setAttendanceQr] = useState<{ image: string; expiresAt: string; activityId: string } | null>(null);
   const [selectedId, setSelectedId] = useState("");
   const [selectedRegistrationId, setSelectedRegistrationId] = useState("");
@@ -273,6 +420,7 @@ export default function BusinessPanel({ sectionId, user, initialActivityId, init
   const [approvedActivities, setApprovedActivities] = useState<Row[]>([]);
   const [selectedApprovedActivities, setSelectedApprovedActivities] = useState<string[]>([]);
   const [budgetDialogOpen, setBudgetDialogOpen] = useState(false);
+  const [budgetYearFilter, setBudgetYearFilter] = useState("");
   const loadSequence = useRef(0);
 
   const load = useCallback(async () => {
@@ -308,10 +456,17 @@ export default function BusinessPanel({ sectionId, user, initialActivityId, init
           setSecondary(Array.isArray(roles) ? roles as Row[] : []);
           setStudentProfiles(Array.isArray(profiles) ? profiles as Row[] : []);
         }
+      } else if (sectionId === "expenses") {
+        const [budgets, activities] = await Promise.all([
+          workflowRequest<unknown>("/academic-activities/budgets"),
+          workflowRequest<unknown>("/academic-activities"),
+        ]);
+        if (requestId === loadSequence.current) {
+          setRows(Array.isArray(budgets) ? budgets as Row[] : []);
+          setSecondary(Array.isArray(activities) ? activities as Row[] : []);
+        }
       } else {
-        const value = sectionId === "expenses"
-          ? await workflowRequest<unknown>("/academic-activities/budgets")
-          : await workflowRequest<unknown>("/activities");
+        const value = await workflowRequest<unknown>("/activities");
         let activities = Array.isArray(value) ? value as Row[] : [];
         if (sectionId === "competitions" || sectionId === "results") {
           activities = activities.filter((row) => activityOptionId(row, sectionId) !== null);
@@ -341,6 +496,10 @@ export default function BusinessPanel({ sectionId, user, initialActivityId, init
 
   useEffect(() => {
     setDetail(null);
+    setCompetitionResults(null);
+    setTrainingPointReport(null);
+    setTrainingPointReportLoading(false);
+    setRegistrationDataKind(null);
     setAttendanceQr(null);
     setSelectedId("");
     setSelectedRegistrationId("");
@@ -371,6 +530,14 @@ export default function BusinessPanel({ sectionId, user, initialActivityId, init
       setDetail(result && typeof result === "object" ? result as Row : null);
       setNotice(message);
       await load();
+      if (sectionId === "plans" && selectedId && path.startsWith(`/plans/${selectedId}/`)) {
+        try {
+          const refreshedPlan = await workflowRequest<unknown>(`/plans/${selectedId}`);
+          setDetail(refreshedPlan && typeof refreshedPlan === "object" ? refreshedPlan as Row : null);
+        } catch {
+          setError("Đã lưu thay đổi, nhưng chưa tải lại được chi tiết kế hoạch. Hãy bấm Xem để tải lại.");
+        }
+      }
       return result;
     } catch (cause) {
       setError(cause instanceof Error ? cause.message : "Không thể thực hiện thao tác.");
@@ -378,10 +545,13 @@ export default function BusinessPanel({ sectionId, user, initialActivityId, init
     } finally { setBusy(false); }
   }
 
-  async function selected(pathPrefix: string) {
-    if (!selectedId) { setError("Hãy chọn một hoạt động trước."); return; }
+  async function selected(pathPrefix: string, id = selectedId) {
+    if (!id) { setError("Hãy chọn một hoạt động trước."); return; }
+    const path = `${pathPrefix}${id}`;
+    setDetail(null);
+    if (sectionId === "registrations") setRegistrationDataKind(path.includes("/waitlist") ? "waitlist" : "registrations");
     try {
-      const value = await workflowRequest<unknown>(`${pathPrefix}${selectedId}`);
+      const value = await workflowRequest<unknown>(path);
       setDetail(value && typeof value === "object" ? value as Row : null);
       if (sectionId === "registrations" && Array.isArray(value)) {
         const firstRegistration = value.find((row) => readValue(row as Row, "MaDK") !== undefined) as Row | undefined;
@@ -414,6 +584,7 @@ export default function BusinessPanel({ sectionId, user, initialActivityId, init
   const selectedActivity = rows.find((row) => activityOptionId(row, sectionId) === selectedId);
   const registrationRows = Array.isArray(detail) ? detail as Row[] : [];
   const registrationOptions = registrationRows.filter((row) => readValue(row, "MaDK") !== undefined);
+  const supportRows = Array.isArray(detail) ? detail as Row[] : [];
   const seenActivityIds = new Set<string>();
   const activityOptions = rows.flatMap((row) => {
     const id = activityOptionId(row, sectionId);
@@ -422,8 +593,29 @@ export default function BusinessPanel({ sectionId, user, initialActivityId, init
     return [{ row, id }];
   });
   const displayRows = sectionId === "overview" ? sortByActivityTime(rows) : rows;
+  const canManagePlans = user.roles.some((role) => ["ADMIN", "CANBOKHOA", "GIANGVIEN"].includes(role));
+  const planStatus = detail ? label(detail, "TrangThai") : "";
+  const planActivities = detail && Array.isArray(readValue(detail, "hoatDong")) ? readValue(detail, "hoatDong") as Row[] : [];
+  const planBudgetTotal = planActivities.reduce((sum, activity) => sum + (Number(readValue(activity, "DuToan")) || 0), 0);
+  const canEditPlan = canManagePlans && ["Dự thảo", "Cần bổ sung"].includes(planStatus);
+  const currentPlanStage = planApprovalStages.find((stage) => stage.status === planStatus);
+  const canReviewPlan = Boolean(currentPlanStage && (user.roles.includes("ADMIN") || currentPlanStage.roles.some((role) => user.roles.includes(role))));
+  const planHistory = planApprovalHistory(detail);
+  const lastPlanSubmission = planHistory.map((event) => readValue(event, "action")).lastIndexOf("submit");
+  const currentPlanHistory = lastPlanSubmission >= 0 ? planHistory.slice(lastPlanSubmission + 1) : planHistory;
+  const planReviewEvents = currentPlanHistory.filter((event) => ["approve", "request_changes", "reject"].includes(String(readValue(event, "action"))));
+  const legacyApprovedPlan = planStatus === "Đã duyệt" && !currentPlanHistory.some((event) => readValue(event, "stage") !== undefined);
   const assignableRoles = secondary.filter((role) => roleCode(role) !== "SINHVIEN");
-  const budgetGroups = Array.from(rows.reduce((groups, row) => {
+  const budgetYears = Array.from(new Set(rows.map((row) => String(readValue(row, "NamHoc") ?? "")).filter(Boolean))).sort((a, b) => b.localeCompare(a, "vi"));
+  const visibleBudgetRows = budgetYearFilter ? rows.filter((row) => String(readValue(row, "NamHoc") ?? "") === budgetYearFilter) : rows;
+  const approvedBudgetRows = visibleBudgetRows.filter((row) => label(row, "TrangThaiDuTru") === "Đã duyệt");
+  const canSubmitBudgets = user.roles.some((role) => ["ADMIN", "CANBOKHOA", "GIANGVIEN"].includes(role.toUpperCase()));
+  const canReviewBudgets = user.roles.some((role) => ["ADMIN", "CANBOKHOA", "TRUONGKHOA"].includes(role.toUpperCase()));
+  const budgetActivityOptions = secondary.flatMap((activity) => {
+    const id = readValue(activity, "MaHD");
+    return id === undefined ? [] : [{ id: String(id), activity }];
+  });
+  const budgetGroups = Array.from(visibleBudgetRows.reduce((groups, row) => {
     const id = String(readValue(row, "MaHD") ?? "");
     if (!groups.has(id)) groups.set(id, []);
     groups.get(id)!.push(row);
@@ -443,7 +635,16 @@ export default function BusinessPanel({ sectionId, user, initialActivityId, init
   }
 
   return <div className={s.businessPanel}>
-    {sectionId === "expenses" && <div style={{ display: "flex", justifyContent: "flex-end", marginBottom: "16px" }}><button className={s.primary} onClick={() => setBudgetDialogOpen(true)}>＋ Tạo kinh phí hoạt động</button></div>}
+    {sectionId === "expenses" && <div style={{ display: "flex", flexWrap: "wrap", alignItems: "end", justifyContent: "space-between", gap: "12px", marginBottom: "16px" }}>
+      <div style={{ display: "flex", flexWrap: "wrap", alignItems: "end", gap: "12px" }}>
+        <label className={s.businessField} style={{ minWidth: "190px" }}><span>Năm học</span><select className={inputClass} value={budgetYearFilter} onChange={(event) => setBudgetYearFilter(event.target.value)}><option value="">Tất cả năm học</option>{budgetYears.map((year) => <option key={`budget-year-${year}`} value={year}>{year}</option>)}</select></label>
+        <button type="button" className={`${s.primary} ${s.budgetExportButton}`} disabled={!approvedBudgetRows.length} onClick={() => downloadBudgetEstimate(approvedBudgetRows, budgetYearFilter)}>
+          <svg aria-hidden="true" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><path d="m7 10 5 5 5-5"/><path d="M12 15V3"/></svg>
+          Tải file dự trù đã duyệt (CSV) · {approvedBudgetRows.length} khoản
+        </button>
+      </div>
+      {canSubmitBudgets && <button className={s.primary} onClick={() => setBudgetDialogOpen(true)}>＋ Tạo khoản kinh phí hoạt động</button>}
+    </div>}
     
     {error && <p className={s.error} role="alert">{error}</p>}
     {notice && <p className={s.success} role="status">{notice}</p>}
@@ -483,40 +684,99 @@ export default function BusinessPanel({ sectionId, user, initialActivityId, init
     </>}
 
     {sectionId === "plans" && <>
-      <section className={s.card}>
+      {canManagePlans && <section className={s.card}>
         <h2>Tạo kế hoạch</h2>
         <form className={s.businessForm} onSubmit={(e) => submit(e, (v) => run("/plans", "POST", { soKeHoach: v.get("soKeHoach"), tenKeHoach: v.get("tenKeHoach"), ngayBanHanh: v.get("ngayBanHanh") || undefined, namHoc: v.get("namHoc"), hocKy: v.get("hocKy"), canCu: v.get("canCu"), mucDich: v.get("mucDich"), yeuCau: v.get("yeuCau"), noiDung: v.get("noiDung"), maKhoa: Number(v.get("maKhoa")), maBM: v.get("maBM") ? Number(v.get("maBM")) : undefined }))}>
           <Field title="Số kế hoạch" name="soKeHoach" required /><Field title="Tên kế hoạch" name="tenKeHoach" required /><Field title="Ngày ban hành" name="ngayBanHanh" type="date" /><Field title="Năm học" name="namHoc" defaultValue="2026-2027" required /><Field title="Học kỳ" name="hocKy" defaultValue="HK1" /><Field title="Mã khoa" name="maKhoa" type="number" min="1" required /><Field title="Mã bộ môn (nếu có)" name="maBM" type="number" min="1" /><Field title="Căn cứ" name="canCu" /><Field title="Mục đích" name="mucDich" /><Field title="Yêu cầu" name="yeuCau" /><Field title="Nội dung" name="noiDung" />
           <button className={s.primary} disabled={busy}>Tạo bản nháp</button>
         </form>
-      </section>
+      </section>}
       <section className={s.card}>
-        <h2>Kế hoạch đã lập</h2>{rows.length ? <div className={s.businessList}>{rows.map((row, index) => { const id = String(identifier(row, "MaKeHoach")); return <article key={`plan-${id}-${index}`}><div><strong>{label(row, "TenKeHoach")}</strong><span>{label(row, "SoKeHoach")} · {label(row, "NamHoc")} · {label(row, "TrangThai")}</span></div><div className={s.businessActions}><button type="button" className={s.secondaryButton} onClick={() => { setSelectedId(id); setSelectedApprovedActivities([]); void selected("/plans/"); void workflowRequest<Row[]>("/academic-activities").then((items) => setApprovedActivities(items.filter((item) => label(item, "TrangThai") === "Đã duyệt"))).catch(() => setApprovedActivities([])); }}>Xem</button><button type="button" className={s.secondaryButton} disabled={label(row, "TrangThai") === "Đã duyệt"} onClick={() => { setSelectedId(id); void selected("/plans/"); }}>Chỉnh sửa</button></div></article>; })}</div> : <p className={s.emptyMessage}>Chưa có kế hoạch.</p>}
-        {detail && <><pre className={s.jsonDetail}>{JSON.stringify(detail, null, 2)}</pre>
-          {approvedActivities.length > 0 && <div className={s.card} style={{ marginBottom: "16px", padding: "16px" }}><h3>Hoạt động đã được Trưởng khoa duyệt</h3>{approvedActivities.map((activity) => { const id = String(readValue(activity, "MaHD")); return <label key={id} style={{ display: "flex", gap: "10px", padding: "8px 0", alignItems: "center" }}><input type="checkbox" checked={selectedApprovedActivities.includes(id)} onChange={(e) => setSelectedApprovedActivities((current) => e.target.checked ? [...current, id] : current.filter((value) => value !== id))} /><span><strong>{label(activity, "TenHoatDong")}</strong> · {label(activity, "LoaiHoatDong")} · Mã HĐ {id}</span></label>; })}<button type="button" className={s.primary} disabled={busy || !selectedApprovedActivities.length} onClick={async () => { for (const id of selectedApprovedActivities) { const activity = approvedActivities.find((item) => String(readValue(item, "MaHD")) === id); if (activity) await run(`/plans/${selectedId}/activities`, "POST", { tenHoatDong: label(activity, "TenHoatDong"), noiDung: readValue(activity, "NoiDung"), thoiGianDuKien: readValue(activity, "TgDuKien") || undefined, diaDiem: readValue(activity, "DiaDiem"), doiTuong: readValue(activity, "DoiTuongThamDu"), chiTieu: readValue(activity, "SLSVDuKien") ? Number(readValue(activity, "SLSVDuKien")) : undefined, duToan: 0 }); } setSelectedApprovedActivities([]); await selected(`/plans/${selectedId}/`); }}>Thêm vào kế hoạch</button></div>}
-          <form className={s.businessForm} onSubmit={(e) => submit(e, (v) => run(`/plans/${selectedId}/activities`, "POST", { tenHoatDong: v.get("tenHoatDong"), noiDung: v.get("noiDung"), thoiGianDuKien: v.get("batDau") || undefined, thoiGianKetThuc: v.get("ketThuc") || undefined, hanDangKy: v.get("hanDangKy") || undefined, diaDiem: v.get("diaDiem"), doiTuong: v.get("doiTuong"), chiTieu: v.get("chiTieu") ? Number(v.get("chiTieu")) : undefined, nguoiPhuTrach: v.get("nguoiPhuTrach"), duToan: Number(v.get("duToan") || 0) }))}>
+        <h2>Kế hoạch đã lập</h2>{rows.length ? <div className={s.businessList}>{rows.map((row, index) => { const id = String(identifier(row, "MaKeHoach")); const status = label(row, "TrangThai"); return <article key={`plan-${id}-${index}`}><div><strong>{label(row, "TenKeHoach")}</strong><span>{label(row, "SoKeHoach")} · {label(row, "NamHoc")} · {status}</span></div><div className={s.businessActions}><button type="button" className={s.secondaryButton} onClick={() => { setSelectedId(id); setSelectedApprovedActivities([]); void selected("/plans/", id); void workflowRequest<Row[]>("/academic-activities").then((items) => setApprovedActivities(items.filter((item) => label(item, "TrangThai") === "Đã duyệt"))).catch(() => setApprovedActivities([])); }}>Xem</button>{canManagePlans && ["Dự thảo", "Cần bổ sung"].includes(status) && <button type="button" className={s.secondaryButton} onClick={() => { setSelectedId(id); void selected("/plans/", id); }}>Chỉnh sửa</button>}</div></article>; })}</div> : <p className={s.emptyMessage}>Chưa có kế hoạch.</p>}
+        {detail && readValue(detail, "TenKeHoach") !== undefined && <>
+          <section className={s.planDetailCard} aria-label="Thông tin kế hoạch năm học">
+            <header className={s.planDetailHeader}>
+              <div><span>THÔNG TIN KẾ HOẠCH</span><h3>{label(detail, "TenKeHoach")}</h3><p>{label(detail, "SoKeHoach")} · Năm học {label(detail, "NamHoc")}</p></div>
+              <span className={s.planStatusBadge}>{planStatus}</span>
+            </header>
+            <div className={s.planDetailGrid}>
+              <DetailItem title="Mã kế hoạch" value={label(detail, "MaKeHoach")} />
+              <DetailItem title="Số kế hoạch" value={label(detail, "SoKeHoach")} />
+              <DetailItem title="Năm học" value={label(detail, "NamHoc")} />
+              <DetailItem title="Học kỳ" value={label(detail, "HocKy")} />
+              <DetailItem title="Loại kế hoạch" value={label(detail, "LoaiKeHoach")} />
+              <DetailItem title="Ngày ban hành" value={formatDateTime(readValue(detail, "NgayBanHanh")) ?? "Chưa cập nhật"} />
+              <DetailItem title="Khoa" value={label(detail, "TenKhoa")} />
+              <DetailItem title="Bộ môn" value={label(detail, "TenBM")} />
+              <DetailItem title="Mã bộ môn" value={label(detail, "MaBM")} />
+              <DetailItem title="Mã cán bộ phụ trách" value={label(detail, "NgPhuTrach")} />
+              <DetailItem title="Mã tài khoản duyệt" value={label(detail, "NguoiDuyet")} />
+              <DetailItem title="Ngày duyệt cuối" value={formatDateTime(readValue(detail, "NgayDuyet")) ?? "Chưa duyệt"} />
+              <DetailItem title="Căn cứ" value={label(detail, "CanCu")} />
+              <DetailItem title="Mục đích" value={label(detail, "MucDich")} />
+              <DetailItem title="Yêu cầu" value={label(detail, "YeuCau")} />
+              <DetailItem title="Nội dung kế hoạch" value={label(detail, "NoiDung")} />
+            </div>
+          </section>
+          <section className={s.planActivitiesCard} aria-label="Hoạt động và dự toán của kế hoạch">
+            <header className={s.planActivitiesHeader}><div><h3>Hoạt động và dự toán</h3><span>{planActivities.length} hoạt động trong kế hoạch</span></div><strong>Tổng dự toán: {formatCurrency(planBudgetTotal)}</strong></header>
+            {planActivities.length ? <div className={s.planActivityTableWrap}><table className={s.planActivityTable}>
+              <thead><tr><th>Hoạt động / nội dung</th><th>Thời gian</th><th>Hạn đăng ký</th><th>Địa điểm / đối tượng</th><th>Chỉ tiêu</th><th>Người phụ trách</th><th>Dự toán</th><th>Trạng thái</th></tr></thead>
+              <tbody>{planActivities.map((activity, index) => {
+                const activityId = String(readValue(activity, "MaChiTiet") ?? index);
+                const start = formatDateTime(readValue(activity, "ThoiGianDuKien"));
+                const end = formatDateTime(readValue(activity, "ThoiGianKetThuc"));
+                const period = [start, end].filter(Boolean).join(" – ") || "Chưa cập nhật";
+                const status = label(activity, "TrangThai");
+                return <tr key={`plan-activity-${activityId}`}>
+                  <td><strong>{label(activity, "TenHoatDong")}</strong><small>{label(activity, "NoiDung")}</small></td>
+                  <td>{period}</td>
+                  <td>{formatDateTime(readValue(activity, "HanDangKy")) ?? "Chưa cập nhật"}</td>
+                  <td>{label(activity, "DiaDiem")}<small>{label(activity, "DoiTuong")}</small></td>
+                  <td>{label(activity, "ChiTieu")}</td>
+                  <td>{label(activity, "NguoiPhuTrach")}</td>
+                  <td>{formatCurrency(readValue(activity, "DuToan"))}</td>
+                  <td><span className={s.planActivityStatus}>{status}</span>{canManagePlans && planStatus === "Đã duyệt" && status !== "Đã tạo" && <button type="button" className={s.secondaryButton} disabled={busy} onClick={async () => { const result = await run(`/plans/details/${activityId}/publish`, "POST", {}, "Đã tạo hoạt động từ kế hoạch đã duyệt."); if (result) await selected(`/plans/${selectedId}/`); }}>Tạo hoạt động</button>}</td>
+                </tr>;
+              })}</tbody>
+            </table></div> : <p className={s.emptyMessage}>Kế hoạch chưa có hoạt động chi tiết.</p>}
+          </section>
+          <div className={s.planApprovalFlow}>
+            <h3>Quy trình ký duyệt kế hoạch</h3>
+            <ol>{planApprovalStages.map((stage) => {
+              const signed = planReviewEvents.find((event) => readValue(event, "stage") === stage.code && readValue(event, "action") === "approve");
+              const current = planStatus === stage.status;
+              const signer = signed ? readValue(signed, "userId") : undefined;
+              const signedAt = signed ? formatDateTime(readValue(signed, "at")) : null;
+              return <li key={stage.code} className={signed ? s.planApprovalDone : current ? s.planApprovalCurrent : ""}>
+                <strong>{stage.title}</strong>
+                <span>{signed ? `Đã ký bởi tài khoản #${String(signer ?? "—")}${signedAt ? ` · ${signedAt}` : ""}` : current ? "Đang chờ xử lý" : legacyApprovedPlan ? "Kế hoạch duyệt theo quy trình cũ; không lưu chữ ký riêng từng cấp." : "Chưa đến bước"}</span>
+              </li>;
+            })}</ol>
+          </div>
+          {canEditPlan && approvedActivities.length > 0 && <div className={s.card} style={{ marginBottom: "16px", padding: "16px" }}><h3>Hoạt động đã được duyệt</h3>{approvedActivities.map((activity) => { const id = String(readValue(activity, "MaHD")); return <label key={id} style={{ display: "flex", gap: "10px", padding: "8px 0", alignItems: "center" }}><input type="checkbox" checked={selectedApprovedActivities.includes(id)} onChange={(e) => setSelectedApprovedActivities((current) => e.target.checked ? [...current, id] : current.filter((value) => value !== id))} /><span><strong>{label(activity, "TenHoatDong")}</strong> · {label(activity, "LoaiHoatDong")} · Mã HĐ {id}</span></label>; })}<button type="button" className={s.primary} disabled={busy || !selectedApprovedActivities.length} onClick={async () => { for (const id of selectedApprovedActivities) { const activity = approvedActivities.find((item) => String(readValue(item, "MaHD")) === id); if (activity) await run(`/plans/${selectedId}/activities`, "POST", { tenHoatDong: label(activity, "TenHoatDong"), noiDung: readValue(activity, "NoiDung"), thoiGianDuKien: readValue(activity, "TgDuKien") || undefined, diaDiem: readValue(activity, "DiaDiem"), doiTuong: readValue(activity, "DoiTuongThamDu"), chiTieu: readValue(activity, "SLSVDuKien") ? Number(readValue(activity, "SLSVDuKien")) : undefined, duToan: 0 }); } setSelectedApprovedActivities([]); await selected(`/plans/${selectedId}/`); }}>Thêm vào kế hoạch</button></div>}
+          {canEditPlan && <form className={s.businessForm} onSubmit={(e) => submit(e, (v) => run(`/plans/${selectedId}/activities`, "POST", { tenHoatDong: v.get("tenHoatDong"), noiDung: v.get("noiDung"), thoiGianDuKien: v.get("batDau") || undefined, thoiGianKetThuc: v.get("ketThuc") || undefined, hanDangKy: v.get("hanDangKy") || undefined, diaDiem: v.get("diaDiem"), doiTuong: v.get("doiTuong"), chiTieu: v.get("chiTieu") ? Number(v.get("chiTieu")) : undefined, nguoiPhuTrach: v.get("nguoiPhuTrach"), duToan: Number(v.get("duToan") || 0) }))}>
             <h3>Thêm hoạt động và dự toán</h3><Field title="Tên hoạt động" name="tenHoatDong" required /><Field title="Nội dung" name="noiDung" /><Field title="Bắt đầu" name="batDau" type="datetime-local" /><Field title="Kết thúc" name="ketThuc" type="datetime-local" /><Field title="Hạn đăng ký" name="hanDangKy" type="datetime-local" /><Field title="Địa điểm" name="diaDiem" /><Field title="Đối tượng" name="doiTuong" /><Field title="Chỉ tiêu" name="chiTieu" type="number" min="1" /><Field title="Người phụ trách" name="nguoiPhuTrach" /><Field title="Dự toán (đồng)" name="duToan" type="number" min="0" step="0.01" required /><button className={s.primary} disabled={busy}>Thêm hoạt động</button>
-          </form>
-          <div className={s.businessActions}><button className={s.primary} disabled={busy} onClick={() => void run(`/plans/${selectedId}/submit`, "POST", {})}>Trình duyệt</button><button className={s.secondaryButton} disabled={busy} onClick={() => void run(`/plans/${selectedId}/review`, "PATCH", { action: "approve" }, "Đã ghi nhận bước duyệt.")}>Duyệt bước hiện tại</button><button className={s.secondaryButton} disabled={busy} onClick={() => void run(`/plans/${selectedId}/review`, "PATCH", { action: "request_changes", ghiChu: "Vui lòng bổ sung thông tin." }, "Đã yêu cầu bổ sung.")}>Yêu cầu bổ sung</button></div>
-          {Array.isArray(detail.hoatDong) && <div className={s.businessList}>{(detail.hoatDong as Row[]).map((row) => <article key={String(row.MaChiTiet)}><strong>{label(row, "TenHoatDong")}</strong><span>{label(row, "TrangThai")} · dự toán {label(row, "DuToan")}</span><button className={s.secondaryButton} onClick={() => void run(`/plans/details/${row.MaChiTiet}/publish`, "POST", {})}>Công bố hoạt động đã duyệt</button></article>)}</div>}
+          </form>}
+          <div className={s.businessActions}>{canEditPlan && <button className={s.primary} disabled={busy} onClick={async () => { const result = await run(`/plans/${selectedId}/submit`, "POST", {}, "Kế hoạch đã được chuyển đến Trưởng khoa để ký và duyệt."); if (result) await selected("/plans/"); }}>Trình ký duyệt</button>}{canReviewPlan && currentPlanStage && <><button className={s.primary} disabled={busy} onClick={async () => { const result = await run(`/plans/${selectedId}/review`, "PATCH", { action: "approve" }, `Đã hoàn tất bước: ${currentPlanStage.title}.`); if (result) await selected("/plans/"); }}>{currentPlanStage.title}</button><button className={s.secondaryButton} disabled={busy} onClick={async () => { const result = await run(`/plans/${selectedId}/review`, "PATCH", { action: "request_changes", ghiChu: "Vui lòng bổ sung thông tin." }, "Đã yêu cầu bổ sung."); if (result) await selected("/plans/"); }}>Yêu cầu bổ sung</button></>}</div>
         </>}
       </section>
     </>}
 
     {activitySelect && <section className={s.card}>
       <h2>{sectionId === "competitions" || sectionId === "results" ? "Cuộc thi" : "Chọn hoạt động"}</h2>
-      <div className={s.businessSelect}><select className={inputClass} value={selectedId} onChange={(e) => { setSelectedId(e.target.value); setDetail(null); setAttendanceQr(null); setSelectedRegistrationId(""); }}><option value="">Chọn hoạt động</option>{activityOptions.map(({ row, id }) => {
+      <div className={s.businessSelect}><select className={inputClass} value={selectedId} onChange={(e) => { setSelectedId(e.target.value); setDetail(null); setCompetitionResults(null); setRegistrationDataKind(null); setAttendanceQr(null); setSelectedRegistrationId(""); }}><option value="">Chọn hoạt động</option>{activityOptions.map(({ row, id }) => {
         const start = formatDateTime(activityStart(row));
         const end = formatDateTime(readValue(row, "TgKetThuc", "thoiGianKetThuc", "ketThucLuc", "NgayKetThuc"));
         return <option key={`${sectionId}-${id}`} value={id}>{label(row, "TenHoatDong", "TenCuocThi")} · #{id}{start ? ` · ${start}` : ""}{end ? ` – ${end}` : ""}</option>;
       })}</select>
         {(sectionId === "registrations" || sectionId === "support") && <button className={s.secondaryButton} onClick={() => void selected(sectionId === "registrations" ? "/registrations/manage/" : "/registrations/support-assignments/")}>Tải dữ liệu</button>}
         {(sectionId === "expenses" || sectionId === "attendance") && <button className={s.secondaryButton} onClick={() => void selected(sectionId === "expenses" ? "/settlements/" : "/activities/")}>{sectionId === "expenses" ? "Tải quyết toán" : "Tải thông tin hoạt động"}</button>}
-        {sectionId === "registrations" && <button className={s.secondaryButton} onClick={() => void selected(`/activities/${selectedId}/waitlist`)}>Tải danh sách chờ</button>}
+        {sectionId === "registrations" && <button className={s.secondaryButton} onClick={() => void selected("/activities/", `${selectedId}/waitlist`)}>Tải danh sách chờ</button>}
         {(sectionId === "competitions" || sectionId === "results") && <button className={s.secondaryButton} onClick={() => void selected(`/competition-rounds/`)}>Xem vòng thi</button>}
       </div>
       {selectedActivity && <p>{label(selectedActivity, "TenHoatDong", "TenCuocThi")} · Bắt đầu: {formatDateTime(activityStart(selectedActivity)) ?? "Chưa cập nhật"} · Kết thúc: {formatDateTime(readValue(selectedActivity, "TgKetThuc", "thoiGianKetThuc", "ketThucLuc", "NgayKetThuc")) ?? "Chưa cập nhật"} · {label(selectedActivity, "DiaDiem")}</p>}
-      {detail && <pre className={s.jsonDetail}>{JSON.stringify(detail, null, 2)}</pre>}
+      {detail && sectionId !== "results" && sectionId !== "registrations" && sectionId !== "support" && <pre className={s.jsonDetail}>{JSON.stringify(detail, null, 2)}</pre>}
     </section>}
 
     {sectionId === "competitions" && selectedId && <section className={s.card}>
@@ -532,19 +792,196 @@ export default function BusinessPanel({ sectionId, user, initialActivityId, init
       </form>
     </section>}
 
-    {sectionId === "registrations" && <section className={s.card}><h2>Danh sách đăng ký / hàng chờ</h2>{Array.isArray(detail) && <Listing rows={registrationRows} empty="Chưa có dữ liệu." onSelect={(row) => setSelectedRegistrationId(String(readValue(row, "MaDK") ?? ""))} />}<form className={s.businessForm} onSubmit={(e) => submit(e, async (v) => { const result = await run(`/registrations/${v.get("maDK")}/status`, "PATCH", { trangThai: v.get("trangThai") }); if (result) await selected("/registrations/manage/"); return result; })}><label className={s.businessField}><span>Mã đăng ký · sinh viên · trạng thái</span><select className={inputClass} name="maDK" value={selectedRegistrationId} onChange={(e) => setSelectedRegistrationId(e.target.value)} required disabled={!registrationOptions.length}><option value="">{registrationOptions.length ? "Chọn đơn đăng ký" : "Tải dữ liệu đăng ký để chọn"}</option>{registrationOptions.map((row, index) => { const id = String(readValue(row, "MaDK")); return <option key={`registration-${id}-${index}`} value={id}>{displayCode(row, index)} · {label(row, "MSSV")} · {label(row, "HoTen")} · {label(row, "TrangThai")}</option>; })}</select></label><label className={s.businessField}><span>Trạng thái</span><select className={inputClass} name="trangThai"><option>Đã xác nhận</option><option>Đã đăng ký</option><option>Từ chối</option><option>Đã hủy</option></select></label><button className={s.primary} disabled={busy || !registrationOptions.length || !selectedRegistrationId}>Cập nhật trạng thái</button></form>{selectedId && <button className={s.secondaryButton} disabled={busy} onClick={()=>void run(`/activities/${selectedId}/waitlist/promote-next`,"POST",{},"Đã tiếp nhận sinh viên đầu tiên trong hàng chờ.")}>Nhận sinh viên tiếp theo</button>}</section>}
+    {sectionId === "registrations" && <section className={s.card}>
+      <h2>{registrationDataKind === "waitlist" ? "Danh sách chờ đăng ký" : "Danh sách đăng ký dự thi"}</h2>
+      {Array.isArray(detail) && registrationDataKind === "registrations" && <div className={s.registrationTableWrap}>
+        {registrationRows.length ? <table className={s.registrationTable}>
+          <thead><tr><th>Mã đăng ký</th><th>Sinh viên</th><th>Lớp</th><th>Liên hệ</th><th>Hình thức</th><th>Đội thi</th><th>Ngày đăng ký</th><th>Nguồn</th><th>Trạng thái</th></tr></thead>
+          <tbody>{registrationRows.map((row, index) => {
+            const id = String(readValue(row, "MaDK") ?? "");
+            return <tr key={`registration-row-${id || index}`} className={selectedRegistrationId === id ? s.registrationRowSelected : undefined}>
+              <td><button type="button" className={s.registrationIdButton} aria-pressed={selectedRegistrationId === id} onClick={() => setSelectedRegistrationId(id)}>{displayCode(row, index)}</button></td>
+              <td><strong>{label(row, "HoTen")}</strong><small>MSSV: {label(row, "MSSV")}</small></td>
+              <td>{label(row, "TenLop")}</td>
+              <td>{label(row, "Email")}<small>{label(row, "SDT")}</small></td>
+              <td>{label(row, "HinhThuc")}</td>
+              <td>{label(row, "TenDoi")}<small>{label(row, "VaiTroDoi")}</small></td>
+              <td>{formatDateTime(readValue(row, "NgayDK")) ?? "Chưa cập nhật"}</td>
+              <td>{label(row, "NguonDK")}</td>
+              <td><span className={s.registrationStatus}>{label(row, "TrangThai")}</span></td>
+            </tr>;
+          })}</tbody>
+        </table> : <p className={s.emptyMessage}>Hoạt động này chưa có sinh viên đăng ký.</p>}
+      </div>}
+      {Array.isArray(detail) && registrationDataKind === "waitlist" && <div className={s.registrationTableWrap}>
+        {registrationRows.length ? <table className={s.registrationTable}>
+          <thead><tr><th>Vị trí</th><th>Sinh viên</th><th>Lớp</th><th>Đăng ký lúc</th><th>Trạng thái</th></tr></thead>
+          <tbody>{registrationRows.map((row, index) => <tr key={`waitlist-row-${String(readValue(row, "MaCho") ?? index)}`}>
+            <td>{label(row, "ViTri")}</td><td><strong>{label(row, "HoTen")}</strong><small>MSSV: {label(row, "MSSV")}</small></td>
+            <td>{label(row, "TenLop")}</td><td>{formatDateTime(readValue(row, "DangKyLuc")) ?? "Chưa cập nhật"}</td>
+            <td><span className={s.registrationStatus}>{label(row, "TrangThai")}</span></td>
+          </tr>)}</tbody>
+        </table> : <p className={s.emptyMessage}>Danh sách chờ hiện không có sinh viên.</p>}
+      </div>}
+      {registrationDataKind !== "waitlist" && <form className={s.businessForm} onSubmit={(e) => submit(e, async (v) => { const result = await run(`/registrations/${v.get("maDK")}/status`, "PATCH", { trangThai: v.get("trangThai") }); if (result) await selected("/registrations/manage/"); return result; })}>
+        <label className={s.businessField}><span>Mã đăng ký · sinh viên · trạng thái</span><select className={inputClass} name="maDK" value={selectedRegistrationId} onChange={(e) => setSelectedRegistrationId(e.target.value)} required disabled={!registrationOptions.length}><option value="">{registrationOptions.length ? "Chọn đơn đăng ký" : "Tải dữ liệu đăng ký để chọn"}</option>{registrationOptions.map((row, index) => { const id = String(readValue(row, "MaDK")); return <option key={`registration-${id}-${index}`} value={id}>{displayCode(row, index)} · {label(row, "MSSV")} · {label(row, "HoTen")} · {label(row, "TrangThai")}</option>; })}</select></label>
+        <label className={s.businessField}><span>Trạng thái</span><select className={inputClass} name="trangThai"><option>Đã xác nhận</option><option>Đã đăng ký</option><option>Từ chối</option><option>Đã hủy</option></select></label>
+        <button className={s.primary} disabled={busy || !registrationOptions.length || !selectedRegistrationId}>Cập nhật trạng thái</button>
+      </form>}
+      {selectedId && registrationDataKind !== "waitlist" && <button className={s.secondaryButton} disabled={busy} onClick={() => void run(`/activities/${selectedId}/waitlist/promote-next`, "POST", {}, "Đã tiếp nhận sinh viên đầu tiên trong hàng chờ.")}>Nhận sinh viên tiếp theo</button>}
+    </section>}
 
     {sectionId === "attendance" && selectedId && <section className={s.card}><h2>Điểm danh: {label(selectedActivity??{},"TenHoatDong")}</h2><form className={s.businessForm} onSubmit={(e)=>submit(e,async(v)=>{setAttendanceQr(null);const activityId=selectedId;const expiresAt=new Date(String(v.get("expiresAt"))).toISOString();const result=await run(`/attendance/activities/${activityId}/qr`,"POST",{expiresAt},"Đã tạo mã QR điểm danh.");if(result&&typeof result==="object"&&!Array.isArray(result)){const response=result as Row;const token=readValue(response,"maQRCode","MaQRCode");if(token!==undefined){try{const image=await QRCode.toDataURL(String(token),{errorCorrectionLevel:"H",margin:2,width:320});setAttendanceQr({image,expiresAt:String(readValue(response,"TGHetHan","expiresAt")??expiresAt),activityId});}catch{setError("Đã tạo mã nhưng chưa thể tạo ảnh QR. Vui lòng thử lại.");}}else{setError("API chưa trả về mã QR để hiển thị.");}}return result;})}><Field title="Mã QR hết hạn lúc" name="expiresAt" type="datetime-local" required/><button className={s.primary} disabled={busy}>Tạo mã QR</button></form>{attendanceQr?.activityId===selectedId&&<div className={s.attendanceQr}><strong>Quét mã bằng ứng dụng di động để điểm danh</strong><img src={attendanceQr.image} alt="Mã QR điểm danh" width={320} height={320}/><span>Mã có hiệu lực đến {formatDateTime(attendanceQr.expiresAt)??attendanceQr.expiresAt}</span><a href={attendanceQr.image} download={`diem-danh-${selectedId}.png`}>Tải mã QR</a></div>}<form className={s.businessForm} onSubmit={(e)=>submit(e,(v)=>run("/attendance/manual","POST",{maDK:Number(v.get("maDK"))},"Đã điểm danh; khoản +5 DRL đang chờ Phòng CTSV xác nhận."))}><Field title="Mã đăng ký của sinh viên" name="maDK" type="number" min="1" required/><button className={s.secondaryButton} disabled={busy}>Ghi nhận theo danh sách ký tay</button></form>{detail && attendanceQr?.activityId!==selectedId && <pre className={s.jsonDetail}>{JSON.stringify(detail,null,2)}</pre>}</section>}
 
-    {sectionId === "support" && selectedId && <section className={s.card}><h2>Phân chỉ tiêu theo lớp</h2><form className={s.businessForm} onSubmit={(e) => submit(e, (v) => run("/registrations/support-assignment", "POST", { maHD: Number(selectedId), maLop: Number(v.get("maLop")), soLuong: Number(v.get("soLuong")), loaiPhanCong: v.get("loaiPhanCong"), nhiemVu: v.get("nhiemVu") }))}><Field title="Mã lớp" name="maLop" type="number" min="1" required /><Field title="Số lượng" name="soLuong" type="number" min="1" required /><label className={s.businessField}><span>Phân công</span><select className={inputClass} name="loaiPhanCong"><option>Cổ vũ</option><option>Hỗ trợ</option></select></label><Field title="Nhiệm vụ" name="nhiemVu" /><button className={s.primary}>Lưu phân bổ</button></form>{Array.isArray(detail) && <Listing rows={detail as Row[]} empty="Chưa phân bổ lớp." />}</section>}
+    {sectionId === "support" && selectedId && <section className={s.card}><h2>Phân chỉ tiêu theo lớp</h2><form className={s.businessForm} onSubmit={(e) => submit(e, (v) => run("/registrations/support-assignment", "POST", { maHD: Number(selectedId), maLop: Number(v.get("maLop")), soLuong: Number(v.get("soLuong")), loaiPhanCong: v.get("loaiPhanCong"), nhiemVu: v.get("nhiemVu") }))}><Field title="Mã lớp" name="maLop" type="number" min="1" required /><Field title="Số lượng" name="soLuong" type="number" min="1" required /><label className={s.businessField}><span>Phân công</span><select className={inputClass} name="loaiPhanCong"><option>Cổ vũ</option><option>Hỗ trợ</option></select></label><Field title="Nhiệm vụ" name="nhiemVu" /><button className={s.primary}>Lưu phân bổ</button></form>
+      <h3>Danh sách phân công cổ vũ và hỗ trợ</h3>
+      {Array.isArray(detail) && <div className={s.registrationTableWrap}>
+        {supportRows.length ? <table className={s.registrationTable}>
+          <thead><tr><th>Mã phân công</th><th>Lớp</th><th>Số lượng</th><th>Hình thức</th><th>Nhiệm vụ</th><th>Ngày phân công</th><th>Trạng thái</th></tr></thead>
+          <tbody>{supportRows.map((row, index) => <tr key={`support-${String(readValue(row, "MaCoVu") ?? `${readValue(row, "MaLop") ?? "lop"}-${index}`)}`}>
+            <td>{readValue(row, "MaCoVu") === undefined ? "—" : `PC-${String(readValue(row, "MaCoVu")).padStart(4, "0")}`}</td>
+            <td><strong>{label(row, "TenLop", "MaLop")}</strong></td>
+            <td>{label(row, "SoLuong")}</td>
+            <td>{label(row, "LoaiPhanCong")}</td>
+            <td>{label(row, "NhiemVu")}</td>
+            <td>{formatDateTime(readValue(row, "NgayPhCong")) ?? "Chưa cập nhật"}</td>
+            <td><span className={s.registrationStatus}>{label(row, "TrangThai")}</span></td>
+          </tr>)}</tbody>
+        </table> : <p className={s.emptyMessage}>Hoạt động này chưa có lớp được phân công.</p>}
+      </div>}
+    </section>}
 
-    {sectionId === "training-points" && <section className={s.card}><h2>Điểm rèn luyện</h2><p>Thống kê khoản ghi nhận theo học kỳ/năm học.</p><button className={s.secondaryButton} onClick={async () => { try { const value=await workflowRequest<unknown>("/reports/training-points"); setDetail({ rows: value }); } catch(cause) {setError(cause instanceof Error?cause.message:"Không tải được báo cáo");} }}>Tải báo cáo điểm</button><form className={s.businessForm} onSubmit={(e) => submit(e, (v) => run("/training-points", "POST", { maSV: Number(v.get("maSV")), maHD: Number(selectedId || v.get("maHD")), hocKy: v.get("hocKy"), namHoc: v.get("namHoc"), diem: Number(v.get("diem")), lyDo: v.get("lyDo") }))}><Field title="Mã sinh viên" name="maSV" type="number" min="1" required /><Field title="Mã hoạt động" name="maHD" type="number" min="1" required /><Field title="Học kỳ" name="hocKy" required /><Field title="Năm học" name="namHoc" required /><Field title="Điểm cộng/trừ" name="diem" type="number" required /><Field title="Lý do" name="lyDo" required /><button className={s.primary}>Ghi nhận chờ duyệt</button></form><form className={s.businessForm} onSubmit={(e) => submit(e, (v) => run(`/training-points/${v.get("maDiem")}/approve`, "PATCH", {}))}><Field title="Mã khoản DRL cần duyệt" name="maDiem" type="number" min="1" required /><button className={s.secondaryButton}>Duyệt khoản DRL</button></form>{detail && <pre className={s.jsonDetail}>{JSON.stringify(detail,null,2)}</pre>}</section>}
+    {sectionId === "training-points" && <section className={s.card}>
+      <h2>Điểm rèn luyện</h2><p>Thống kê khoản ghi nhận theo học kỳ/năm học.</p>
+      <button className={s.secondaryButton} disabled={trainingPointReportLoading} onClick={async () => {
+        setTrainingPointReportLoading(true); setError("");
+        try {
+          const value = await workflowRequest<unknown>("/reports/training-points");
+          if (!Array.isArray(value)) throw new Error("Dữ liệu báo cáo điểm rèn luyện trả về không đúng định dạng.");
+          setTrainingPointReport(value as Row[]);
+        } catch (cause) {
+          setError(cause instanceof Error ? cause.message : "Không tải được báo cáo điểm rèn luyện.");
+        } finally { setTrainingPointReportLoading(false); }
+      }}>{trainingPointReportLoading ? "Đang tải báo cáo…" : "Tải báo cáo điểm"}</button>
+      {trainingPointReport && <div className={s.registrationTableWrap}>
+        {trainingPointReport.length ? <table className={s.registrationTable}>
+          <thead><tr><th>Năm học</th><th>Học kỳ</th><th>Khoa</th><th>Bộ môn</th><th>Lượt ghi nhận</th><th>Tổng điểm cộng</th><th>Tổng điểm trừ</th><th>Điểm đã xác nhận</th></tr></thead>
+          <tbody>{trainingPointReport.map((row, index) => <tr key={`training-point-report-${label(row, "NamHoc")}-${label(row, "HocKy")}-${label(row, "TenKhoa")}-${label(row, "TenBM")}-${index}`}>
+            <td>{label(row, "NamHoc")}</td><td>{label(row, "HocKy")}</td><td>{label(row, "TenKhoa")}</td><td>{label(row, "TenBM")}</td>
+            <td>{formatReportNumber(readValue(row, "SoLuotGhiNhan"))}</td><td>{formatReportNumber(readValue(row, "TongDiemCong"))}</td>
+            <td>{formatReportNumber(readValue(row, "TongDiemTru"))}</td><td><strong>{formatReportNumber(readValue(row, "TongDiemDaXacNhan"))}</strong></td>
+          </tr>)}</tbody>
+        </table> : <p className={s.emptyMessage}>Chưa có dữ liệu điểm rèn luyện để tổng hợp.</p>}
+      </div>}
+      <form className={s.businessForm} onSubmit={(e) => submit(e, (v) => run("/training-points", "POST", { maSV: Number(v.get("maSV")), maHD: Number(selectedId || v.get("maHD")), hocKy: v.get("hocKy"), namHoc: v.get("namHoc"), diem: Number(v.get("diem")), lyDo: v.get("lyDo") }))}><Field title="Mã sinh viên" name="maSV" type="number" min="1" required /><Field title="Mã hoạt động" name="maHD" type="number" min="1" required /><Field title="Học kỳ" name="hocKy" required /><Field title="Năm học" name="namHoc" required /><Field title="Điểm cộng/trừ" name="diem" type="number" required /><Field title="Lý do" name="lyDo" required /><button className={s.primary}>Ghi nhận chờ duyệt</button></form>
+      <form className={s.businessForm} onSubmit={(e) => submit(e, (v) => run(`/training-points/${v.get("maDiem")}/approve`, "PATCH", {}))}><Field title="Mã khoản DRL cần duyệt" name="maDiem" type="number" min="1" required /><button className={s.secondaryButton}>Duyệt khoản DRL</button></form>
+    </section>}
 
-    {sectionId === "results" && selectedId && <section className={s.card}><h2>Kết quả cuộc thi</h2><button className={s.secondaryButton} onClick={async()=>{const value=await workflowRequest<unknown>(`/competitions/${selectedId}/results`);setDetail({rows:value});}}>Tải kết quả đã công bố</button>{canManageActivities(user.roles) && <><form className={s.businessForm} onSubmit={(e) => submit(e, (v) => run(`/competitions/${selectedId}/results`, "POST", { maDoi: v.get("maDoi") ? Number(v.get("maDoi")) : undefined, maDK: v.get("maDK") ? Number(v.get("maDK")) : undefined, maGT: v.get("maGT") ? Number(v.get("maGT")) : undefined, loaiKQ: v.get("loaiKQ"), xepHang: v.get("xepHang") ? Number(v.get("xepHang")) : undefined, diem: v.get("diem") ? Number(v.get("diem")) : undefined, ghiChu: v.get("ghiChu") }))}><Field title="Mã đội" name="maDoi" type="number" min="1" /><Field title="Mã đăng ký cá nhân" name="maDK" type="number" min="1" /><Field title="Mã giải" name="maGT" type="number" min="1" /><Field title="Loại kết quả" name="loaiKQ" /><Field title="Xếp hạng" name="xepHang" type="number" min="1" /><Field title="Điểm" name="diem" type="number" min="0" step="0.01" /><Field title="Ghi chú" name="ghiChu" /><button className={s.primary}>Tạo kết quả nháp</button></form><form className={s.businessForm} onSubmit={(e) => submit(e, (v) => run(`/competitions/results/${v.get("maKQ")}/publish`, "PATCH", {}))}><Field title="Mã kết quả để công bố" name="maKQ" type="number" min="1" required /><button className={s.secondaryButton}>Công bố kết quả</button></form></>}</section>}
+    {sectionId === "results" && selectedId && <section className={s.card}>
+      <h2>Kết quả cuộc thi</h2>
+      <div className={s.businessActions}>
+        <button className={s.primary} disabled={resultsLoading} onClick={async () => {
+          setResultsLoading(true);
+          setError("");
+          try {
+            const value = await workflowRequest<unknown>(`/competitions/${selectedId}/results`);
+            if (!Array.isArray(value)) throw new Error("Dữ liệu kết quả trả về không đúng định dạng.");
+            setCompetitionResults(value as Row[]);
+          } catch (cause) {
+            setError(cause instanceof Error ? cause.message : "Không tải được kết quả cuộc thi.");
+            setCompetitionResults(null);
+          } finally {
+            setResultsLoading(false);
+          }
+        }}>{resultsLoading ? "Đang tải kết quả…" : "Xem kết quả thi"}</button>
+        {competitionResults && competitionResults.length > 0 && <button type="button" className={s.secondaryButton} onClick={() => downloadCompetitionResultForm(competitionResults, selectedActivity, selectedId)}>Tải biểu mẫu kết quả</button>}
+      </div>
+      {competitionResults && <section className={s.competitionResultsForm} aria-label="Biểu mẫu kết quả cuộc thi">
+        <div className={s.competitionResultsHeading}>
+          <span>CÔNG TÁC HỌC THUẬT</span>
+          <h3>PHIẾU KẾT QUẢ CUỘC THI</h3>
+          <strong>{label(selectedActivity ?? {}, "TenCuocThi", "TenHoatDong")}</strong>
+          <small>Mã cuộc thi: {selectedId} · {competitionResults.length} kết quả đã công bố</small>
+        </div>
+        {competitionResults.length ? <div className={s.competitionResultsTableWrap}><table className={s.competitionResultsTable}>
+          <thead><tr><th>STT</th><th>Thí sinh / Đội thi</th><th>MSSV</th><th>Giải thưởng</th><th>Xếp hạng</th><th>Điểm</th><th>Ghi chú</th></tr></thead>
+          <tbody>{competitionResults.map((result, index) => <tr key={`competition-result-${String(readValue(result, "MaKQ") ?? index)}`}>
+            <td>{index + 1}</td>
+            <td>{label(result, "TenDoi", "HoTen")}</td>
+            <td>{label(result, "MSSV")}</td>
+            <td>{label(result, "TenGT", "CapGiai", "LoaiKQ")}</td>
+            <td>{label(result, "XepHang")}</td>
+            <td>{label(result, "Diem")}</td>
+            <td>{label(result, "GhiChu")}</td>
+          </tr>)}</tbody>
+        </table></div> : <p className={s.emptyMessage}>Cuộc thi này chưa có kết quả được công bố.</p>}
+      </section>}
+      {canManageActivities(user.roles) && <><form className={s.businessForm} onSubmit={(e) => submit(e, (v) => run(`/competitions/${selectedId}/results`, "POST", { maDoi: v.get("maDoi") ? Number(v.get("maDoi")) : undefined, maDK: v.get("maDK") ? Number(v.get("maDK")) : undefined, maGT: v.get("maGT") ? Number(v.get("maGT")) : undefined, loaiKQ: v.get("loaiKQ"), xepHang: v.get("xepHang") ? Number(v.get("xepHang")) : undefined, diem: v.get("diem") ? Number(v.get("diem")) : undefined, ghiChu: v.get("ghiChu") }))}><Field title="Mã đội" name="maDoi" type="number" min="1" /><Field title="Mã đăng ký cá nhân" name="maDK" type="number" min="1" /><Field title="Mã giải" name="maGT" type="number" min="1" /><Field title="Loại kết quả" name="loaiKQ" /><Field title="Xếp hạng" name="xepHang" type="number" min="1" /><Field title="Điểm" name="diem" type="number" min="0" step="0.01" /><Field title="Ghi chú" name="ghiChu" /><button className={s.primary}>Tạo kết quả nháp</button></form><form className={s.businessForm} onSubmit={(e) => submit(e, (v) => run(`/competitions/results/${v.get("maKQ")}/publish`, "PATCH", {}))}><Field title="Mã kết quả để công bố" name="maKQ" type="number" min="1" required /><button className={s.secondaryButton}>Công bố kết quả</button></form></>}
+    </section>}
 
-    {sectionId === "expenses" && <section className={s.card}><h2>Kinh phí hoạt động</h2>{budgetGroups.length ? <div className={s.businessList}>{budgetGroups.map(([activityId, items]) => { const total = items.reduce((sum, item) => sum + Number(readValue(item, "SoTien") ?? 0), 0); const first = items[0]; return <article key={activityId}><div><strong>{label(first, "TenHoatDong")}</strong><span>Mã HĐ: {activityId} · {items.length} nội dung · Tổng dự trù: {total.toLocaleString("vi-VN")} đồng</span><small>{items.map((item) => `${label(item, "NoiDung")} (${label(item, "SoTien")} đồng)`).join(" · ")}</small></div><button className={s.primary} disabled={busy} onClick={() => void run(`/academic-activities/${activityId}/submit`, "PATCH", undefined, "Đã gửi toàn bộ kinh phí của hoạt động lên khoa xét duyệt.")}>Gửi khoa xét duyệt</button></article>; })}</div> : <p className={s.emptyMessage}>Chưa có dữ liệu kinh phí hoạt động.</p>}</section>}
+    {sectionId === "expenses" && <section className={s.card}>
+      <h2>Dự trù kinh phí theo hoạt động</h2>
+      <p>Mỗi hoạt động có một hồ sơ dự trù riêng. Khoa duyệt từng hồ sơ; file tổng hợp chỉ gồm các khoản đã duyệt.</p>
+      {budgetGroups.length ? <div className={s.businessList}>{budgetGroups.map(([activityId, items]) => {
+        const total = items.reduce((sum, item) => sum + Number(readValue(item, "SoTien") ?? 0), 0);
+        const first = items[0];
+        const rawStatus = label(first, "TrangThaiDuTru");
+        const status = rawStatus === "—" ? "Dự thảo" : rawStatus;
+        const proposalId = Number(readValue(first, "MaHoSoDuTru", "MaDuTruKP") ?? 0);
+        const canSubmit = canSubmitBudgets && (status === "Dự thảo" || status === "Từ chối");
+        const canReview = canReviewBudgets && status === "Chờ duyệt" && proposalId > 0;
+        return <article key={`budget-activity-${activityId}`}>
+          <div>
+            <strong>{label(first, "TenHoatDong")}</strong>
+            <span>Mã HĐ: {activityId} · Năm học: {label(first, "NamHoc")} · {items.length} khoản · Tổng dự trù: {total.toLocaleString("vi-VN")} đồng</span>
+            <span>Trạng thái: {status}{proposalId ? ` · Mã hồ sơ: DTP-${proposalId}` : ""}</span>
+            {label(first, "GhiChuDuyet") !== "—" && <small>Lý do từ chối: {label(first, "GhiChuDuyet")}</small>}
+            <small>{items.map((item) => `${label(item, "NoiDung")} (${Number(readValue(item, "SoTien") ?? 0).toLocaleString("vi-VN")} đồng)`).join(" · ")}</small>
+          </div>
+          <div className={s.businessActions}>
+            {canSubmit && <button className={s.primary} disabled={busy} onClick={() => void run(`/academic-activities/${activityId}/budget/submit`, "PATCH", undefined, status === "Từ chối" ? "Đã gửi lại dự trù lên khoa duyệt." : "Đã gửi dự trù của hoạt động lên khoa duyệt.")}>{status === "Từ chối" ? "Gửi lại khoa duyệt" : "Gửi khoa duyệt"}</button>}
+            {canReview && <>
+              <button className={s.primary} disabled={busy} onClick={() => void run(`/academic-activities/budgets/${proposalId}/review`, "PATCH", { action: "approve" }, "Đã duyệt dự trù kinh phí hoạt động.")}>Duyệt dự trù</button>
+              <button className={s.secondaryButton} disabled={busy} onClick={() => { const note = window.prompt("Lý do từ chối dự trù (không bắt buộc):"); if (note === null) return; void run(`/academic-activities/budgets/${proposalId}/review`, "PATCH", { action: "reject", ghiChu: note.trim() }, "Đã từ chối dự trù kinh phí hoạt động."); }}>Từ chối</button>
+            </>}
+          </div>
+        </article>;
+      })}</div> : <p className={s.emptyMessage}>Chưa có dữ liệu kinh phí hoạt động trong năm học đã chọn.</p>}
+    </section>}
 
-    {sectionId === "expenses" && budgetDialogOpen && <div className={s.modalOverlay} role="dialog" aria-modal="true"><div className={s.modalCard} style={{ maxWidth: "720px", width: "min(720px, calc(100vw - 32px))", maxHeight: "calc(100vh - 40px)", overflowY: "auto", borderRadius: "18px", boxShadow: "0 24px 70px rgba(15, 23, 42, .22)" }}><div className={s.modalHeader} style={{ padding: "20px 24px", background: "linear-gradient(135deg, #eff6ff, #ffffff)" }}><div><div style={{ color: "#2563eb", fontSize: "12px", fontWeight: 700, letterSpacing: ".08em", textTransform: "uppercase" }}>Dự trù ngân sách</div><h3 style={{ margin: "5px 0 0", fontSize: "20px", color: "#0f172a" }}>Tạo kinh phí hoạt động</h3></div><button type="button" className={s.modalCloseBtn} onClick={() => setBudgetDialogOpen(false)}>✕</button></div><form onSubmit={async (event) => { event.preventDefault(); if (!initialActivityId) { setError("Chưa xác định hoạt động cần tạo kinh phí."); return; } const form = new FormData(event.currentTarget); const result = await run(`/academic-activities/${initialActivityId}/budget`, "POST", { maHD: Number(form.get("maHD")), noiDung: form.get("noiDung"), soLuong: form.get("soLuong") ? Number(form.get("soLuong")) : undefined, donViTinh: form.get("donViTinh"), donGia: form.get("donGia") ? Number(form.get("donGia")) : undefined, soTien: Number(form.get("soTien")), thuyetMinh: form.get("thuyetMinh"), nguonKinhPhi: form.get("nguonKinhPhi"), ghiChu: form.get("ghiChu") }, "Đã tạo kinh phí hoạt động."); if (result) setBudgetDialogOpen(false); }}><div className={s.modalBody} style={{ padding: "22px 24px 8px" }}><div style={{ display: "grid", gridTemplateColumns: "140px 1fr", gap: "14px" }}><Field title="Mã HĐ" name="maHD" defaultValue={String(initialActivityId ?? "")} required /><Field title="Nội dung kinh phí (tên hoạt động học thuật)" name="noiDung" defaultValue={initialActivityName || ""} required /></div><div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: "14px" }}><Field title="Số lượng" name="soLuong" type="number" min="0" step="0.01" /><Field title="Đơn vị tính" name="donViTinh" placeholder="bộ, người..." /><Field title="Đơn giá" name="donGia" type="number" min="0" step="0.01" /></div><Field title="Số tiền dự trù *" name="soTien" type="number" min="0" step="0.01" required /><Field title="Thuyết minh" name="thuyetMinh" placeholder="Giải thích cơ sở lập dự toán..." /><Field title="Nguồn kinh phí" name="nguonKinhPhi" defaultValue="Kinh phí học thuật" /><Field title="Ghi chú" name="ghiChu" /><button type="button" className={s.secondaryButton} onClick={() => undefined}>+ Thêm dòng</button></div><div className={s.modalFooter} style={{ padding: "16px 24px 20px", borderTop: "1px solid #eef2f7", background: "#fbfdff" }}><button type="button" className={s.secondaryButton} onClick={() => setBudgetDialogOpen(false)}>Hủy</button><button type="submit" className={s.primary} disabled={busy}>{busy ? "Đang lưu…" : "Lưu kinh phí"}</button></div></form></div></div>}
+    {sectionId === "expenses" && budgetDialogOpen && <div className={s.modalOverlay} role="dialog" aria-modal="true">
+      <div className={s.modalCard} style={{ maxWidth: "720px", width: "min(720px, calc(100vw - 32px))", maxHeight: "calc(100vh - 40px)", overflowY: "auto", borderRadius: "18px", boxShadow: "0 24px 70px rgba(15, 23, 42, .22)" }}>
+        <div className={s.modalHeader} style={{ padding: "20px 24px", background: "linear-gradient(135deg, #eff6ff, #ffffff)" }}>
+          <div><div style={{ color: "#2563eb", fontSize: "12px", fontWeight: 700, letterSpacing: ".08em", textTransform: "uppercase" }}>Dự trù ngân sách</div><h3 style={{ margin: "5px 0 0", fontSize: "20px", color: "#0f172a" }}>Thêm khoản cho hoạt động</h3></div>
+          <button type="button" className={s.modalCloseBtn} onClick={() => setBudgetDialogOpen(false)}>✕</button>
+        </div>
+        <form onSubmit={async (event) => {
+          event.preventDefault();
+          const form = new FormData(event.currentTarget);
+          const activityId = Number(form.get("maHD"));
+          if (!activityId) { setError("Hãy chọn hoạt động cần lập dự trù."); return; }
+          const result = await run(`/academic-activities/${activityId}/budget`, "POST", {
+            noiDung: form.get("noiDung"), soLuong: form.get("soLuong") ? Number(form.get("soLuong")) : undefined,
+            donViTinh: form.get("donViTinh"), donGia: form.get("donGia") ? Number(form.get("donGia")) : undefined,
+            soTien: Number(form.get("soTien")), thuyetMinh: form.get("thuyetMinh"),
+            nguonKinhPhi: form.get("nguonKinhPhi"), ghiChu: form.get("ghiChu"),
+          }, "Đã thêm khoản dự trù. Hãy thêm các khoản khác của hoạt động rồi gửi khoa duyệt.");
+          if (result) setBudgetDialogOpen(false);
+        }}>
+          <div className={s.modalBody} style={{ padding: "22px 24px 8px" }}>
+            <label className={s.businessField}><span>Hoạt động *</span><select className={inputClass} name="maHD" value={selectedId} onChange={(event) => setSelectedId(event.target.value)} required><option value="">Chọn hoạt động</option>{budgetActivityOptions.map(({ id, activity }) => <option key={`budget-activity-${id}`} value={id}>{id} · {label(activity, "TenHoatDong")}</option>)}</select></label>
+            <Field title="Nội dung khoản kinh phí *" name="noiDung" placeholder="Ví dụ: thuê hội trường, in tài liệu..." required />
+            <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: "14px" }}><Field title="Số lượng" name="soLuong" type="number" min="0" step="0.01" /><Field title="Đơn vị tính" name="donViTinh" placeholder="bộ, người..." /><Field title="Đơn giá" name="donGia" type="number" min="0" step="0.01" /></div>
+            <Field title="Số tiền dự trù *" name="soTien" type="number" min="0" step="0.01" required />
+            <Field title="Thuyết minh" name="thuyetMinh" placeholder="Giải thích cơ sở lập khoản chi..." />
+            <Field title="Nguồn kinh phí" name="nguonKinhPhi" defaultValue="Kinh phí học thuật" />
+            <Field title="Ghi chú" name="ghiChu" />
+            <p style={{ margin: "4px 0 0", color: "#64748b", fontSize: "13px" }}>Mỗi lần lưu thêm một khoản. Khi đã nhập đủ các khoản cho hoạt động, gửi hồ sơ lên khoa duyệt.</p>
+          </div>
+          <div className={s.modalFooter} style={{ padding: "16px 24px 20px", borderTop: "1px solid #eef2f7", background: "#fbfdff" }}><button type="button" className={s.secondaryButton} onClick={() => setBudgetDialogOpen(false)}>Hủy</button><button type="submit" className={s.primary} disabled={busy}>{busy ? "Đang lưu…" : "Lưu khoản kinh phí"}</button></div>
+        </form>
+      </div>
+    </div>}
 
     {sectionId === "seminars" && <><section className={s.card}><h2>Tạo Seminar</h2><form className={s.businessForm} onSubmit={(e) => submit(e, (v) => run("/seminars", "POST", { tenHoatDong:v.get("tenHoatDong"), chuDe:v.get("chuDe"), tgBatDau:v.get("tgBatDau"), tgKetThuc:v.get("tgKetThuc"), hanDangKy:v.get("hanDangKy")||undefined, diaDiem:v.get("diaDiem"), slToiDa:v.get("slToiDa")?Number(v.get("slToiDa")):undefined, noiDung:v.get("noiDung"), doiTuongTG:v.get("doiTuongTG"), dvChuTri:v.get("dvChuTri"), dvPhoiHop:v.get("dvPhoiHop"), dienGia:v.get("dienGia")?JSON.parse(String(v.get("dienGia"))):[], chuongTrinh:v.get("chuongTrinh")?JSON.parse(String(v.get("chuongTrinh"))):[]}))}><Field title="Tên hoạt động" name="tenHoatDong" required/><Field title="Chủ đề" name="chuDe" required/><Field title="Bắt đầu" name="tgBatDau" type="datetime-local" required/><Field title="Kết thúc" name="tgKetThuc" type="datetime-local" required/><Field title="Hạn đăng ký" name="hanDangKy" type="datetime-local"/><Field title="Địa điểm" name="diaDiem"/><Field title="Chỉ tiêu" name="slToiDa" type="number" min="1"/><Field title="Nội dung" name="noiDung"/><Field title="Đối tượng" name="doiTuongTG"/><Field title="Đơn vị chủ trì" name="dvChuTri"/><Field title="Đơn vị phối hợp" name="dvPhoiHop"/><Field title="Diễn giả (JSON mảng)" name="dienGia" defaultValue="[]"/><Field title="Chương trình (JSON mảng)" name="chuongTrinh" defaultValue="[]"/><button className={s.primary} disabled={busy}>Tạo và công bố Seminar</button></form></section><section className={s.card}><h2>Seminar đã lập</h2><Listing rows={rows} empty="Chưa có Seminar." onSelect={(row)=>setSelectedId(String(row.MaSeminar))}/>{selectedId && <><form className={s.businessForm} onSubmit={(e)=>submit(e,(v)=>run(`/seminars/${selectedId}/materials`,"POST",{tenTep:v.get("tenTep"),urlTep:v.get("urlTep"),loaiTep:v.get("loaiTep")}))}><h3>Thêm tài liệu cho Seminar #{selectedId}</h3><Field title="Tên tài liệu" name="tenTep" required/><Field title="URL tài liệu" name="urlTep" required/><Field title="Loại tài liệu" name="loaiTep"/><button className={s.primary}>Lưu tài liệu</button></form>{user.roles.includes("SINHVIEN") && <button className={s.secondaryButton} onClick={()=>void run(`/seminars/${selectedId}/register`,"POST",{},"Đã gửi đăng ký tham gia seminar.")}>Đăng ký seminar này</button>}</>}</section></>}
 

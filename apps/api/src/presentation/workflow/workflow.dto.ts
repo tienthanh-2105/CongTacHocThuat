@@ -242,6 +242,11 @@ export class CreateActivityBudgetDto {
   @IsOptional() @IsString() @MaxLength(500) ghiChu?: string;
 }
 
+export class ReviewActivityBudgetDto {
+  @IsIn(['approve', 'reject']) action!: 'approve' | 'reject';
+  @IsOptional() @IsString() @MaxLength(500) ghiChu?: string;
+}
+
 export class UpdateAcademicActivityDto {
   @IsOptional() @IsString() @MaxLength(30) hocKy?: string;
   @IsOptional() @IsString() @MaxLength(20) namHoc?: string;

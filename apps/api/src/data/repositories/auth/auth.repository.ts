@@ -47,6 +47,7 @@ function account(row: AccountRow) {
   const roleCodes: Record<string, string> = {
     'QUANTRIVIEN': 'ADMIN',
     'CANBOKHOA': 'CANBOKHOA',
+    'TRUONGKHOA': 'TRUONGKHOA',
     'GIANGVIEN': 'GIANGVIEN',
     'SINHVIEN': 'SINHVIEN',
     'PHONGKHCN': 'PHONGKHCN',

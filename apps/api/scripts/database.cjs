@@ -27,7 +27,7 @@ const requiredTables = [
   'MAQR', 'DIEMDANH', 'GIAITHUONG', 'KETQUAHOCTHUAT', 'DIEMRENLUYEN',
   'HOSOQUYETTOAN', 'CHIPHITHUCTE', 'PHIENDANGNHAP',
 ];
-const workflowTables = ['SCHEMAMIGRATION', 'CHITIETKEHOACH', 'VONGTHI', 'BAITHI', 'CHAMDIEMVONG', 'HANGDOICHODANGKY', 'THONGBAO', 'TEPSEMINAR'];
+const workflowTables = ['SCHEMAMIGRATION', 'CHITIETKEHOACH', 'VONGTHI', 'BAITHI', 'CHAMDIEMVONG', 'HANGDOICHODANGKY', 'THONGBAO', 'TEPSEMINAR', 'GIANGVIEN_BOMON', 'DUTRUKINHPHI', 'KINHPHIHOATDONG'];
 
 async function getApplicationTables(pool) {
   const result = await pool.request().query(
@@ -104,8 +104,8 @@ async function migrate(pool) {
         CREATE TABLE dbo.SCHEMAMIGRATION (MaMigration NVARCHAR(100) NOT NULL PRIMARY KEY, ApDungLuc DATETIMEOFFSET NOT NULL DEFAULT SYSDATETIMEOFFSET());
     `);
     const migrations = legacy
-      ? ['003_legacy_sqlserver_compat.sql', '002_workflow_extensions.sql', '004_workflow_roles_status.sql', '005_activity_owner.sql', '006_activity_semester_year.sql', '007_activity_status.sql', '008_activity_times.sql', '009_activity_time_only.sql', '010_activity_progress_max.sql', '011_activity_plan_compat.sql', '012_activity_pending_status.sql']
-      : ['002_workflow_extensions.sql', '004_workflow_roles_status.sql', '005_activity_owner.sql', '006_activity_semester_year.sql', '007_activity_status.sql', '008_activity_times.sql', '009_activity_time_only.sql', '010_activity_progress_max.sql', '011_activity_plan_compat.sql', '012_activity_pending_status.sql', '004_allow_budget_detail_before_draft.sql'];
+      ? ['003_legacy_sqlserver_compat.sql', '002_workflow_extensions.sql', '004_workflow_roles_status.sql', '005_activity_owner.sql', '006_activity_semester_year.sql', '007_activity_status.sql', '008_activity_times.sql', '009_activity_time_only.sql', '010_activity_progress_max.sql', '011_activity_plan_compat.sql', '012_activity_pending_status.sql', '013_plan_approval_stages.sql', '014_lecturer_department_links.sql', '015_activity_budget_approval.sql']
+      : ['002_workflow_extensions.sql', '004_workflow_roles_status.sql', '005_activity_owner.sql', '006_activity_semester_year.sql', '007_activity_status.sql', '008_activity_times.sql', '009_activity_time_only.sql', '010_activity_progress_max.sql', '011_activity_plan_compat.sql', '012_activity_pending_status.sql', '013_plan_approval_stages.sql', '014_lecturer_department_links.sql', '004_allow_budget_detail_before_draft.sql', '015_activity_budget_approval.sql'];
     for (const fileName of migrations) {
       const migration = path.resolve(__dirname, '../migrations', fileName);
       if (!fs.existsSync(migration)) continue;

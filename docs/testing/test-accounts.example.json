@@ -1,0 +1,10 @@
+[
+  { "role": "Quản trị viên", "username": "", "password": "" },
+  { "role": "Cán bộ khoa", "username": "", "password": "" },
+  { "role": "Trưởng khoa", "username": "", "password": "" },
+  { "role": "Giảng viên", "username": "", "password": "" },
+  { "role": "Phòng KHCN", "username": "", "password": "" },
+  { "role": "Ban giám hiệu", "username": "", "password": "" },
+  { "role": "Phòng CTSV", "username": "", "password": "" },
+  { "role": "Sinh viên", "username": "", "password": "" }
+]

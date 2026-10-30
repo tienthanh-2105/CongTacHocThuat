@@ -3,7 +3,7 @@ import { ApiBearerAuth, ApiCookieAuth, ApiOperation, ApiTags } from '@nestjs/swa
 import { SessionGuard } from '../auth/auth.guards';
 import type { AuthRequest } from '../auth/auth.http';
 import { WorkflowService } from '../../business/workflow/workflow.service';
-import { ActivityChangeDto, AdjustTrainingPointDto, AwardTrainingPointDto, CheckInDto, CompetitionResultDto, CreateAttendanceCodeDto, CreatePlanActivityDto, CreatePlanDto, CreateRoundDto, ReviewPlanDto, ScoreWorkDto, SubmitWorkDto, SeminarMaterialDto, CreateAccountDto, CreateStudentAccountDto, CreateStudentProfileDto, CreateLinkedStudentProfileDto, UpdateStudentRecordDto, ChangeAccountRoleDto, LinkAccountStudentProfileDto, ResetAccountPasswordDto, SetAccountStatusDto, ManualAttendanceDto, CreateClassDto, UpdateClassDto, UpdateStaffRecordDto, CreateStaffRecordDto, CreateStaffAccountDto, CreateAcademicActivityDto, UpdateAcademicActivityDto, CreateCommitteeMemberDto, UpdateCommitteeMemberDto, CreateActivityBudgetDto } from './workflow.dto';
+import { ActivityChangeDto, AdjustTrainingPointDto, AwardTrainingPointDto, CheckInDto, CompetitionResultDto, CreateAttendanceCodeDto, CreatePlanActivityDto, CreatePlanDto, CreateRoundDto, ReviewPlanDto, ScoreWorkDto, SubmitWorkDto, SeminarMaterialDto, CreateAccountDto, CreateStudentAccountDto, CreateStudentProfileDto, CreateLinkedStudentProfileDto, UpdateStudentRecordDto, ChangeAccountRoleDto, LinkAccountStudentProfileDto, ResetAccountPasswordDto, SetAccountStatusDto, ManualAttendanceDto, CreateClassDto, UpdateClassDto, UpdateStaffRecordDto, CreateStaffRecordDto, CreateStaffAccountDto, CreateAcademicActivityDto, UpdateAcademicActivityDto, CreateCommitteeMemberDto, UpdateCommitteeMemberDto, CreateActivityBudgetDto, ReviewActivityBudgetDto } from './workflow.dto';
 
 @ApiTags('admin-accounts') @ApiBearerAuth() @ApiCookieAuth() @UseGuards(SessionGuard)
 @Controller('admin/accounts')
@@ -52,7 +52,7 @@ export class PlansController {
   @Post(':id/activities') @ApiOperation({summary:'Thêm hoạt động và dự toán vào kế hoạch'}) activity(@Req() r:AuthRequest,@Param('id',ParseIntPipe) id:number,@Body() dto:CreatePlanActivityDto){return this.service.addPlanActivity(r.auth!,id,dto);}
   @Post('details/:detailId/publish') @ApiOperation({summary:'Tạo hoạt động từ hạng mục kế hoạch đã duyệt'}) publish(@Req() r:AuthRequest,@Param('detailId',ParseIntPipe) id:number){return this.service.publishPlanActivity(r.auth!,id);}
   @Post(':id/submit') @ApiOperation({summary:'Trình kế hoạch để duyệt'}) submit(@Req() r:AuthRequest,@Param('id',ParseIntPipe) id:number){return this.service.submitPlan(r.auth!,id);}
-  @Patch(':id/review') @ApiOperation({summary:'Duyệt, yêu cầu bổ sung hoặc từ chối kế hoạch theo cấp'}) review(@Req() r:AuthRequest,@Param('id',ParseIntPipe) id:number,@Body() dto:ReviewPlanDto){return this.service.reviewPlan(r.auth!,id,dto);}
+  @Patch(':id/review') @ApiOperation({summary:'Trưởng khoa ký duyệt, Phòng KHCN ký duyệt, sau đó Ban giám hiệu phê duyệt kế hoạch'}) review(@Req() r:AuthRequest,@Param('id',ParseIntPipe) id:number,@Body() dto:ReviewPlanDto){return this.service.reviewPlan(r.auth!,id,dto);}
 }
 
 @ApiTags('competition-rounds') @ApiBearerAuth() @ApiCookieAuth() @UseGuards(SessionGuard)
@@ -157,6 +157,11 @@ export class AcademicActivitiesController {
     return this.service.listActivityBudgets(r.auth!);
   }
 
+  @Patch('budgets/:id/review')
+  reviewActivityBudget(@Req() r: AuthRequest, @Param('id', ParseIntPipe) id: number, @Body() dto: ReviewActivityBudgetDto) {
+    return this.service.reviewActivityBudget(r.auth!, id, dto);
+  }
+
   @Post()
   create(@Req() r: AuthRequest, @Body() dto: CreateAcademicActivityDto) {
     return this.service.createAcademicActivity(r.auth!, dto);
@@ -165,6 +170,11 @@ export class AcademicActivitiesController {
   @Post(':id/budget')
   createActivityBudget(@Req() r: AuthRequest, @Param('id', ParseIntPipe) id: number, @Body() dto: CreateActivityBudgetDto) {
     return this.service.createActivityBudget(r.auth!, id, dto);
+  }
+
+  @Patch(':id/budget/submit')
+  submitActivityBudget(@Req() r: AuthRequest, @Param('id', ParseIntPipe) id: number) {
+    return this.service.submitActivityBudget(r.auth!, id);
   }
 
   @Patch(':id')

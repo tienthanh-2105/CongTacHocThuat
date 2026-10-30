@@ -10,6 +10,7 @@
     "typecheck": "npm run typecheck --workspaces",
     "lint": "npm run lint --workspaces",
     "test": "npm run test -w apps/api",
+    "test:unit": "npm run test:unit -w apps/api",
     "db:check": "npm run db:check -w apps/api",
     "db:migrate": "npm run db:migrate -w apps/api",
     "db:seed": "npm run db:seed -w apps/api",
@@ -17,7 +18,13 @@
     "dev:mobile": "npm run start -w apps/mobile",
     "dev:android": "npm run android -w apps/mobile",
     "dev:ios": "npm run ios -w apps/mobile",
+    "record:full-test": "node scripts/record-full-test.mjs",
+    "test:web:video": "node scripts/test-full-video.mjs",
+    "test:admin:video": "node scripts/test-admin-full-video.mjs",
     "test:api": "npm run test -w apps/api",
     "check:mobile": "npm run check -w apps/mobile"
+  },
+  "devDependencies": {
+    "@playwright/test": "^1.64.1"
   }
 }

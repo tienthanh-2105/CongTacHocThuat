@@ -4,7 +4,7 @@ import { hash } from 'bcryptjs';
 import sql from 'mssql';
 import { DatabaseService } from '../../data/database.service';
 import type { SessionContext } from '../auth/auth.types';
-import { ActivityChangeDto, AdjustTrainingPointDto, CompetitionResultDto, CreatePlanActivityDto, CreatePlanDto, CreateRoundDto, ReviewPlanDto, ScoreWorkDto, SubmitWorkDto, AwardTrainingPointDto, CreateStudentAccountDto, CreateStudentProfileDto, CreateLinkedStudentProfileDto, SeminarMaterialDto, UpdateStudentRecordDto, CreateClassDto, UpdateClassDto, UpdateStaffRecordDto, CreateStaffRecordDto, CreateStaffAccountDto, CreateAcademicActivityDto, UpdateAcademicActivityDto, CreateCommitteeMemberDto, CreateActivityBudgetDto } from '../../presentation/workflow/workflow.dto';
+import { ActivityChangeDto, AdjustTrainingPointDto, CompetitionResultDto, CreatePlanActivityDto, CreatePlanDto, CreateRoundDto, ReviewPlanDto, ScoreWorkDto, SubmitWorkDto, AwardTrainingPointDto, CreateStudentAccountDto, CreateStudentProfileDto, CreateLinkedStudentProfileDto, SeminarMaterialDto, UpdateStudentRecordDto, CreateClassDto, UpdateClassDto, UpdateStaffRecordDto, CreateStaffRecordDto, CreateStaffAccountDto, CreateAcademicActivityDto, UpdateAcademicActivityDto, CreateCommitteeMemberDto, CreateActivityBudgetDto, ReviewActivityBudgetDto } from '../../presentation/workflow/workflow.dto';
 
 const key = (text: string) => text.normalize('NFD').replace(/[\u0300-\u036f]/g, '').toUpperCase().replace(/[^A-Z0-9]/g, '');
 @Injectable()
@@ -931,11 +931,11 @@ export class WorkflowService {
   }
 
   listPlans(context: SessionContext) {
-    this.require(context, ['ADMIN','CAN_BO_KHOA','CANBOKHOA','GIANG_VIEN','GIANGVIEN','TRUONG_BO_MON','TRUONGBOMON','PHONG_KHCN','PHONGKHCN','HIEU_TRUONG','HIEUTRUONG']);
+    this.require(context, ['ADMIN','CAN_BO_KHOA','CANBOKHOA','GIANG_VIEN','GIANGVIEN','TRUONG_BO_MON','TRUONGBOMON','TRUONGKHOA','PHONG_KHCN','PHONGKHCN','HIEU_TRUONG','HIEUTRUONG']);
     return this.db.query(`SELECT p.*, k.TenKhoa, bm.TenBM FROM KEHOACHHOCTHUAT p JOIN KHOA k ON k.MaKhoa=p.MaKhoa LEFT JOIN BOMON bm ON bm.MaBM=p.MaBM ORDER BY p.NamHoc DESC,p.MaKeHoach DESC`);
   }
   async getPlan(context:SessionContext,planId:number) {
-    this.require(context,['ADMIN','CAN_BO_KHOA','CANBOKHOA','GIANG_VIEN','GIANGVIEN','TRUONG_BO_MON','TRUONGBOMON','PHONG_KHCN','PHONGKHCN','HIEU_TRUONG','HIEUTRUONG']);
+    this.require(context,['ADMIN','CAN_BO_KHOA','CANBOKHOA','GIANG_VIEN','GIANGVIEN','TRUONG_BO_MON','TRUONGBOMON','TRUONGKHOA','PHONG_KHCN','PHONGKHCN','HIEU_TRUONG','HIEUTRUONG']);
     const plan=(await this.db.query(`SELECT p.*,k.TenKhoa,bm.TenBM FROM KEHOACHHOCTHUAT p JOIN KHOA k ON k.MaKhoa=p.MaKhoa LEFT JOIN BOMON bm ON bm.MaBM=p.MaBM WHERE p.MaKeHoach=@p1`,[planId]))[0];
     if(!plan) throw new NotFoundException('Không tìm thấy kế hoạch');
     const activities=await this.db.query(`SELECT * FROM CHITIETKEHOACH WHERE MaKeHoach=@p1 ORDER BY MaChiTiet`,[planId]);
@@ -1001,30 +1001,68 @@ export class WorkflowService {
   }
   async submitPlan(context: SessionContext, planId: number) {
     this.require(context, ['ADMIN','CAN_BO_KHOA','CANBOKHOA','GIANG_VIEN','GIANGVIEN','TRUONG_BO_MON','TRUONGBOMON']);
-    const rows = await this.db.query(`UPDATE KEHOACHHOCTHUAT SET TrangThai=N'Chờ duyệt',LichSuDuyet=JSON_MODIFY(LichSuDuyet,'append $',JSON_QUERY(@p2)) OUTPUT INSERTED.MaKeHoach,INSERTED.TrangThai WHERE MaKeHoach=@p1 AND TrangThai IN (N'Dự thảo',N'Cần bổ sung')`, [planId,JSON.stringify({action:'submit',userId:context.userId,role:context.user.roles[0],at:new Date().toISOString()})]);
+    const rows = await this.db.query(`UPDATE KEHOACHHOCTHUAT SET TrangThai=N'Chờ Trưởng khoa ký duyệt',LichSuDuyet=JSON_MODIFY(COALESCE(LichSuDuyet,N'[]'),'append $',JSON_QUERY(@p2)) OUTPUT INSERTED.MaKeHoach,INSERTED.TrangThai WHERE MaKeHoach=@p1 AND TrangThai IN (N'Dự thảo',N'Cần bổ sung')`, [planId,JSON.stringify({action:'submit',userId:context.userId,role:context.user.roles[0],at:new Date().toISOString()})]);
     if (!rows[0]) throw new NotFoundException('Không tìm thấy kế hoạch ở trạng thái có thể trình duyệt');
     return rows[0];
   }
   async reviewPlan(context: SessionContext, planId: number, dto: ReviewPlanDto) {
-    const reviewers = ['ADMIN','CAN_BO_KHOA','CANBOKHOA'];
+    const reviewers = ['ADMIN','CAN_BO_KHOA','CANBOKHOA','TRUONGKHOA','PHONG_KHCN','PHONGKHCN','HIEU_TRUONG','HIEUTRUONG'];
     this.require(context, reviewers);
-    const role = context.user.roles.some(r => key(r)==='ADMIN') ? 'ADMIN' : context.user.roles.find(r => reviewers.map(key).includes(key(r))) ?? '';
-    const plan = (await this.db.query<{TrangThai:string;LichSuDuyet:string}>(`SELECT TrangThai,LichSuDuyet FROM KEHOACHHOCTHUAT WHERE MaKeHoach=@p1`,[planId]))[0];
-    if (!plan) throw new NotFoundException('Không tìm thấy kế hoạch');
-    if (plan.TrangThai !== 'Chờ duyệt') throw new BadRequestException('Kế hoạch chưa ở trạng thái chờ duyệt');
-    let history: Array<{action?:string;role?:string}> = [];
-    try { history = JSON.parse(plan.LichSuDuyet || '[]'); } catch { /* malformed legacy history is preserved by rejecting below */ }
-    const approvals = history.filter(item => item.action === 'approve').length;
-    const roleKey = key(role);
-    const expected = ['CANBOKHOA'];
-    if (roleKey === 'ADMIN') expected.splice(0, expected.length, 'ADMIN');
-    if (!expected.includes(roleKey)) throw new ForbiddenException('Vai trò của bạn chưa đến bước duyệt kế hoạch này');
-    const status = dto.action === 'approve' ? 'Đã duyệt' : dto.action === 'request_changes' ? 'Cần bổ sung' : 'Không duyệt';
-    if (dto.action === 'approve' && roleKey !== 'ADMIN' && history.some(item => item.action === 'approve' && item.role === role)) throw new BadRequestException('Vai trò này đã duyệt ở bước trước');
-    const result = await this.db.query(`UPDATE KEHOACHHOCTHUAT SET TrangThai=@p2,NguoiDuyet=@p3,NgayDuyet=CASE WHEN @p2=N'Đã duyệt' THEN SYSDATETIMEOFFSET() ELSE NgayDuyet END,
-      LichSuDuyet=JSON_MODIFY(LichSuDuyet,'append $',JSON_QUERY(@p4)) OUTPUT INSERTED.MaKeHoach,INSERTED.TrangThai,INSERTED.NgayDuyet WHERE MaKeHoach=@p1 AND TrangThai=N'Chờ duyệt'`,
-      [planId,status,context.userId,JSON.stringify({action:dto.action,role,userId:context.userId,note:dto.ghiChu ?? null,at:new Date().toISOString()})]);
-    return result[0];
+    const roleKeys = context.user.roles.map(key);
+    const isAdmin = roleKeys.includes('ADMIN');
+    const tx = new sql.Transaction(this.db.pool);
+    await tx.begin();
+    try {
+      const planResult = await new sql.Request(tx).input('id', sql.BigInt, planId)
+        .query<{ TrangThai: string; LichSuDuyet: string }>(`SELECT TrangThai,LichSuDuyet FROM KEHOACHHOCTHUAT WITH (UPDLOCK,ROWLOCK) WHERE MaKeHoach=@id`);
+      const plan = planResult.recordset[0];
+      if (!plan) throw new NotFoundException('Không tìm thấy kế hoạch');
+
+      const stages = [
+        { status: 'Chờ Trưởng khoa ký duyệt', role: 'TRUONGKHOA', acceptedRoles: ['TRUONGKHOA','CANBOKHOA'], code: 'faculty-dean', title: 'Trưởng khoa ký và duyệt' },
+        { status: 'Chờ Phòng KHCN ký duyệt', role: 'PHONGKHCN', acceptedRoles: ['PHONGKHCN'], code: 'research-office', title: 'Phòng KHCN ký duyệt' },
+        { status: 'Chờ Ban giám hiệu duyệt', role: 'HIEUTRUONG', acceptedRoles: ['HIEUTRUONG'], code: 'university-board', title: 'Ban giám hiệu duyệt' },
+      ];
+      const stageIndex = stages.findIndex((stage) => stage.status === plan.TrangThai);
+      if (stageIndex < 0) throw new BadRequestException('Kế hoạch không ở bước chờ ký duyệt');
+      const stage = stages[stageIndex];
+      if (!isAdmin && !stage.acceptedRoles.some((role) => roleKeys.includes(role))) {
+        throw new ForbiddenException(`Bước hiện tại dành cho ${stage.title}`);
+      }
+
+      const finalStatus = dto.action === 'approve'
+        ? stages[stageIndex + 1]?.status ?? 'Đã duyệt'
+        : dto.action === 'request_changes' ? 'Cần bổ sung' : 'Không duyệt';
+      const actorRole = isAdmin ? 'ADMIN' : context.user.roles.find((role) => stage.acceptedRoles.includes(key(role))) ?? stage.role;
+      const event = JSON.stringify({
+        action: dto.action,
+        stage: stage.code,
+        stageName: stage.title,
+        expectedRole: stage.role,
+        role: actorRole,
+        userId: context.userId,
+        signed: dto.action === 'approve',
+        note: dto.ghiChu ?? null,
+        at: new Date().toISOString(),
+      });
+      const result = await new sql.Request(tx)
+        .input('id', sql.BigInt, planId)
+        .input('currentStatus', sql.NVarChar(30), plan.TrangThai)
+        .input('nextStatus', sql.NVarChar(30), finalStatus)
+        .input('reviewer', sql.BigInt, context.userId)
+        .input('event', sql.NVarChar(sql.MAX), event)
+        .query(`UPDATE KEHOACHHOCTHUAT SET TrangThai=@nextStatus,NguoiDuyet=@reviewer,
+          NgayDuyet=CASE WHEN @nextStatus=N'Đã duyệt' THEN SYSDATETIMEOFFSET() ELSE NgayDuyet END,
+          LichSuDuyet=JSON_MODIFY(COALESCE(LichSuDuyet,N'[]'),'append $',JSON_QUERY(@event))
+          OUTPUT INSERTED.MaKeHoach,INSERTED.TrangThai,INSERTED.NguoiDuyet,INSERTED.NgayDuyet,INSERTED.LichSuDuyet
+          WHERE MaKeHoach=@id AND TrangThai=@currentStatus`);
+      if (!result.recordset[0]) throw new ConflictException('Trạng thái kế hoạch vừa thay đổi; hãy tải lại và kiểm tra bước hiện tại.');
+      await tx.commit();
+      return result.recordset[0];
+    } catch (error) {
+      try { await tx.rollback(); } catch { /* Keep the original workflow error. */ }
+      throw error;
+    }
   }
   listRounds(competitionId: number) { return this.db.query(`SELECT * FROM VONGTHI WHERE MaCThi=@p1 ORDER BY ThuTu`,[competitionId]); }
   async createRound(context: SessionContext,dto:CreateRoundDto) {
@@ -1256,7 +1294,7 @@ export class WorkflowService {
         h.NamHoc,
         h.TgBatDau,
         h.TgKetThuc,
-        h.MaBM,
+        kh.MaBM,
         bm.TenBM,
         h.TenHoatDong,
         h.LoaiHoatDong,
@@ -1271,8 +1309,9 @@ export class WorkflowService {
         (SELECT COUNT(*) FROM BANTOCHUC btc WHERE btc.MaHD = h.MaHD) AS SoThanhVienToChuc,
         (SELECT COUNT(*) FROM BANHOTRO bht WHERE bht.MaHD = h.MaHD) AS SoThanhVienHoTro
       FROM HOATDONGHOCTHUAT h
-      LEFT JOIN BOMON bm ON bm.MaBM = h.MaBM
-      WHERE (@p2 = 1 AND h.TrangThai IN (N'Chờ duyệt', N'Đã duyệt'))
+      LEFT JOIN KEHOACHHOCTHUAT kh ON kh.MaKeHoach = COALESCE(h.MaKeHoachKhoa, h.MaKeHoach)
+      LEFT JOIN BOMON bm ON bm.MaBM = kh.MaBM
+      WHERE (@p2 = 1 AND h.TrangThai IN (N'Chờ duyệt', N'Đã duyệt', N'Đã công bố'))
          OR (@p2 = 0 AND h.NguoiLap = CAST(@p1 AS INT))
       ORDER BY h.MaHD ASC
     `, [context.userId, canViewAll ? 1 : 0]);
@@ -1314,24 +1353,141 @@ export class WorkflowService {
 
   async createActivityBudget(context: SessionContext, activityId: number, dto: CreateActivityBudgetDto) {
     this.require(context, ['ADMIN', 'CANBOKHOA', 'GIANGVIEN']);
-    const activity = (await this.db.query<{ MaHD: number }>('SELECT MaHD FROM HOATDONGHOCTHUAT WHERE MaHD=@p1', [activityId]))[0];
-    if (!activity) throw new NotFoundException('Không tìm thấy hoạt động học thuật');
-    const rows = await this.db.query(`INSERT INTO KINHPHIHOATDONG (MaDuTruKP, MaHD, NoiDung, SoLuong, DonViTinh, DonGia, SoTien, ThuyetMinh, NguonKinhPhi, GhiChu)
-      OUTPUT INSERTED.* VALUES (NULL, @p1, @p2, @p3, @p4, @p5, @p6, @p7, @p8, @p9)`,
-      [activityId, dto.noiDung.trim(), dto.soLuong ?? null, dto.donViTinh?.trim() || null, dto.donGia ?? null, dto.soTien, dto.thuyetMinh?.trim() || null, dto.nguonKinhPhi?.trim() || 'Kinh phí học thuật', dto.ghiChu?.trim() || null]);
-    return rows[0];
+    const transaction = new sql.Transaction(this.db.pool);
+    await transaction.begin();
+    try {
+      const activity = (await new sql.Request(transaction).input('activityId', sql.BigInt, activityId)
+        .query<{ MaHD: number }>('SELECT MaHD FROM HOATDONGHOCTHUAT WITH (UPDLOCK, ROWLOCK) WHERE MaHD=@activityId')).recordset[0];
+      if (!activity) throw new NotFoundException('Không tìm thấy hoạt động học thuật');
+
+      const blocked = (await new sql.Request(transaction).input('activityId', sql.BigInt, activityId)
+        .query(`SELECT TOP (1) MaDuTruKP FROM DUTRUKINHPHI WITH (UPDLOCK, HOLDLOCK)
+          WHERE MaHD=@activityId AND TrangThai IN (N'Chờ duyệt',N'Đã duyệt')`)).recordset[0];
+      if (blocked) throw new BadRequestException('Hoạt động đã gửi hoặc được duyệt; không thể sửa kinh phí.');
+
+      const proposal = (await new sql.Request(transaction).input('activityId', sql.BigInt, activityId)
+        .query<{ MaDuTruKP: number; TrangThai: string }>(`SELECT TOP (1) MaDuTruKP,TrangThai FROM DUTRUKINHPHI WITH (UPDLOCK, HOLDLOCK)
+          WHERE MaHD=@activityId ORDER BY MaDuTruKP DESC`)).recordset[0];
+      if (proposal?.TrangThai === 'Từ chối') {
+        await new sql.Request(transaction).input('proposalId', sql.BigInt, proposal.MaDuTruKP)
+          .query(`UPDATE DUTRUKINHPHI SET TrangThai=N'Dự thảo',NguoiDuyet=NULL,NgayDuyet=NULL,GhiChuDuyet=NULL WHERE MaDuTruKP=@proposalId`);
+      }
+
+      const inserted = await new sql.Request(transaction)
+        .input('proposalId', sql.BigInt, proposal?.MaDuTruKP ?? null)
+        .input('activityId', sql.BigInt, activityId)
+        .input('description', sql.NVarChar(sql.MAX), dto.noiDung.trim())
+        .input('quantity', sql.Decimal(10, 2), dto.soLuong ?? null)
+        .input('unit', sql.NVarChar(50), dto.donViTinh?.trim() || null)
+        .input('unitPrice', sql.Decimal(18, 2), dto.donGia ?? null)
+        .input('amount', sql.Decimal(18, 2), dto.soTien)
+        .input('explanation', sql.NVarChar(500), dto.thuyetMinh?.trim() || null)
+        .input('source', sql.NVarChar(100), dto.nguonKinhPhi?.trim() || 'Kinh phí học thuật')
+        .input('note', sql.NVarChar(500), dto.ghiChu?.trim() || null)
+        .query(`INSERT INTO KINHPHIHOATDONG (MaDuTruKP,MaHD,NoiDung,SoLuong,DonViTinh,DonGia,SoTien,ThuyetMinh,NguonKinhPhi,GhiChu)
+          OUTPUT INSERTED.* VALUES (@proposalId,@activityId,@description,@quantity,@unit,@unitPrice,@amount,@explanation,@source,@note)`);
+
+      if (proposal) {
+        await new sql.Request(transaction).input('proposalId', sql.BigInt, proposal.MaDuTruKP)
+          .query(`UPDATE DUTRUKINHPHI SET TongKinhPhi=(SELECT COALESCE(SUM(SoTien),0) FROM KINHPHIHOATDONG WHERE MaDuTruKP=@proposalId)
+            WHERE MaDuTruKP=@proposalId`);
+      }
+      await new sql.Request(transaction).input('activityId', sql.BigInt, activityId)
+        .query(`UPDATE HOATDONGHOCTHUAT SET KinhPhiDuTru=(SELECT COALESCE(SUM(SoTien),0) FROM KINHPHIHOATDONG WHERE MaHD=@activityId)
+          WHERE MaHD=@activityId`);
+      await transaction.commit();
+      return inserted.recordset[0];
+    } catch (error) {
+      await transaction.rollback();
+      throw error;
+    }
   }
 
   async listActivityBudgets(context: SessionContext) {
-    this.require(context, ['ADMIN', 'CANBOKHOA', 'GIANGVIEN', 'PHONGCTSV', 'PHONGKHCN', 'HIEUTRUONG']);
+    this.require(context, ['ADMIN', 'CANBOKHOA', 'GIANGVIEN', 'TRUONGKHOA', 'PHONGCTSV', 'PHONGKHCN', 'HIEUTRUONG']);
     return this.db.query(`
       SELECT k.*, h.TenHoatDong, h.LoaiHoatDong, h.TrangThai AS TrangThaiHoatDong,
-             d.TenTieuDe, d.NamHoc, d.TrangThai AS TrangThaiDuTru
+             d.MaDuTruKP AS MaHoSoDuTru, d.MaHD AS MaHoatDongDuTru,
+             d.TenTieuDe, COALESCE(d.NamHoc,h.NamHoc,N'Chưa xác định') AS NamHoc,
+             d.TongKinhPhi, d.TrangThai AS TrangThaiDuTru, d.GhiChuDuyet,
+             d.NguoiDuyet, d.NgayDuyet
       FROM KINHPHIHOATDONG k
       JOIN HOATDONGHOCTHUAT h ON h.MaHD = k.MaHD
       LEFT JOIN DUTRUKINHPHI d ON d.MaDuTruKP = k.MaDuTruKP
-      ORDER BY k.MaKPHD DESC
+      ORDER BY COALESCE(d.NamHoc,h.NamHoc) DESC,h.TenHoatDong,k.MaKPHD
     `);
+  }
+
+  async submitActivityBudget(context: SessionContext, activityId: number) {
+    this.require(context, ['ADMIN', 'CANBOKHOA', 'GIANGVIEN']);
+    const transaction = new sql.Transaction(this.db.pool);
+    await transaction.begin();
+    try {
+      const activity = (await new sql.Request(transaction).input('activityId', sql.BigInt, activityId)
+        .query<{ MaHD: number; TenHoatDong: string; NamHoc: string | null }>(`SELECT MaHD,TenHoatDong,NamHoc
+          FROM HOATDONGHOCTHUAT WITH (UPDLOCK, ROWLOCK) WHERE MaHD=@activityId`)).recordset[0];
+      if (!activity) throw new NotFoundException('Không tìm thấy hoạt động học thuật');
+
+      const existingHeader = (await new sql.Request(transaction).input('activityId', sql.BigInt, activityId)
+        .query<{ MaDuTruKP: number; TrangThai: string }>(`SELECT TOP (1) MaDuTruKP,TrangThai FROM DUTRUKINHPHI WITH (UPDLOCK, HOLDLOCK)
+          WHERE MaHD=@activityId ORDER BY MaDuTruKP DESC`)).recordset[0];
+      if (existingHeader && ['Chờ duyệt', 'Đã duyệt'].includes(existingHeader.TrangThai)) {
+        throw new BadRequestException('Dự trù của hoạt động đã được gửi hoặc đã duyệt.');
+      }
+
+      let proposalId = existingHeader?.MaDuTruKP ?? null;
+      if (!proposalId) {
+        const unassigned = (await new sql.Request(transaction).input('activityId', sql.BigInt, activityId)
+          .query<{ SoDong: number; TongKinhPhi: number }>(`SELECT COUNT(*) AS SoDong,COALESCE(SUM(SoTien),0) AS TongKinhPhi
+            FROM KINHPHIHOATDONG WHERE MaHD=@activityId AND MaDuTruKP IS NULL`)).recordset[0];
+        if (!unassigned?.SoDong) throw new BadRequestException('Hãy tạo ít nhất một khoản dự trù cho hoạt động trước khi gửi khoa.');
+        const created = await new sql.Request(transaction)
+          .input('activityId', sql.BigInt, activityId)
+          .input('title', sql.NVarChar(250), `Dự trù kinh phí – ${activity.TenHoatDong}`)
+          .input('year', sql.NVarChar(20), activity.NamHoc?.trim() || null)
+          .input('amount', sql.Decimal(18, 2), unassigned.TongKinhPhi)
+          .input('accountId', sql.BigInt, Number(context.userId))
+          .query<{ MaDuTruKP: number }>(`INSERT INTO DUTRUKINHPHI(MaHD,TenTieuDe,NamHoc,TongKinhPhi,NguoiLap,TrangThai)
+            OUTPUT INSERTED.MaDuTruKP
+            VALUES(@activityId,@title,COALESCE(@year,CONCAT(YEAR(SYSDATETIME())-CASE WHEN MONTH(SYSDATETIME())<8 THEN 1 ELSE 0 END,'-',YEAR(SYSDATETIME())+CASE WHEN MONTH(SYSDATETIME())>=8 THEN 1 ELSE 0 END)),@amount,@accountId,N'Dự thảo')`);
+        proposalId = created.recordset[0].MaDuTruKP;
+        await new sql.Request(transaction).input('proposalId', sql.BigInt, proposalId).input('activityId', sql.BigInt, activityId)
+          .query(`UPDATE KINHPHIHOATDONG SET MaDuTruKP=@proposalId WHERE MaHD=@activityId AND MaDuTruKP IS NULL`);
+      }
+
+      const totals = (await new sql.Request(transaction).input('proposalId', sql.BigInt, proposalId).input('activityId', sql.BigInt, activityId)
+        .query<{ SoDong: number; TongKinhPhi: number }>(`SELECT COUNT(*) AS SoDong,COALESCE(SUM(SoTien),0) AS TongKinhPhi
+          FROM KINHPHIHOATDONG WHERE MaHD=@activityId AND MaDuTruKP=@proposalId`)).recordset[0];
+      if (!totals?.SoDong) throw new BadRequestException('Không có khoản dự trù nào thuộc hồ sơ của hoạt động này.');
+
+      const submitted = await new sql.Request(transaction)
+        .input('proposalId', sql.BigInt, proposalId)
+        .input('total', sql.Decimal(18, 2), totals.TongKinhPhi)
+        .query(`UPDATE DUTRUKINHPHI SET TrangThai=N'Chờ duyệt',TongKinhPhi=@total,NguoiDuyet=NULL,NgayDuyet=NULL,GhiChuDuyet=NULL
+          OUTPUT INSERTED.MaDuTruKP,INSERTED.MaHD,INSERTED.TenTieuDe,INSERTED.NamHoc,INSERTED.TongKinhPhi,INSERTED.TrangThai
+          WHERE MaDuTruKP=@proposalId AND TrangThai IN (N'Dự thảo',N'Từ chối')`);
+      if (!submitted.recordset[0]) throw new ConflictException('Dự trù vừa được thay đổi; hãy tải lại danh sách.');
+
+      await new sql.Request(transaction).input('activityId', sql.BigInt, activityId).input('total', sql.Decimal(18, 2), totals.TongKinhPhi)
+        .query('UPDATE HOATDONGHOCTHUAT SET KinhPhiDuTru=@total WHERE MaHD=@activityId');
+      await transaction.commit();
+      return submitted.recordset[0];
+    } catch (error) {
+      await transaction.rollback();
+      throw error;
+    }
+  }
+
+  async reviewActivityBudget(context: SessionContext, proposalId: number, dto: ReviewActivityBudgetDto) {
+    this.require(context, ['ADMIN', 'CANBOKHOA', 'TRUONGKHOA']);
+    const nextStatus = dto.action === 'approve' ? 'Đã duyệt' : 'Từ chối';
+    const rows = await this.db.query(`UPDATE DUTRUKINHPHI
+      SET TrangThai=@p1,NguoiDuyet=@p2,NgayDuyet=SYSDATETIME(),GhiChuDuyet=@p3
+      OUTPUT INSERTED.MaDuTruKP,INSERTED.MaHD,INSERTED.TenTieuDe,INSERTED.NamHoc,INSERTED.TongKinhPhi,
+        INSERTED.TrangThai,INSERTED.NguoiDuyet,INSERTED.NgayDuyet,INSERTED.GhiChuDuyet
+      WHERE MaDuTruKP=@p4 AND TrangThai=N'Chờ duyệt'`, [nextStatus, context.userId, dto.ghiChu?.trim() || null, proposalId]);
+    if (!rows[0]) throw new NotFoundException('Không tìm thấy dự trù đang chờ khoa duyệt');
+    return rows[0];
   }
 
   async updateAcademicActivity(context: SessionContext, id: number, dto: UpdateAcademicActivityDto) {
