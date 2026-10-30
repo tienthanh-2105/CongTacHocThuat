@@ -104,8 +104,8 @@ async function migrate(pool) {
         CREATE TABLE dbo.SCHEMAMIGRATION (MaMigration NVARCHAR(100) NOT NULL PRIMARY KEY, ApDungLuc DATETIMEOFFSET NOT NULL DEFAULT SYSDATETIMEOFFSET());
     `);
     const migrations = legacy
-      ? ['003_legacy_sqlserver_compat.sql', '002_workflow_extensions.sql', '004_workflow_roles_status.sql']
-      : ['002_workflow_extensions.sql', '004_workflow_roles_status.sql'];
+      ? ['003_legacy_sqlserver_compat.sql', '002_workflow_extensions.sql', '004_workflow_roles_status.sql', '005_activity_owner.sql', '006_activity_semester_year.sql', '007_activity_status.sql', '008_activity_times.sql', '009_activity_time_only.sql', '010_activity_progress_max.sql', '011_activity_plan_compat.sql', '012_activity_pending_status.sql']
+      : ['002_workflow_extensions.sql', '004_workflow_roles_status.sql', '005_activity_owner.sql', '006_activity_semester_year.sql', '007_activity_status.sql', '008_activity_times.sql', '009_activity_time_only.sql', '010_activity_progress_max.sql', '011_activity_plan_compat.sql', '012_activity_pending_status.sql', '004_allow_budget_detail_before_draft.sql'];
     for (const fileName of migrations) {
       const migration = path.resolve(__dirname, '../migrations', fileName);
       if (!fs.existsSync(migration)) continue;

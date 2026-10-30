@@ -6,11 +6,11 @@ import { ActivitiesController, ExpensesController, MobileController, SeminarsCon
 import { FeaturesRepository } from '../data/repositories/features/features.repository';
 import { FeaturesService } from '../business/features/features.service';
 import { WorkflowService } from '../business/workflow/workflow.service';
-import { ActivityChangesController, AdminAccountsController, AttendanceController, CompetitionResultsController, CompetitionRoundsController, PlansController, SeminarMaterialsController, SubmissionsController, SummaryReportsController, TrainingPointsController, UserNotificationsController, WaitlistController } from '../presentation/workflow/workflow.controller';
+import { AcademicActivitiesController, ActivityChangesController, AdminAccountsController, AttendanceController, CompetitionResultsController, CompetitionRoundsController, PlansController, SeminarMaterialsController, SubmissionsController, SummaryReportsController, TrainingPointsController, UserNotificationsController, WaitlistController } from '../presentation/workflow/workflow.controller';
 
 @Module({
   imports: [DatabaseModule, AuthModule, RegistrationModule],
-  controllers: [MobileController, NotificationsController, UserNotificationsController, ActivitiesController, WaitlistController, ActivityChangesController, SeminarsController, SeminarMaterialsController, ExpensesController, SettlementsController, ReportsController, PlansController, CompetitionRoundsController, SubmissionsController, CompetitionResultsController, TrainingPointsController, AttendanceController, SummaryReportsController, AdminAccountsController],
+  controllers: [MobileController, NotificationsController, UserNotificationsController, ActivitiesController, WaitlistController, ActivityChangesController, SeminarsController, SeminarMaterialsController, ExpensesController, SettlementsController, ReportsController, PlansController, CompetitionRoundsController, SubmissionsController, CompetitionResultsController, TrainingPointsController, AttendanceController, SummaryReportsController, AdminAccountsController, AcademicActivitiesController],
   providers: [FeaturesRepository, FeaturesService, WorkflowService],
 })
 export class FeaturesModule {}

@@ -117,7 +117,7 @@ export class RegistrationRepository {
 
   async findCompetitionById(maCThi: number): Promise<CompetitionInfo | null> {
     const rows = await this.db.query<CompetitionInfo>(
-      `SELECT c.MaCThi, c.MaHD, c.TenCuocThi, c.HinhThucThi, c.TheLe, h.TenHoatDong, h.HanDangKy, h.TrangThai
+      `SELECT c.MaCThi, c.MaHD, c.TenCuocThi, c.HinhThucThi, c.TheLe, h.TenHoatDong, h.TgDuKien AS HanDangKy, h.TrangThai
        FROM CUOCTHI c
        JOIN HOATDONGHOCTHUAT h ON h.MaHD = c.MaHD
        WHERE c.MaCThi = @p1`,
@@ -186,7 +186,7 @@ export class RegistrationRepository {
   async registerIndividualWithinCapacity(maHD:number,maSV:number,hinhThuc:string):Promise<{waitlisted:true;MaCho:number;ViTri:number}|{waitlisted:false;MaDK:number;NgayDK:Date}|null> {
     const tx=new sql.Transaction(this.db.pool); await tx.begin();
     try {
-      const activity=(await new sql.Request(tx).input('hd',sql.BigInt,maHD).query<{SLToiDa:number|null}>(`SELECT SLToiDa FROM HOATDONGHOCTHUAT WITH(UPDLOCK,HOLDLOCK) WHERE MaHD=@hd`)).recordset[0];
+      const activity=(await new sql.Request(tx).input('hd',sql.BigInt,maHD).query<{SLToiDa:number|null}>(`SELECT SLSVDuKien AS SLToiDa FROM HOATDONGHOCTHUAT WITH(UPDLOCK,HOLDLOCK) WHERE MaHD=@hd`)).recordset[0];
       if(!activity){await tx.rollback();return null;}
       const count=(await new sql.Request(tx).input('hd',sql.BigInt,maHD).query<{total:number}>(`SELECT COUNT(*) total FROM DKTHAMGIA WHERE MaHD=@hd AND TrangThai NOT IN(N'Đã hủy',N'Từ chối')`)).recordset[0].total;
       if(activity.SLToiDa && activity.SLToiDa>0 && count>=activity.SLToiDa) {
@@ -206,7 +206,7 @@ export class RegistrationRepository {
   async queueTeamIfOverCapacity(maHD:number,studentIds:number[]):Promise<Array<{MaCho:number;ViTri:number}>|null> {
     const tx=new sql.Transaction(this.db.pool); await tx.begin();
     try {
-      const activity=(await new sql.Request(tx).input('hd',sql.BigInt,maHD).query<{SLToiDa:number|null}>(`SELECT SLToiDa FROM HOATDONGHOCTHUAT WITH(UPDLOCK,HOLDLOCK) WHERE MaHD=@hd`)).recordset[0];
+      const activity=(await new sql.Request(tx).input('hd',sql.BigInt,maHD).query<{SLToiDa:number|null}>(`SELECT SLSVDuKien AS SLToiDa FROM HOATDONGHOCTHUAT WITH(UPDLOCK,HOLDLOCK) WHERE MaHD=@hd`)).recordset[0];
       if(!activity){await tx.rollback();return null;}
       const count=(await new sql.Request(tx).input('hd',sql.BigInt,maHD).query<{total:number}>(`SELECT COUNT(*) total FROM DKTHAMGIA WHERE MaHD=@hd AND TrangThai NOT IN(N'Đã hủy',N'Từ chối')`)).recordset[0].total;
       if(!activity.SLToiDa || count+studentIds.length<=activity.SLToiDa){await tx.rollback();return null;}
@@ -225,7 +225,7 @@ export class RegistrationRepository {
   async createWaitlistedTeam(maCThi:number,maHD:number,teamName:string,captainId:number,memberIds:number[]):Promise<{maDoi:number;queue:Array<{MaCho:number;ViTri:number;MaSV:number}>}|null> {
     const tx=new sql.Transaction(this.db.pool); await tx.begin();
     try {
-      const capacity=(await new sql.Request(tx).input('hd',sql.BigInt,maHD).query<{SLToiDa:number|null;Total:number}>(`SELECT h.SLToiDa,(SELECT COUNT(*) FROM DKTHAMGIA dk WHERE dk.MaHD=h.MaHD AND dk.TrangThai NOT IN(N'Đã hủy',N'Từ chối')) Total FROM HOATDONGHOCTHUAT h WITH(UPDLOCK,HOLDLOCK) WHERE h.MaHD=@hd`)).recordset[0];
+      const capacity=(await new sql.Request(tx).input('hd',sql.BigInt,maHD).query<{SLToiDa:number|null;Total:number}>(`SELECT h.SLSVDuKien,(SELECT COUNT(*) FROM DKTHAMGIA dk WHERE dk.MaHD=h.MaHD AND dk.TrangThai NOT IN(N'Đã hủy',N'Từ chối')) Total FROM HOATDONGHOCTHUAT h WITH(UPDLOCK,HOLDLOCK) WHERE h.MaHD=@hd`)).recordset[0];
       if(!capacity){await tx.rollback();return null;}
       if(!capacity.SLToiDa || capacity.Total+memberIds.length+1<=capacity.SLToiDa){await tx.rollback();return null;}
       const team=(await new sql.Request(tx).input('competition',sql.BigInt,maCThi).input('name',sql.NVarChar(150),teamName).query<{MaDoi:number}>(`INSERT INTO DOITHI(MaCThi,TenDoi) OUTPUT INSERTED.MaDoi VALUES(@competition,@name)`)).recordset[0];
@@ -256,7 +256,7 @@ export class RegistrationRepository {
       TenCuocThi: string; HanDangKy: Date | null; TrangThai: string;
     }>(
       `SELECT d.MaDoi, d.MaCThi, d.TenDoi, c.MaHD, c.TenCuocThi,
-              h.HanDangKy, h.TrangThai
+              h.TgDuKien AS HanDangKy, h.TrangThai
        FROM DOITHI d
        JOIN CUOCTHI c ON c.MaCThi = d.MaCThi
        JOIN HOATDONGHOCTHUAT h ON h.MaHD = c.MaHD
@@ -270,7 +270,7 @@ export class RegistrationRepository {
     const transaction = new sql.Transaction(this.db.pool);
     await transaction.begin();
     try {
-      const capacity=(await new sql.Request(transaction).input('maHD',sql.BigInt,maHD).query<{SLToiDa:number|null;Total:number}>(`SELECT h.SLToiDa,(SELECT COUNT(*) FROM DKTHAMGIA dk WHERE dk.MaHD=h.MaHD AND dk.TrangThai NOT IN(N'Đã hủy',N'Từ chối')) Total FROM HOATDONGHOCTHUAT h WITH(UPDLOCK,HOLDLOCK) WHERE h.MaHD=@maHD`)).recordset[0];
+      const capacity=(await new sql.Request(transaction).input('maHD',sql.BigInt,maHD).query<{SLToiDa:number|null;Total:number}>(`SELECT h.SLSVDuKien,(SELECT COUNT(*) FROM DKTHAMGIA dk WHERE dk.MaHD=h.MaHD AND dk.TrangThai NOT IN(N'Đã hủy',N'Từ chối')) Total FROM HOATDONGHOCTHUAT h WITH(UPDLOCK,HOLDLOCK) WHERE h.MaHD=@maHD`)).recordset[0];
       const alreadyRegistered=(await new sql.Request(transaction).input('maHD',sql.BigInt,maHD).input('maSV',sql.BigInt,maSV).query(`SELECT 1 AS found FROM DKTHAMGIA WHERE MaHD=@maHD AND MaSV=@maSV AND TrangThai NOT IN(N'Đã hủy',N'Từ chối')`)).recordset.length>0;
       const memberRequest = new sql.Request(transaction);
       memberRequest.input('maDoi', maDoi);
@@ -332,7 +332,7 @@ export class RegistrationRepository {
     await transaction.begin();
 
     try {
-      const capacity=(await new sql.Request(transaction).input('maHD',sql.BigInt,maHD).query<{SLToiDa:number|null;Total:number}>(`SELECT h.SLToiDa,(SELECT COUNT(*) FROM DKTHAMGIA dk WHERE dk.MaHD=h.MaHD AND dk.TrangThai NOT IN(N'Đã hủy',N'Từ chối')) Total FROM HOATDONGHOCTHUAT h WITH(UPDLOCK,HOLDLOCK) WHERE h.MaHD=@maHD`)).recordset[0];
+      const capacity=(await new sql.Request(transaction).input('maHD',sql.BigInt,maHD).query<{SLToiDa:number|null;Total:number}>(`SELECT h.SLSVDuKien,(SELECT COUNT(*) FROM DKTHAMGIA dk WHERE dk.MaHD=h.MaHD AND dk.TrangThai NOT IN(N'Đã hủy',N'Từ chối')) Total FROM HOATDONGHOCTHUAT h WITH(UPDLOCK,HOLDLOCK) WHERE h.MaHD=@maHD`)).recordset[0];
       if(capacity?.SLToiDa && capacity.Total+1+memberMaSVs.length>capacity.SLToiDa) throw new BadRequestException('Chỉ tiêu vừa đủ trong lúc đăng ký; hãy gửi lại để vào danh sách chờ');
       // 1. Insert DOITHI
       const teamReq = new sql.Request(transaction);
@@ -410,8 +410,7 @@ export class RegistrationRepository {
         dk.MaHD, 
         h.TenHoatDong, 
         h.DiaDiem, 
-        h.TgBatDau, 
-        h.TgKetThuc, 
+        h.TgDuKien, h.TgDuKien, 
         dk.NgayDK, 
         dk.HinhThuc, 
         dk.TrangThai, 
@@ -470,7 +469,7 @@ export class RegistrationRepository {
       if(trangThai==='Đã hủy') {
         await new sql.Request(tx).input('hd',sql.BigInt,row.MaHD).input('sv',sql.BigInt,row.MaSV).query(`UPDATE HANGDOICHODANGKY SET TrangThai=N'Đã hủy' WHERE MaHD=@hd AND MaSV=@sv AND TrangThai=N'Đã đăng ký'`);
         const activity=(await new sql.Request(tx).input('hd',sql.BigInt,row.MaHD).query<{SLToiDa:number|null;Total:number;Type:string}>(
-          `SELECT h.SLToiDa,(SELECT COUNT(*) FROM DKTHAMGIA d WHERE d.MaHD=h.MaHD AND d.TrangThai NOT IN(N'Đã hủy',N'Từ chối')) Total,
+          `SELECT h.SLSVDuKien,(SELECT COUNT(*) FROM DKTHAMGIA d WHERE d.MaHD=h.MaHD AND d.TrangThai NOT IN(N'Đã hủy',N'Từ chối')) Total,
             CASE WHEN EXISTS(SELECT 1 FROM CUOCTHI c WHERE c.MaHD=h.MaHD) THEN N'Dự thi' ELSE N'Tham gia' END Type
            FROM HOATDONGHOCTHUAT h WITH(UPDLOCK,HOLDLOCK) WHERE h.MaHD=@hd`)).recordset[0];
         if(activity && (!activity.SLToiDa || activity.Total<activity.SLToiDa)) {
