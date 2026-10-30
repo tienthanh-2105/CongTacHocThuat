@@ -1282,3 +1282,30 @@
 }
 .passwordToggle:hover { background: #edf3ff; color: #245fe5; }
 .passwordToggle svg { width: 18px; height: 18px; }
+
+.attendanceQr {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 10px;
+  margin-top: 20px;
+  padding: 20px;
+  border: 1px solid #dce6f4;
+  border-radius: 14px;
+  background: linear-gradient(145deg, #f8fbff, #fff);
+  color: #42536a;
+  text-align: center;
+}
+.attendanceQr strong { color: #20344e; }
+.attendanceQr img {
+  display: block;
+  width: min(320px, 100%);
+  height: auto;
+  padding: 10px;
+  border: 1px solid #e5ebf3;
+  border-radius: 12px;
+  background: #fff;
+}
+.attendanceQr span { color: #71839a; font-size: 13px; }
+.attendanceQr a { color: #1769e8; font-size: 13px; font-weight: 600; text-decoration: none; }
+.attendanceQr a:hover { text-decoration: underline; }

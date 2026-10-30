@@ -1,6 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useRef, useState, type FormEvent } from "react";
+import QRCode from "qrcode";
 import { workflowRequest } from "@/services/workflow";
 import type { AuthUser } from "@/services/auth";
 import { canApproveSettlements, canManageActivities } from "./sections";
@@ -259,6 +260,7 @@ function AccountManagementList({
 export default function BusinessPanel({ sectionId, user }: { sectionId: string; user: AuthUser }) {
   const [rows, setRows] = useState<Row[]>([]);
   const [detail, setDetail] = useState<Row | null>(null);
+  const [attendanceQr, setAttendanceQr] = useState<{ image: string; expiresAt: string; activityId: string } | null>(null);
   const [selectedId, setSelectedId] = useState("");
   const [selectedRegistrationId, setSelectedRegistrationId] = useState("");
   const [error, setError] = useState("");
@@ -332,7 +334,7 @@ export default function BusinessPanel({ sectionId, user }: { sectionId: string; 
     }
   }, [sectionId]);
 
-  useEffect(() => { void load(); setDetail(null); setSelectedId(""); setSelectedRegistrationId(""); setNotice(""); }, [load]);
+  useEffect(() => { void load(); setDetail(null); setAttendanceQr(null); setSelectedId(""); setSelectedRegistrationId(""); setNotice(""); }, [load]);
 
   async function run(path: string, method: string, body?: unknown, message = "Đã lưu.") {
     setBusy(true); setError(""); setNotice("");
@@ -466,7 +468,7 @@ export default function BusinessPanel({ sectionId, user }: { sectionId: string; 
 
     {activitySelect && <section className={s.card}>
       <h2>{sectionId === "competitions" || sectionId === "results" ? "Cuộc thi" : "Chọn hoạt động"}</h2>
-      <div className={s.businessSelect}><select className={inputClass} value={selectedId} onChange={(e) => { setSelectedId(e.target.value); setDetail(null); setSelectedRegistrationId(""); }}><option value="">Chọn hoạt động</option>{activityOptions.map(({ row, id }) => {
+      <div className={s.businessSelect}><select className={inputClass} value={selectedId} onChange={(e) => { setSelectedId(e.target.value); setDetail(null); setAttendanceQr(null); setSelectedRegistrationId(""); }}><option value="">Chọn hoạt động</option>{activityOptions.map(({ row, id }) => {
         const start = formatDateTime(activityStart(row));
         const end = formatDateTime(readValue(row, "TgKetThuc", "thoiGianKetThuc", "ketThucLuc", "NgayKetThuc"));
         return <option key={`${sectionId}-${id}`} value={id}>{label(row, "TenHoatDong", "TenCuocThi")} · #{id}{start ? ` · ${start}` : ""}{end ? ` – ${end}` : ""}</option>;
@@ -495,7 +497,7 @@ export default function BusinessPanel({ sectionId, user }: { sectionId: string; 
 
     {sectionId === "registrations" && <section className={s.card}><h2>Danh sách đăng ký / hàng chờ</h2>{Array.isArray(detail) && <Listing rows={registrationRows} empty="Chưa có dữ liệu." onSelect={(row) => setSelectedRegistrationId(String(readValue(row, "MaDK") ?? ""))} />}<form className={s.businessForm} onSubmit={(e) => submit(e, async (v) => { const result = await run(`/registrations/${v.get("maDK")}/status`, "PATCH", { trangThai: v.get("trangThai") }); if (result) await selected("/registrations/manage/"); return result; })}><label className={s.businessField}><span>Mã đăng ký · sinh viên · trạng thái</span><select className={inputClass} name="maDK" value={selectedRegistrationId} onChange={(e) => setSelectedRegistrationId(e.target.value)} required disabled={!registrationOptions.length}><option value="">{registrationOptions.length ? "Chọn đơn đăng ký" : "Tải dữ liệu đăng ký để chọn"}</option>{registrationOptions.map((row, index) => { const id = String(readValue(row, "MaDK")); return <option key={`registration-${id}-${index}`} value={id}>{displayCode(row, index)} · {label(row, "MSSV")} · {label(row, "HoTen")} · {label(row, "TrangThai")}</option>; })}</select></label><label className={s.businessField}><span>Trạng thái</span><select className={inputClass} name="trangThai"><option>Đã xác nhận</option><option>Đã đăng ký</option><option>Từ chối</option><option>Đã hủy</option></select></label><button className={s.primary} disabled={busy || !registrationOptions.length || !selectedRegistrationId}>Cập nhật trạng thái</button></form>{selectedId && <button className={s.secondaryButton} disabled={busy} onClick={()=>void run(`/activities/${selectedId}/waitlist/promote-next`,"POST",{},"Đã tiếp nhận sinh viên đầu tiên trong hàng chờ.")}>Nhận sinh viên tiếp theo</button>}</section>}
 
-    {sectionId === "attendance" && selectedId && <section className={s.card}><h2>Điểm danh: {label(selectedActivity??{},"TenHoatDong")}</h2><form className={s.businessForm} onSubmit={(e)=>submit(e,(v)=>run(`/attendance/activities/${selectedId}/qr`,"POST",{expiresAt:new Date(String(v.get("expiresAt"))).toISOString()}))}><Field title="Mã QR hết hạn lúc" name="expiresAt" type="datetime-local" required/><button className={s.primary} disabled={busy}>Tạo mã QR</button></form><form className={s.businessForm} onSubmit={(e)=>submit(e,(v)=>run("/attendance/manual","POST",{maDK:Number(v.get("maDK"))},"Đã điểm danh; khoản +5 DRL đang chờ Phòng CTSV xác nhận."))}><Field title="Mã đăng ký của sinh viên" name="maDK" type="number" min="1" required/><button className={s.secondaryButton} disabled={busy}>Ghi nhận theo danh sách ký tay</button></form>{detail && <pre className={s.jsonDetail}>{JSON.stringify(detail,null,2)}</pre>}</section>}
+    {sectionId === "attendance" && selectedId && <section className={s.card}><h2>Điểm danh: {label(selectedActivity??{},"TenHoatDong")}</h2><form className={s.businessForm} onSubmit={(e)=>submit(e,async(v)=>{setAttendanceQr(null);const activityId=selectedId;const expiresAt=new Date(String(v.get("expiresAt"))).toISOString();const result=await run(`/attendance/activities/${activityId}/qr`,"POST",{expiresAt},"Đã tạo mã QR điểm danh.");if(result&&typeof result==="object"&&!Array.isArray(result)){const response=result as Row;const token=readValue(response,"maQRCode","MaQRCode");if(token!==undefined){try{const image=await QRCode.toDataURL(String(token),{errorCorrectionLevel:"H",margin:2,width:320});setAttendanceQr({image,expiresAt:String(readValue(response,"TGHetHan","expiresAt")??expiresAt),activityId});}catch{setError("Đã tạo mã nhưng chưa thể tạo ảnh QR. Vui lòng thử lại.");}}else{setError("API chưa trả về mã QR để hiển thị.");}}return result;})}><Field title="Mã QR hết hạn lúc" name="expiresAt" type="datetime-local" required/><button className={s.primary} disabled={busy}>Tạo mã QR</button></form>{attendanceQr?.activityId===selectedId&&<div className={s.attendanceQr}><strong>Quét mã bằng ứng dụng di động để điểm danh</strong><img src={attendanceQr.image} alt="Mã QR điểm danh" width={320} height={320}/><span>Mã có hiệu lực đến {formatDateTime(attendanceQr.expiresAt)??attendanceQr.expiresAt}</span><a href={attendanceQr.image} download={`diem-danh-${selectedId}.png`}>Tải mã QR</a></div>}<form className={s.businessForm} onSubmit={(e)=>submit(e,(v)=>run("/attendance/manual","POST",{maDK:Number(v.get("maDK"))},"Đã điểm danh; khoản +5 DRL đang chờ Phòng CTSV xác nhận."))}><Field title="Mã đăng ký của sinh viên" name="maDK" type="number" min="1" required/><button className={s.secondaryButton} disabled={busy}>Ghi nhận theo danh sách ký tay</button></form>{detail && attendanceQr?.activityId!==selectedId && <pre className={s.jsonDetail}>{JSON.stringify(detail,null,2)}</pre>}</section>}
 
     {sectionId === "support" && selectedId && <section className={s.card}><h2>Phân chỉ tiêu theo lớp</h2><form className={s.businessForm} onSubmit={(e) => submit(e, (v) => run("/registrations/support-assignment", "POST", { maHD: Number(selectedId), maLop: Number(v.get("maLop")), soLuong: Number(v.get("soLuong")), loaiPhanCong: v.get("loaiPhanCong"), nhiemVu: v.get("nhiemVu") }))}><Field title="Mã lớp" name="maLop" type="number" min="1" required /><Field title="Số lượng" name="soLuong" type="number" min="1" required /><label className={s.businessField}><span>Phân công</span><select className={inputClass} name="loaiPhanCong"><option>Cổ vũ</option><option>Hỗ trợ</option></select></label><Field title="Nhiệm vụ" name="nhiemVu" /><button className={s.primary}>Lưu phân bổ</button></form>{Array.isArray(detail) && <Listing rows={detail as Row[]} empty="Chưa phân bổ lớp." />}</section>}
 
