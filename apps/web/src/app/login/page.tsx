@@ -1,1 +1,5 @@
-export { default } from "../page";
+import LoginClient from "../LoginClient";
+
+export default function LoginPage() {
+  return <LoginClient />;
+}

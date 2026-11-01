@@ -33,7 +33,7 @@ export async function workflowRequest<T = unknown>(
       const message = payload && typeof payload === "object" && "message" in payload
         ? (payload as { message?: unknown }).message
         : null;
-      throw new Error(typeof message === "string" ? message : `Yêu cầu thất bại (${response.status})`);
+      throw new Error(`${typeof message === "string" ? message : `Yêu cầu thất bại (${response.status})`} · ${method} ${path}`);
     }
     return payload as T;
   }

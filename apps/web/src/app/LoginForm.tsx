@@ -4,6 +4,7 @@ import { useState, type FormEvent } from "react";
 import { login } from "@/services/auth";
 import { useRouter } from "next/navigation";
 import AcademicIllustration from "@/components/AcademicIllustration";
+import NoticeDialog from "./dashboard/NoticeDialog";
 
 function BookMark({ className = "" }: { className?: string }) {
   return (
@@ -153,11 +154,7 @@ export default function LoginPage() {
                   </svg>
                 </button>
               </div>
-              {error && (
-                <p className="form-message error" role="alert">
-                  {error}
-                </p>
-              )}
+              {error && <NoticeDialog message={error} kind="error" onClose={() => setError("")} />}
               <button
                 type="submit"
                 className="submit-button"
@@ -179,12 +176,7 @@ export default function LoginPage() {
               >
                 Quên mật khẩu?
               </button>
-              {help && (
-                <p className="form-message help" role="status">
-                  Vui lòng liên hệ quản trị viên của khoa để được hỗ trợ cấp lại
-                  mật khẩu.
-                </p>
-              )}
+              {help && <NoticeDialog message="Vui lòng liên hệ quản trị viên của khoa để được hỗ trợ cấp lại mật khẩu." kind="success" onClose={() => setHelp(false)} />}
             </form>
             <div className="secure-note">
               <svg viewBox="0 0 20 20" fill="none" aria-hidden="true">

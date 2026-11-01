@@ -1,6 +1,7 @@
 "use client";
+import OrganizationPanel from "./OrganizationPanel";
 import { useEffect, useRef, useState } from "react";
-import { useRouter } from "next/navigation";
+import { usePathname, useRouter } from "next/navigation";
 import { getCurrentUser, logout, type AuthUser } from "@/services/auth";
 import AccountPanel from "./AccountPanel";
 import BusinessPanel from "./BusinessPanel";
@@ -9,8 +10,15 @@ import StaffProfilesPanel from "./StaffProfilesPanel";
 import ClassesManagementPanel from "./ClassesManagementPanel";
 import UsersManagementPanel from "./UsersManagementPanel";
 import AcademicActivitiesPanel from "./AcademicActivitiesPanel";
-import { canManageActivities, sectionsForRoles, sections, type DashboardSection } from "./sections";
+import { sectionsForRoles, sections, type DashboardSection } from "./sections";
 import s from "./dashboard.module.css";
+import NoticeDialog from "./NoticeDialog";
+
+// Giữ phiên người dùng trong client khi chuyển giữa các route dashboard. Nếu
+// mỗi route lại kiểm tra /auth/me trước khi vẽ UI thì sidebar sẽ chớp màn hình.
+let dashboardUserCache: AuthUser | null | undefined;
+let dashboardUserRequest: Promise<AuthUser | null> | null = null;
+import DepartmentPlansPanel from "./DepartmentPlansPanel";
 
 function HomeIcon() {
   return <svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">
@@ -43,10 +51,10 @@ function Icon({ type = 0 }: { type?: number }) {
 }
 export default function Dashboard() {
   const router = useRouter();
-  const [user, setUser] = useState<AuthUser | null>(null);
+  const pathname = usePathname();
+  const [user, setUser] = useState<AuthUser | null>(() => dashboardUserCache ?? null);
   const [error, setError] = useState("");
   const [attempt, setAttempt] = useState(0);
-  const [active, setActive] = useState("overview");
   const [menu, setMenu] = useState(false);
   const [profile, setProfile] = useState(false);
   const [notifications, setNotifications] = useState(false);
@@ -57,10 +65,15 @@ export default function Dashboard() {
   const [busy, setBusy] = useState(false);
   const [expenseActivityId, setExpenseActivityId] = useState<number | null>(null);
   const [expenseActivityName, setExpenseActivityName] = useState("");
+  const [routeExpenseActivity, setRouteExpenseActivity] = useState<{ id: number | null; name: string }>({ id: null, name: "" });
   useEffect(() => {
     let alive = true;
-    getCurrentUser()
+    if (dashboardUserCache !== undefined) setUser(dashboardUserCache);
+    const request = dashboardUserRequest ?? (dashboardUserRequest = getCurrentUser());
+    request
       .then((value) => {
+        dashboardUserCache = value;
+        dashboardUserRequest = null;
         if (!alive) return;
         if (!value) router.replace("/login");
         else setUser(value);
@@ -72,6 +85,18 @@ export default function Dashboard() {
       alive = false;
     };
   }, [router, attempt]);
+  useEffect(() => {
+    if (pathname !== "/dashboard/expenses") {
+      setRouteExpenseActivity({ id: null, name: "" });
+      return;
+    }
+    const params = new URLSearchParams(window.location.search);
+    const activityId = Number(params.get("activityId"));
+    setRouteExpenseActivity({
+      id: Number.isSafeInteger(activityId) && activityId > 0 ? activityId : null,
+      name: params.get("activityName") ?? "",
+    });
+  }, [pathname]);
   useEffect(() => {
     const close = (event: KeyboardEvent) => {
       if (event.key === "Escape") {
@@ -96,6 +121,8 @@ export default function Dashboard() {
     setBusy(true);
     try {
       await logout();
+      dashboardUserCache = null;
+      dashboardUserRequest = null;
       setUser(null);
       router.replace("/login");
     } catch {
@@ -104,7 +131,23 @@ export default function Dashboard() {
       setBusy(false);
     }
   }
-  function navigate(id: string) {
+  function navigate(id: string, search = "") {
+    if (id !== "expenses") {
+      setExpenseActivityId(null);
+      setExpenseActivityName("");
+      setRouteExpenseActivity({ id: null, name: "" });
+    } else if (search) {
+      const params = new URLSearchParams(search);
+      const activityId = Number(params.get("activityId"));
+      setRouteExpenseActivity({
+        id: Number.isSafeInteger(activityId) && activityId > 0 ? activityId : null,
+        name: params.get("activityName") ?? "",
+      });
+    } else {
+      setExpenseActivityId(null);
+      setExpenseActivityName("");
+      setRouteExpenseActivity({ id: null, name: "" });
+    }
     const targetSection = sections.find((s) => s.id === id);
     if (targetSection?.parentId) {
       setOpenParentId(targetSection.parentId);
@@ -114,24 +157,24 @@ export default function Dashboard() {
       setOpenParentId(null);
     }
     setAccountView(null);
-    setActive(id);
+    if (sections.some((section) => section.id === id)) {
+      const target = id === "overview" ? "/dashboard" : `/dashboard/${id}${search ? `?${search}` : ""}`;
+      const current = `${pathname}${window.location.search}`;
+      if (current !== target) router.push(target);
+    }
     setMenu(false);
     setQuery("");
   }
   function openExpenses(activityId: number, activityName: string) {
     setExpenseActivityId(activityId);
     setExpenseActivityName(activityName);
-    navigate("expenses");
+    const search = new URLSearchParams({ activityId: String(activityId), activityName }).toString();
+    navigate("expenses", search);
   }
   function handleSidebarClick(item: DashboardSection) {
     const hasChildren = visibleSections.some((sub) => sub.parentId === item.id);
     if (hasChildren) {
-      if (item.id === activeSectionId) {
-        setOpenParentId((prev) => (prev === item.id ? null : item.id));
-      } else {
-        setOpenParentId(item.id);
-        navigate(item.id);
-      }
+      setOpenParentId((prev) => (prev === item.id ? null : item.id));
     } else {
       navigate(item.id);
     }
@@ -155,12 +198,23 @@ export default function Dashboard() {
         </div>
       </main>
     );
-  const visibleSections = sectionsForRoles(user.roles);
+  const academicCoordinator = user.roles.some((role) => role.normalize("NFD").replace(/[\u0300-\u036f]/g, "").replace(/[^a-z0-9]/gi, "").toUpperCase() === "TRUONGBANHOCTHUAT")
+    || (user.position ?? "").normalize("NFD").replace(/[\u0300-\u036f]/g, "").replace(/[^a-z0-9]/gi, "").toUpperCase().includes("TRUONGBANHOCTHUAT");
+  const facultyDean = user.roles.some((role) => role.normalize("NFD").replace(/[\u0300-\u036f]/g, "").replace(/[^a-z0-9]/gi, "").toUpperCase() === "TRUONGKHOA")
+    || (user.position ?? "").normalize("NFD").replace(/[\u0300-\u036f]/g, "").replace(/[^a-z0-9]/gi, "").toUpperCase().startsWith("TRUONGKHOA");
+  const visibleSections = sectionsForRoles(user.roles).filter((section) =>
+    (academicCoordinator || facultyDean || !["budget-estimates", "actual-expenses"].includes(section.id)) &&
+    (section.id !== "department-plans" ||
+      (["Trưởng bộ môn", "Phụ trách bộ môn"].includes(user.position?.trim() ?? "") &&
+        !user.roles.some((role) => ["TRUONGKHOA", "ADMIN"].includes(role.toUpperCase())) &&
+        !/^(trưởng|phó)\s*(trưởng\s*)?khoa$/i.test(user.position?.trim() ?? "")))
+  );
   if (!visibleSections.length) {
     return <main className={s.loading}><div><Icon type={1} /><h1>Tài khoản chưa được cấp quyền sử dụng chức năng web.</h1><button disabled={busy} onClick={signOut}>Đăng xuất</button></div></main>;
   }
-  const activeSectionId = visibleSections.some((item) => item.id === active)
-    ? active
+  const routeSection = pathname.startsWith("/dashboard/") ? pathname.slice("/dashboard/".length).split("/")[0] : "overview";
+  const activeSectionId = visibleSections.some((item) => item.id === routeSection)
+    ? routeSection
     : visibleSections[0]?.id ?? "overview";
   const selected = visibleSections.find((item) => item.id === activeSectionId)!;
   const matches = visibleSections.filter((item) =>
@@ -183,9 +237,9 @@ export default function Dashboard() {
           </div>
         </div>
         <nav aria-label="Chức năng hệ thống">
-          {visibleSections.map((item, index) => {
+          {visibleSections.filter((item) => item.id !== "detailed-plans").map((item, index) => {
             const isSub = Boolean(item.parentId);
-            if (isSub && item.parentId !== openParentId) {
+            if (isSub && item.parentId !== openParentId && item.parentId !== selected.parentId) {
               return null;
             }
             const hasChildren = visibleSections.some((sub) => sub.parentId === item.id);
@@ -330,24 +384,16 @@ export default function Dashboard() {
           </div>
         </header>
         <main className={s.main}>
-          {activeSectionId !== "users" && activeSectionId !== "staff-profiles" && activeSectionId !== "student-profiles" && activeSectionId !== "classes" && !activeSectionId.startsWith("academic-") && accountView !== "info" && (
+          {activeSectionId !== "users" && activeSectionId !== "staff-profiles" && activeSectionId !== "student-profiles" && activeSectionId !== "classes" && activeSectionId !== "plans" && !activeSectionId.startsWith("academic-") && accountView !== "info" && (
             <div className={s.heading}>
               <div>
                 <h1>{selected.title}</h1>
-                {selected.id !== "expenses" && <p>
+                {!['expenses', 'budget-estimates', 'actual-expenses'].includes(selected.id) && <p>
                   {selected.id === "overview"
                     ? "Theo dõi hoạt động, mức độ tham gia và tiến độ học kỳ của toàn khoa."
                     : selected.detail}
                 </p>}
               </div>
-              {selected.id === "overview" && canManageActivities(user.roles) && (
-                <button
-                  className={s.primary}
-                  onClick={() => navigate("competitions")}
-                >
-                  ＋ Tạo hoạt động
-                </button>
-              )}
             </div>
           )}
           {accountView === "info" && (
@@ -358,11 +404,7 @@ export default function Dashboard() {
               </div>
             </div>
           )}
-          {error && (
-            <p role="alert" className={s.error}>
-              {error}
-            </p>
-          )}
+          {error && <NoticeDialog message={error} kind="error" onClose={() => setError("")} />}
           {accountView === "password" && <AccountPanel view="password" user={user} onClose={() => setAccountView(null)} />}
           {accountView === "info" ? (
             <AccountPanel view="info" user={user} onClose={() => setAccountView(null)} />
@@ -370,11 +412,13 @@ export default function Dashboard() {
             <UsersManagementPanel currentUserId={user.id} />
           ) : activeSectionId === "staff-profiles" ? (
             <StaffProfilesPanel />
+          ) : activeSectionId === "department-plans" ? (
+            <DepartmentPlansPanel mode="lecturer" />
           ) : activeSectionId === "student-profiles" ? (
             <StudentProfilesPanel />
           ) : activeSectionId === "classes" ? (
             <ClassesManagementPanel />
-          ) : activeSectionId === "academic-activities" ? (
+          ) : activeSectionId === "academic-activities" || activeSectionId === "academic-list" ? (
             <AcademicActivitiesPanel view="activities" user={user} onNavigateExpenses={openExpenses} onNavigateTab={(tab) => navigate(tab === "activities" ? "academic-activities" : tab === "steering" ? "academic-steering" : tab === "organizing" ? "academic-organizing" : "academic-support")} />
           ) : activeSectionId === "academic-steering" ? (
             <AcademicActivitiesPanel view="steering" user={user} onNavigateTab={(tab) => navigate(tab === "activities" ? "academic-activities" : tab === "steering" ? "academic-steering" : tab === "organizing" ? "academic-organizing" : "academic-support")} />
@@ -383,7 +427,7 @@ export default function Dashboard() {
           ) : activeSectionId === "academic-support" ? (
             <AcademicActivitiesPanel view="support" user={user} onNavigateTab={(tab) => navigate(tab === "activities" ? "academic-activities" : tab === "steering" ? "academic-steering" : tab === "organizing" ? "academic-organizing" : "academic-support")} />
           ) : (
-            <BusinessPanel sectionId={activeSectionId} user={user} initialActivityId={expenseActivityId} initialActivityName={expenseActivityName} />
+            ["detailed-plans", "competitions", "results"].includes(activeSectionId) ? <OrganizationPanel key={activeSectionId} detailed={activeSectionId === "detailed-plans"} user={user} /> : <BusinessPanel sectionId={activeSectionId} user={user} initialActivityId={routeExpenseActivity.id ?? expenseActivityId} initialActivityName={routeExpenseActivity.id ? routeExpenseActivity.name : expenseActivityName} />
           )}
         </main>
       </div>

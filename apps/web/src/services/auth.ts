@@ -6,6 +6,7 @@ export type AuthUser = {
   name: string;
   roles: string[];
   department?: string;
+  position?: string;
 };
 async function authRequest(path: string, body: object) {
   let response: Response;

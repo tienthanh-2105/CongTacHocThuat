@@ -13,6 +13,7 @@ type AccountRow = {
   active: boolean;
   role: string;
   department: string | null;
+  position: string | null;
 };
 
 const accountSelect = `SELECT 
@@ -35,6 +36,7 @@ const accountSelect = `SELECT
     k.TenKhoa,
     N'Khoa CNTT'
   ) AS department
+  ,cb.ChucVu AS position
 FROM TAIKHOAN a 
 JOIN VAITRO r ON r.MaVaiTro = a.MaVaiTro
 LEFT JOIN NGUOIDUNG n ON n.MaNgDung = a.MaNgDung

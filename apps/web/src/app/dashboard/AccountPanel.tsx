@@ -3,6 +3,7 @@ import { useEffect, useRef, useState, type FormEvent } from "react";
 import { useRouter } from "next/navigation";
 import { changePassword, type AuthUser } from "@/services/auth";
 import s from "./dashboard.module.css";
+import NoticeDialog from "./NoticeDialog";
 
 function EyeIcon({ visible }: { visible: boolean }) {
   if (visible) {
@@ -58,7 +59,7 @@ export default function AccountPanel({ view, user, onClose }: { view: "info" | "
 
   if (view === "info") return <section className={`${s.card} ${s.accountPanel}`}>
     <div className={s.cardHeading}><h2>Thông tin cá nhân</h2><button className={s.textButton} onClick={onClose}>Đóng</button></div>
-    <dl><dt>Họ và tên</dt><dd>{user.name || user.username}</dd><dt>Tên đăng nhập</dt><dd>{user.username}</dd><dt>Vai trò</dt><dd>{user.roles.includes("ADMIN") ? "Quản trị viên" : user.roles.join(", ")}</dd><dt>Bộ môn phụ trách</dt><dd>{user.department || "Chưa phân công"}</dd></dl>
+    <dl><dt>Họ và tên</dt><dd>{user.name || user.username}</dd><dt>Tên đăng nhập</dt><dd>{user.username}</dd><dt>Vai trò</dt><dd>{user.roles.includes("ADMIN") ? "Quản trị viên" : user.roles.join(", ")}</dd><dt>Chức vụ</dt><dd>{user.position || "Chưa cập nhật"}</dd><dt>Bộ môn phụ trách</dt><dd>{user.department || "Chưa phân công"}</dd></dl>
   </section>;
 
   return <dialog ref={dialogRef} className={s.passwordDialog} aria-label="Đổi mật khẩu" onCancel={(event) => { event.preventDefault(); if (!busy) onClose(); }} onClick={(event) => { const bounds = event.currentTarget.getBoundingClientRect(); if (!busy && event.target === event.currentTarget && (event.clientX < bounds.left || event.clientX > bounds.right || event.clientY < bounds.top || event.clientY > bounds.bottom)) onClose(); }}>
@@ -140,7 +141,7 @@ export default function AccountPanel({ view, user, onClose }: { view: "info" | "
       </label>
 
       <small id="password-hint" className={s.passwordHint}>Tối thiểu 12 ký tự. Bạn cần đăng nhập lại sau khi đổi.</small>
-      {error && <p className={s.error} role="alert">{error}</p>}
+      {error && <NoticeDialog message={error} kind="error" onClose={() => setError("")} />}
       <button className={s.dialogSave} disabled={busy}>{busy ? "Đang lưu…" : "Lưu"}</button>
     </form>
   </dialog>;

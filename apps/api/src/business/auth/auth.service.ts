@@ -45,7 +45,7 @@ export class AuthService {
     const expiresAt = new Date(Date.now() + this.lifetimeSeconds * 1000);
     // The version is checked on every request, including sessions created concurrently with a password change.
     await this.repository.createSession(tokenDigest(token), user.id, user.passwordVersion, expiresAt);
-    return { token, expiresAt, user: { id: user.id, username: user.username, name: user.name, roles: user.roles.map(link => link.role.code), department: user.department } };
+    return { token, expiresAt, user: { id: user.id, username: user.username, name: user.name, roles: user.roles.map(link => link.role.code), department: user.department, position: user.position ?? undefined } };
   }
 
   async authenticate(token: string | undefined): Promise<SessionContext> {
@@ -53,7 +53,7 @@ export class AuthService {
     const session = await this.repository.findSession(tokenDigest(token));
     if (!session || session.expiresAt.getTime() <= Date.now() || !session.user.active || session.passwordVersion !== session.user.passwordVersion) throw new UnauthorizedException('Phiên đăng nhập không hợp lệ hoặc đã hết hạn');
     const user = session.user;
-    return { sessionId: session.id, userId: user.id, passwordVersion: user.passwordVersion, user: { id: user.id, username: user.username, name: user.name, roles: user.roles.map(link => link.role.code), department: user.department } };
+    return { sessionId: session.id, userId: user.id, passwordVersion: user.passwordVersion, user: { id: user.id, username: user.username, name: user.name, roles: user.roles.map(link => link.role.code), department: user.department, position: user.position ?? undefined } };
   }
 
   async logout(token: string | undefined) {

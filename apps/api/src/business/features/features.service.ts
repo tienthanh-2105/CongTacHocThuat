@@ -22,6 +22,11 @@ export class FeaturesService {
     }
   }
 
+  private isAcademicCoordinator(context: SessionContext) {
+    return context.user.roles.some(role => roleKey(role) === 'TRUONGBANHOCTHUAT')
+      || roleKey(context.user.position ?? '').includes('TRUONGBANHOCTHUAT');
+  }
+
   private async requireStudent(context: SessionContext) {
     const profile = await this.repository.getMobileProfile(context.userId);
     if (!profile) throw new NotFoundException('Không tìm thấy tài khoản');
@@ -91,7 +96,7 @@ export class FeaturesService {
   }
 
   async getSettlement(context: SessionContext, activityId: number) {
-    this.requireRole(context, ['ADMIN', 'CAN_BO_KHOA', 'CANBOKHOA', 'GIANG_VIEN', 'GIANGVIEN']);
+    if (!this.isAcademicCoordinator(context)) this.requireRole(context, ['ADMIN', 'CAN_BO_KHOA', 'CANBOKHOA', 'GIANG_VIEN', 'GIANGVIEN', 'TRUONGKHOA']);
     if (!await this.repository.activityExists(activityId)) throw new NotFoundException(`Không tìm thấy hoạt động ${activityId}`);
     return this.repository.getSettlement(activityId);
   }

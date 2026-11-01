@@ -1,4 +1,4 @@
-import { Type } from 'class-transformer';
+import { Transform, Type } from 'class-transformer';
 import { ArrayMaxSize, ArrayUnique, IsArray, IsBoolean, IsDateString, IsEmail, IsIn, IsInt, IsNotEmpty, IsNumber, IsOptional, IsString, Max, MaxLength, Min, MinLength } from 'class-validator';
 
 export class CreatePlanDto {
@@ -10,9 +10,9 @@ export class CreatePlanDto {
   @IsOptional() @IsString() mucDich?: string;
   @IsOptional() @IsString() yeuCau?: string;
   @IsOptional() @IsString() noiDung?: string;
-  @IsOptional() @IsString() @MaxLength(30) hocKy?: string;
+  @IsOptional() @IsString() @MaxLength(225) kinhPhiTC?: string;
   @Type(() => Number) @IsInt() @Min(1) maKhoa!: number;
-  @IsOptional() @Type(() => Number) @IsInt() @Min(1) maBM?: number;
+  @IsOptional() @Transform(({ value }) => value == null || value === '' ? null : Number(value)) @IsInt() @Min(1) maBM?: number | null;
   @IsOptional() @IsIn(['KHOA', 'BO_MON']) loaiKeHoach?: 'KHOA' | 'BO_MON';
 }
 
@@ -203,7 +203,7 @@ export class CreateStaffRecordDto {
   @IsString() @IsNotEmpty() @MaxLength(100) hoTen!: string;
   @IsString() @IsNotEmpty() @MaxLength(100) hocVi!: string;
   @IsString() @IsNotEmpty() @MaxLength(150) chucVu!: string;
-  @IsOptional() @Type(() => Number) @IsInt() @Min(1) maBM?: number;
+  @IsOptional() @Transform(({ value }) => value == null || value === '' ? null : Number(value)) @IsInt() @Min(1) maBM?: number | null;
   @IsOptional() @IsArray() maBMList?: number[];
   @IsOptional() @IsString() @MaxLength(150) email?: string;
   @IsOptional() @IsString() @MaxLength(20) sdt?: string;
@@ -222,17 +222,18 @@ export class CreateStaffAccountDto {
 export class CreateAcademicActivityDto {
   @IsOptional() @IsString() @MaxLength(30) hocKy?: string;
   @IsString() @IsNotEmpty() @MaxLength(20) namHoc!: string;
-  @IsOptional() @Type(() => Number) @IsInt() @Min(1) maBM?: number;
+  @IsOptional() @Transform(({ value }) => value == null || value === '' ? null : Number(value)) @IsInt() @Min(1) maBM?: number | null;
+  @IsOptional() @IsString() @MaxLength(50) capTC?: string;
   @IsString() @IsNotEmpty() @MaxLength(250) tenHoatDong!: string;
   @IsIn(['Cuộc thi', 'Seminar', 'Workshop', 'Tọa đàm']) loaiHoatDong!: 'Cuộc thi' | 'Seminar' | 'Workshop' | 'Tọa đàm';
   @IsString() @IsNotEmpty() noiDung!: string;
-  @IsOptional() @IsString() tgDuKien?: string;
+  @IsOptional() @IsString() @MaxLength(225) tgDuKien?: string;
   @IsOptional() @IsString() tgBatDau?: string;
   @IsOptional() @IsString() tgKetThuc?: string;
   @IsOptional() @IsString() @MaxLength(255) diaDiem?: string;
   @IsOptional() @IsString() tienDoTH?: string;
   @IsString() @IsNotEmpty() doiTuongThamDu!: string;
-  @Type(() => Number) @IsInt() @Min(0) slsvDuKien!: number;
+  @IsString() @IsNotEmpty() @MaxLength(225) slsvDuKien!: string;
 }
 
 export class CreateActivityBudgetDto {
@@ -247,24 +248,31 @@ export class CreateActivityBudgetDto {
 }
 
 export class ReviewActivityBudgetDto {
-  @IsIn(['approve', 'reject']) action!: 'approve' | 'reject';
+  @IsIn(['approve', 'reject', 'request_changes']) action!: 'approve' | 'reject' | 'request_changes';
   @IsOptional() @IsString() @MaxLength(500) ghiChu?: string;
+}
+
+export class CreateBudgetEstimateDto {
+  @IsString() @IsNotEmpty() @MaxLength(250) tenTieuDe!: string;
+  @IsString() @IsNotEmpty() @MaxLength(20) namHoc!: string;
+  @IsOptional() @IsDateString() ngayLap?: string;
 }
 
 export class UpdateAcademicActivityDto {
   @IsOptional() @IsString() @MaxLength(30) hocKy?: string;
   @IsOptional() @IsString() @MaxLength(20) namHoc?: string;
-  @IsOptional() @Type(() => Number) @IsInt() @Min(1) maBM?: number;
+  @IsOptional() @Transform(({ value }) => value == null || value === '' ? null : Number(value)) @IsInt() @Min(1) maBM?: number | null;
+  @IsOptional() @IsString() @MaxLength(50) capTC?: string;
   @IsOptional() @IsString() @MaxLength(250) tenHoatDong?: string;
   @IsOptional() @IsIn(['Cuộc thi', 'Seminar', 'Workshop', 'Tọa đàm']) loaiHoatDong?: 'Cuộc thi' | 'Seminar' | 'Workshop' | 'Tọa đàm';
   @IsOptional() @IsString() noiDung?: string;
-  @IsOptional() @IsString() tgDuKien?: string;
+  @IsOptional() @IsString() @MaxLength(225) tgDuKien?: string;
   @IsOptional() @IsString() tgBatDau?: string;
   @IsOptional() @IsString() tgKetThuc?: string;
   @IsOptional() @IsString() @MaxLength(255) diaDiem?: string;
   @IsOptional() @IsString() tienDoTH?: string;
   @IsOptional() @IsString() doiTuongThamDu?: string;
-  @IsOptional() @Type(() => Number) @IsInt() @Min(0) slsvDuKien?: number;
+  @IsOptional() @IsString() @IsNotEmpty() @MaxLength(225) slsvDuKien?: string;
   @IsOptional() @IsIn(['Dự thảo', 'Chờ duyệt', 'Đã duyệt', 'Từ chối']) trangThai?: string;
 }
 

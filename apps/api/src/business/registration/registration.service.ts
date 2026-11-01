@@ -14,6 +14,7 @@ import type {
   RegisterTeamDto,
 } from '../../presentation/registration/registration.dto';
 import type { SessionContext } from '../auth/auth.types';
+import { requireOpenRegistration } from './registration-policy';
 
 @Injectable()
 export class RegistrationService {
@@ -38,13 +39,7 @@ export class RegistrationService {
       throw new NotFoundException(`Không tìm thấy hoạt động học thuật với mã: ${dto.maHD}`);
     }
 
-    if (activity.TrangThai === 'Đã hủy' || activity.TrangThai === 'Đã kết thúc') {
-      throw new BadRequestException(`Hoạt động này hiện ở trạng thái "${activity.TrangThai}", không tiếp nhận đăng ký`);
-    }
-
-    if (activity.HanDangKy && new Date(activity.HanDangKy).getTime() < Date.now()) {
-      throw new BadRequestException('Đã hết hạn đăng ký cho hoạt động này');
-    }
+    requireOpenRegistration(activity);
 
     const existing = await this.repository.findRegistration(dto.maHD, student.MaSV);
     if (existing && existing.TrangThai !== 'Đã hủy') {
@@ -89,13 +84,7 @@ export class RegistrationService {
       throw new NotFoundException(`Không tìm thấy cuộc thi với mã: ${dto.maCThi}`);
     }
 
-    if (competition.TrangThai === 'Đã hủy' || competition.TrangThai === 'Đã kết thúc') {
-      throw new BadRequestException(`Cuộc thi hiện ở trạng thái "${competition.TrangThai}", không tiếp nhận đăng ký`);
-    }
-
-    if (competition.HanDangKy && new Date(competition.HanDangKy).getTime() < Date.now()) {
-      throw new BadRequestException('Đã hết hạn đăng ký cho cuộc thi này');
-    }
+    requireOpenRegistration(competition);
 
     const cleanTeamName = dto.tenDoi.trim();
     const existingTeam = await this.repository.findTeamByName(dto.maCThi, cleanTeamName);
@@ -197,12 +186,7 @@ export class RegistrationService {
 
     const team = await this.repository.findTeamById(dto.maDoi);
     if (!team) throw new NotFoundException(`Không tìm thấy đội có mã: ${dto.maDoi}`);
-    if (team.TrangThai === 'Đã hủy' || team.TrangThai === 'Đã kết thúc') {
-      throw new BadRequestException(`Cuộc thi hiện ở trạng thái "${team.TrangThai}", không tiếp nhận đăng ký`);
-    }
-    if (team.HanDangKy && new Date(team.HanDangKy).getTime() < Date.now()) {
-      throw new BadRequestException('Đã hết hạn đăng ký cho cuộc thi này');
-    }
+    requireOpenRegistration(team);
 
     const existingTeam = await this.repository.findStudentTeamInCompetition(team.MaCThi, student.MaSV);
     if (existingTeam) {

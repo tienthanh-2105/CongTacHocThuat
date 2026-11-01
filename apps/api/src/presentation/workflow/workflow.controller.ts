@@ -1,9 +1,10 @@
-import { Body, Controller, Delete, Get, Inject, Param, ParseIntPipe, Patch, Post, Query, Req, UseGuards } from '@nestjs/common';
+import { CompetitionWorkflowService } from '../../business/workflow/competition-workflow.service';
+import { BadRequestException, Body, Controller, Delete, Get, Inject, Param, ParseIntPipe, Patch, Post, Query, Req, UseGuards } from '@nestjs/common';
 import { ApiBearerAuth, ApiCookieAuth, ApiOperation, ApiTags } from '@nestjs/swagger';
 import { SessionGuard } from '../auth/auth.guards';
 import type { AuthRequest } from '../auth/auth.http';
 import { WorkflowService } from '../../business/workflow/workflow.service';
-import { ActivityChangeDto, AdjustTrainingPointDto, AwardTrainingPointDto, CheckInDto, CompetitionResultDto, CreateAttendanceCodeDto, CreatePlanActivityDto, CreatePlanDto, CreateRoundDto, ReviewPlanDto, SelectPlanActivitiesDto, ScoreWorkDto, SubmitWorkDto, SeminarMaterialDto, CreateAccountDto, CreateStudentAccountDto, CreateStudentProfileDto, CreateLinkedStudentProfileDto, UpdateStudentRecordDto, ChangeAccountRoleDto, LinkAccountStudentProfileDto, ResetAccountPasswordDto, SetAccountStatusDto, ManualAttendanceDto, CreateClassDto, UpdateClassDto, UpdateStaffRecordDto, CreateStaffRecordDto, CreateStaffAccountDto, CreateAcademicActivityDto, UpdateAcademicActivityDto, CreateCommitteeMemberDto, UpdateCommitteeMemberDto, CreateActivityBudgetDto, ReviewActivityBudgetDto } from './workflow.dto';
+import { ActivityChangeDto, AdjustTrainingPointDto, AwardTrainingPointDto, CheckInDto, CompetitionResultDto, CreateAttendanceCodeDto, CreatePlanActivityDto, CreatePlanDto, CreateRoundDto, ReviewPlanDto, SelectPlanActivitiesDto, ScoreWorkDto, SubmitWorkDto, SeminarMaterialDto, CreateAccountDto, CreateStudentAccountDto, CreateStudentProfileDto, CreateLinkedStudentProfileDto, UpdateStudentRecordDto, ChangeAccountRoleDto, LinkAccountStudentProfileDto, ResetAccountPasswordDto, SetAccountStatusDto, ManualAttendanceDto, CreateClassDto, UpdateClassDto, UpdateStaffRecordDto, CreateStaffRecordDto, CreateStaffAccountDto, CreateAcademicActivityDto, UpdateAcademicActivityDto, CreateCommitteeMemberDto, UpdateCommitteeMemberDto, CreateActivityBudgetDto, CreateBudgetEstimateDto, ReviewActivityBudgetDto } from './workflow.dto';
 
 @ApiTags('admin-accounts') @ApiBearerAuth() @ApiCookieAuth() @UseGuards(SessionGuard)
 @Controller('admin/accounts')
@@ -47,8 +48,11 @@ export class AdminAccountsController {
 export class PlansController {
   constructor(@Inject(WorkflowService) private readonly service: WorkflowService) {}
   @Get() @ApiOperation({summary:'Danh sách kế hoạch năm học'}) list(@Req() r:AuthRequest){return this.service.listPlans(r.auth!);}
+  @Get('units') @ApiOperation({summary:'Khoa Công nghệ thông tin và các bộ môn để lập kế hoạch năm học'}) units(@Req() r:AuthRequest){return this.service.listPlanUnits(r.auth!);}
   @Get(':id') get(@Req() r:AuthRequest,@Param('id',ParseIntPipe) id:number){return this.service.getPlan(r.auth!,id);}
   @Post() @ApiOperation({summary:'Tạo kế hoạch khoa/Bộ môn ở trạng thái dự thảo'}) create(@Req() r:AuthRequest,@Body() dto:CreatePlanDto){return this.service.createPlan(r.auth!,dto);}
+  @Patch(':id') update(@Req() r:AuthRequest,@Param('id',ParseIntPipe) id:number,@Body() dto:CreatePlanDto){return this.service.updatePlan(r.auth!,id,dto);}
+  @Delete(':id') @ApiOperation({summary:'Xóa kế hoạch năm học còn ở trạng thái dự thảo hoặc cần bổ sung'}) delete(@Req() r:AuthRequest,@Param('id',ParseIntPipe) id:number){return this.service.deletePlan(r.auth!,id);}
   @Post(':id/activities') @ApiOperation({summary:'Thêm hoạt động và dự toán vào kế hoạch'}) activity(@Req() r:AuthRequest,@Param('id',ParseIntPipe) id:number,@Body() dto:CreatePlanActivityDto){return this.service.addPlanActivity(r.auth!,id,dto);}
   @Post(':id/activities/select') @ApiOperation({summary:'Gộp các hoạt động học thuật đã được khoa duyệt vào kế hoạch năm học'}) selectActivities(@Req() r:AuthRequest,@Param('id',ParseIntPipe) id:number,@Body() dto:SelectPlanActivitiesDto){return this.service.selectPlanActivities(r.auth!,id,dto);}
   @Post(':id/publish-news') @ApiOperation({summary:'Đăng các hoạt động của kế hoạch đã được Ban giám hiệu duyệt lên tin tức và thông báo sinh viên'}) publishNews(@Req() r:AuthRequest,@Param('id',ParseIntPipe) id:number){return this.service.publishPlanNews(r.auth!,id);}
@@ -60,27 +64,27 @@ export class PlansController {
 @ApiTags('competition-rounds') @ApiBearerAuth() @ApiCookieAuth() @UseGuards(SessionGuard)
 @Controller('competition-rounds')
 export class CompetitionRoundsController {
-  constructor(@Inject(WorkflowService) private readonly service:WorkflowService){}
-  @Get(':competitionId') list(@Param('competitionId',ParseIntPipe) id:number){return this.service.listRounds(id);}
-  @Post() create(@Req() r:AuthRequest,@Body() dto:CreateRoundDto){return this.service.createRound(r.auth!,dto);}
-  @Get(':id/submissions') submissions(@Req() r:AuthRequest,@Param('id',ParseIntPipe) id:number){return this.service.listSubmissions(r.auth!,id);}
+  constructor(@Inject(CompetitionWorkflowService) private readonly service:CompetitionWorkflowService){}
+  @Get(':competitionId') list(@Req() r:AuthRequest,@Param('competitionId',ParseIntPipe) id:number){return this.service.competition(r.auth!,id).then(value=>value.rounds);}
+  @Post() create(@Req() r:AuthRequest,@Body() dto:CreateRoundDto){return this.service.createRound(r.auth!,dto.maCThi,{...dto,batDauLuc:dto.batDauLuc!,ketThucLuc:dto.ketThucLuc!,hanNopBai:dto.hanNopBai!});}
+  @Get(':id/submissions') submissions(@Req() r:AuthRequest,@Param('id',ParseIntPipe) id:number){return this.service.round(r.auth!,id).then(value=>value.submissions);}
   @Post(':id/submissions') submit(@Req() r:AuthRequest,@Param('id',ParseIntPipe) id:number,@Body() dto:SubmitWorkDto){return this.service.submitWork(r.auth!,id,dto);}
 }
 
 @ApiTags('submissions') @ApiBearerAuth() @ApiCookieAuth() @UseGuards(SessionGuard)
 @Controller('submissions')
 export class SubmissionsController {
-  constructor(@Inject(WorkflowService) private readonly service:WorkflowService){}
+  constructor(@Inject(CompetitionWorkflowService) private readonly service:CompetitionWorkflowService){}
   @Patch(':id/score') score(@Req() r:AuthRequest,@Param('id',ParseIntPipe) id:number,@Body() dto:ScoreWorkDto){return this.service.scoreWork(r.auth!,id,dto);}
 }
 
 @ApiTags('competition-results') @ApiBearerAuth() @ApiCookieAuth() @UseGuards(SessionGuard)
 @Controller('competitions')
 export class CompetitionResultsController {
-  constructor(@Inject(WorkflowService) private readonly service:WorkflowService){}
-  @Get(':competitionId/results') results(@Param('competitionId',ParseIntPipe) id:number){return this.service.getCompetitionResults(id);}
-  @Post(':competitionId/results') create(@Req() r:AuthRequest,@Param('competitionId',ParseIntPipe) id:number,@Body() dto:CompetitionResultDto){return this.service.createCompetitionResult(r.auth!,id,dto);}
-  @Patch('results/:resultId/publish') publish(@Req() r:AuthRequest,@Param('resultId',ParseIntPipe) id:number){return this.service.publishCompetitionResult(r.auth!,id);}
+  constructor(@Inject(CompetitionWorkflowService) private readonly service:CompetitionWorkflowService){}
+  @Get(':competitionId/results') results(@Req() r:AuthRequest,@Param('competitionId',ParseIntPipe) id:number){return this.service.competition(r.auth!,id).then(value=>value.results);}
+  @Post(':competitionId/results') create(@Req() r:AuthRequest,@Param('competitionId',ParseIntPipe) id:number,@Body() dto:CompetitionResultDto){void r; void id; void dto; throw new BadRequestException('Lập kết quả từ bài đã chấm tại mục Tổ chức cuộc thi');}
+  @Patch('results/:resultId/publish') publish(@Req() r:AuthRequest,@Param('resultId',ParseIntPipe) id:number){return this.service.publishResult(r.auth!,id);}
 }
 
 @ApiTags('training-points') @ApiBearerAuth() @ApiCookieAuth() @UseGuards(SessionGuard)
@@ -155,8 +159,53 @@ export class AcademicActivitiesController {
   }
 
   @Get('budgets')
-  listActivityBudgets(@Req() r: AuthRequest) {
-    return this.service.listActivityBudgets(r.auth!);
+  listActivityBudgets(@Req() r: AuthRequest, @Query('includeAll') includeAll?: string) {
+    return this.service.listActivityBudgets(r.auth!, includeAll === '1');
+  }
+
+  @Get('budget-estimates')
+  listBudgetEstimates(@Req() r: AuthRequest) {
+    return this.service.listBudgetEstimates(r.auth!);
+  }
+
+  @Get('budget-estimates/next-id')
+  nextBudgetEstimateId(@Req() r: AuthRequest) {
+    return this.service.nextBudgetEstimateId(r.auth!);
+  }
+
+  @Get('budget-estimates/:id')
+  getBudgetEstimate(@Req() r: AuthRequest, @Param('id', ParseIntPipe) id: number) {
+    return this.service.getBudgetEstimate(r.auth!, id);
+  }
+
+  @Post('budget-estimates')
+  createBudgetEstimate(@Req() r: AuthRequest, @Body() dto: CreateBudgetEstimateDto) {
+    return this.service.createBudgetEstimate(r.auth!, dto);
+  }
+
+  @Patch('budget-estimates/:id/submit')
+  submitBudgetEstimate(@Req() r: AuthRequest, @Param('id', ParseIntPipe) id: number) {
+    return this.service.submitBudgetEstimate(r.auth!, id);
+  }
+
+  @Patch('budget-estimates/:id/review')
+  reviewBudgetEstimate(@Req() r: AuthRequest, @Param('id', ParseIntPipe) id: number, @Body() dto: ReviewActivityBudgetDto) {
+    return this.service.reviewBudgetEstimate(r.auth!, id, dto);
+  }
+
+  @Patch('budgets/lines/:id')
+  updateActivityBudgetLine(@Req() r: AuthRequest, @Param('id', ParseIntPipe) id: number, @Body() dto: CreateActivityBudgetDto) {
+    return this.service.updateActivityBudgetLine(r.auth!, id, dto);
+  }
+
+  @Delete('budgets/lines/:id')
+  deleteActivityBudgetLine(@Req() r: AuthRequest, @Param('id', ParseIntPipe) id: number) {
+    return this.service.deleteActivityBudgetLine(r.auth!, id);
+  }
+
+  @Delete('budgets/:id')
+  deleteActivityBudget(@Req() r: AuthRequest, @Param('id', ParseIntPipe) id: number) {
+    return this.service.deleteActivityBudget(r.auth!, id);
   }
 
   @Patch('budgets/:id/review')

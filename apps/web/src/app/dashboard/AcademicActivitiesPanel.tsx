@@ -5,6 +5,7 @@ import { workflowRequest } from "@/services/workflow";
 import type { AuthUser } from "@/services/auth";
 import { canManageActivities } from "./sections";
 import s from "./dashboard.module.css";
+import NoticeDialog from "./NoticeDialog";
 
 type Row = Record<string, unknown>;
 
@@ -23,15 +24,19 @@ function value(row: Row, key: string): string | number {
 
 function formatDate(val: unknown): string {
   if (!val) return "—";
+  const raw = String(val);
+  // The database field is NVARCHAR now: format ISO dates for readability,
+  // but leave free-form schedule text untouched.
+  if (!/^\d{4}-\d{2}-\d{2}(?:T.*)?$/.test(raw)) return raw;
   try {
-    const d = new Date(String(val));
-    if (isNaN(d.getTime())) return String(val);
+    const d = new Date(raw);
+    if (isNaN(d.getTime())) return raw;
     const day = String(d.getDate()).padStart(2, "0");
     const month = String(d.getMonth() + 1).padStart(2, "0");
     const year = d.getFullYear();
     return `${day}/${month}/${year}`;
   } catch {
-    return String(val);
+    return raw;
   }
 }
 
@@ -76,13 +81,14 @@ export default function AcademicActivitiesPanel({ view = "activities", user, onN
     tgKetThuc: "",
     tgDuKien: new Date().toISOString().slice(0, 10),
     maBM: "" as string | number,
+    capTC: "Cấp Khoa/Liên bộ môn",
     tenHoatDong: "",
     loaiHoatDong: "Cuộc thi" as "Cuộc thi" | "Seminar" | "Workshop" | "Tọa đàm",
     noiDung: "",
     diaDiem: "",
     tienDoTH: "Đang chuẩn bị",
     doiTuongThamDu: "Sinh viên Khoa CNTT",
-    slsvDuKien: 50,
+    slsvDuKien: "50",
     trangThai: "Dự thảo",
   });
 
@@ -111,8 +117,8 @@ export default function AcademicActivitiesPanel({ view = "activities", user, onN
     setError("");
     try {
       const [acts, depts, st, og, sp, nextId, staff] = await Promise.all([
-        workflowRequest<Row[]>("/academic-activities").catch(() => []),
-        workflowRequest<Row[]>("/admin/accounts/departments").catch(() => []),
+        workflowRequest<Row[]>("/academic-activities"),
+        workflowRequest<{departments:Row[]}>("/plans/units").then(value => value.departments).catch(() => []),
         workflowRequest<Row[]>("/academic-activities/steering-committee").catch(() => []),
         workflowRequest<Row[]>("/academic-activities/organizing-committee").catch(() => []),
         workflowRequest<Row[]>("/academic-activities/support-committee").catch(() => []),
@@ -158,7 +164,7 @@ export default function AcademicActivitiesPanel({ view = "activities", user, onN
       return true;
     });
 
-    return list.sort((a, b) => Number(value(a, "MaHD")) - Number(value(b, "MaHD")));
+    return list.sort((a, b) => Number(value(b, "MaHD")) - Number(value(a, "MaHD")));
   }, [activities, search, filterType]);
 
   // Reset pagination on filter change
@@ -234,13 +240,14 @@ export default function AcademicActivitiesPanel({ view = "activities", user, onN
       tgKetThuc: "",
       tgDuKien: new Date().toISOString().slice(0, 10),
       maBM: defaultDept,
+      capTC: "Cấp Khoa/Liên bộ môn",
       tenHoatDong: "",
       loaiHoatDong: "Cuộc thi",
       noiDung: "",
       diaDiem: "",
       tienDoTH: "Đang chuẩn bị",
       doiTuongThamDu: "Sinh viên Khoa CNTT",
-      slsvDuKien: 60,
+      slsvDuKien: "60",
       trangThai: "Dự thảo",
     });
     setIsActivityModalOpen(true);
@@ -256,15 +263,16 @@ export default function AcademicActivitiesPanel({ view = "activities", user, onN
       namHoc: text(act, "NamHoc") !== "—" ? text(act, "NamHoc") : "",
       tgBatDau: text(act, "TgBatDau") !== "—" ? text(act, "TgBatDau").slice(0, 5) : "",
       tgKetThuc: text(act, "TgKetThuc") !== "—" ? text(act, "TgKetThuc").slice(0, 5) : "",
-      tgDuKien: text(act, "TgDuKien") !== "—" ? text(act, "TgDuKien").slice(0, 10) : "",
+      tgDuKien: text(act, "TgDuKien") !== "—" ? text(act, "TgDuKien") : "",
       maBM: value(act, "MaBM") !== "" ? Number(value(act, "MaBM")) : "",
+      capTC: text(act, "CapTC") !== "—" ? text(act, "CapTC") : "",
       tenHoatDong: text(act, "TenHoatDong"),
       loaiHoatDong: (text(act, "LoaiHoatDong") as "Cuộc thi" | "Seminar" | "Workshop" | "Tọa đàm") || "Cuộc thi",
       noiDung: text(act, "NoiDung") !== "—" ? text(act, "NoiDung") : "",
       diaDiem: text(act, "DiaDiem") !== "—" ? text(act, "DiaDiem") : "",
       tienDoTH: text(act, "TienDoTH") !== "—" ? text(act, "TienDoTH") : "Đang chuẩn bị",
       doiTuongThamDu: text(act, "DoiTuongThamDu") !== "—" ? text(act, "DoiTuongThamDu") : "Sinh viên Khoa CNTT",
-      slsvDuKien: Number(value(act, "SLSVDuKien")) || 0,
+      slsvDuKien: value(act, "SLSVDuKien") == null ? "" : String(value(act, "SLSVDuKien")),
       trangThai: text(act, "TrangThai") !== "—" ? text(act, "TrangThai") : "Dự thảo",
     });
     setIsActivityModalOpen(true);
@@ -290,8 +298,12 @@ export default function AcademicActivitiesPanel({ view = "activities", user, onN
       setError("Vui lòng nhập Đối tượng tham dự.");
       return;
     }
-    if (activityForm.slsvDuKien < 0) {
-      setError("Số lượng sinh viên dự kiến không hợp lệ.");
+    if (!activityForm.tgDuKien.trim() || activityForm.tgDuKien.length > 225) {
+      setError("Vui lòng nhập thời gian dự kiến (tối đa 225 ký tự).");
+      return;
+    }
+    if (!activityForm.slsvDuKien.trim() || activityForm.slsvDuKien.length > 225) {
+      setError("Vui lòng nhập số lượng sinh viên dự kiến (tối đa 225 ký tự).");
       return;
     }
 
@@ -308,14 +320,15 @@ export default function AcademicActivitiesPanel({ view = "activities", user, onN
             tgBatDau: activityForm.tgBatDau || undefined,
             tgKetThuc: activityForm.tgKetThuc || undefined,
             tgDuKien: activityForm.tgDuKien || undefined,
-            maBM: activityForm.maBM ? Number(activityForm.maBM) : undefined,
+            maBM: activityForm.maBM ? Number(activityForm.maBM) : null,
+            capTC: activityForm.capTC,
             tenHoatDong: activityForm.tenHoatDong.trim(),
             loaiHoatDong: activityForm.loaiHoatDong,
             noiDung: activityForm.noiDung.trim(),
             diaDiem: activityForm.diaDiem.trim() || undefined,
             tienDoTH: activityForm.tienDoTH.trim() || undefined,
             doiTuongThamDu: activityForm.doiTuongThamDu.trim(),
-            slsvDuKien: Number(activityForm.slsvDuKien),
+            slsvDuKien: activityForm.slsvDuKien.trim(),
             trangThai: activityForm.trangThai || "Dự thảo",
           },
         });
@@ -329,19 +342,21 @@ export default function AcademicActivitiesPanel({ view = "activities", user, onN
             tgBatDau: activityForm.tgBatDau || undefined,
             tgKetThuc: activityForm.tgKetThuc || undefined,
             tgDuKien: activityForm.tgDuKien || undefined,
-            maBM: activityForm.maBM ? Number(activityForm.maBM) : undefined,
+            maBM: activityForm.maBM ? Number(activityForm.maBM) : null,
+            capTC: activityForm.capTC,
             tenHoatDong: activityForm.tenHoatDong.trim(),
             loaiHoatDong: activityForm.loaiHoatDong,
             noiDung: activityForm.noiDung.trim(),
             diaDiem: activityForm.diaDiem.trim() || undefined,
             tienDoTH: activityForm.tienDoTH.trim() || undefined,
             doiTuongThamDu: activityForm.doiTuongThamDu.trim(),
-            slsvDuKien: Number(activityForm.slsvDuKien),
+            slsvDuKien: activityForm.slsvDuKien.trim(),
           },
         });
         setNotice(`Đã tạo hoạt động học thuật "${activityForm.tenHoatDong}" thành công.`);
       }
       setIsActivityModalOpen(false);
+      setCurrentPage(1);
       await loadData();
     } catch (err) {
       setError(err instanceof Error ? err.message : "Thao tác không thành công.");
@@ -353,31 +368,21 @@ export default function AcademicActivitiesPanel({ view = "activities", user, onN
   // Submit Activity for approval
   const handleSubmitApproval = async (act: Row) => {
     const id = Number(value(act, "MaHD"));
-    const name = text(act, "TenHoatDong");
-    if (!window.confirm(`Gửi hoạt động #${id} - "${name}" lên phê duyệt?`)) {
-      return;
-    }
     setBusy(true);
     setError("");
     try {
       await workflowRequest(`/academic-activities/${id}/submit`, { method: "PATCH" });
-      setNotice(`Đã gửi hoạt động #${id} lên phê duyệt.`);
+      setNotice("Đã gửi xem xét ký duyệt thành công !\n(Có đính kèm Kinh phí hoạt động)");
       await loadData();
     } catch (err) {
-      setError(err instanceof Error ? err.message : "Không thể xóa hoạt động.");
+      setError(err instanceof Error ? err.message : "Không thể gửi hoạt động sang Ban bộ môn.");
     } finally {
       setBusy(false);
     }
   };
 
-  const handleApproveActivity = async (act: Row) => {
-    const id = Number(value(act, "MaHD"));
-    if (!window.confirm(`Duyệt hoạt động #${id} - "${text(act, "TenHoatDong")}"?`)) return;
-    setBusy(true); setError("");
-    try { await workflowRequest(`/academic-activities/${id}/approve`, { method: "PATCH" }); setNotice(`Đã duyệt hoạt động #${id}.`); await loadData(); }
-    catch (err) { setError(err instanceof Error ? err.message : "Không thể duyệt hoạt động."); }
-    finally { setBusy(false); }
-  };
+  const normalizedPosition = user?.position?.normalize("NFD").replace(/[\u0300-\u036f]/g, "").toLowerCase() ?? "";
+  const isFacultyLeader = (user?.roles.some((role) => role.toUpperCase() === "TRUONGKHOA") ?? false) || normalizedPosition.includes("truong khoa");
 
   // Open Member Modal
   const openAddMemberModal = () => {
@@ -494,7 +499,7 @@ export default function AcademicActivitiesPanel({ view = "activities", user, onN
   // CSV Export
   const exportCSV = () => {
     if (activeTab === "activities") {
-      const headers = ["Mã HĐ", "Tên hoạt động", "Bộ môn", "Loại hoạt động", "Nội dung", "Thời gian dự kiến", "Địa điểm", "SL SV dự kiến", "Trạng thái"];
+      const headers = ["Mã HĐ", "Tên hoạt động", "Bộ môn", "Loại hoạt động", "Nội dung", "Thời gian dự kiến", "Địa điểm", "SL SV dự kiến", "Trạng thái hoạt động"];
       const rowsData = filteredActivities.map((a) => [
         String(value(a, "MaHD")),
         text(a, "TenHoatDong"),
@@ -538,18 +543,7 @@ export default function AcademicActivitiesPanel({ view = "activities", user, onN
   return (
     <div className={s.usersPanelWrapper}>
       {/* Alert notices */}
-      {error && (
-        <div className={s.errorAlert} role="alert">
-          <span>⚠️ {error}</span>
-          <button onClick={() => setError("")}>✕</button>
-        </div>
-      )}
-      {notice && (
-        <div className={s.successAlert} role="status">
-          <span>✓ {notice}</span>
-          <button onClick={() => setNotice("")}>✕</button>
-        </div>
-      )}
+      {error ? <NoticeDialog message={error} kind="error" onClose={() => setError("")} /> : notice ? <NoticeDialog message={notice} kind="success" title={notice.startsWith("Đã gửi xem xét ký duyệt thành công") ? "Thông báo" : undefined} onClose={() => setNotice("")} /> : null}
 
       {/* Top Header - KHÔNG CÒN DÒNG CHỮ PHỤ VÀ NÚT TẠO Ở ĐÂY */}
       <div className={s.usersHeaderRow} style={{ marginBottom: "16px" }}>
@@ -814,31 +808,31 @@ export default function AcademicActivitiesPanel({ view = "activities", user, onN
       {activeTab === "activities" && (
         <div className={s.tableCard}>
           <div style={{ overflowX: "auto" }}>
-            <table className={s.modernTable}>
+            <table className={`${s.modernTable} ${s.academicActivitiesTable}`}>
               <thead>
                 <tr>
-                  <th style={{ fontWeight: 700, color: "#0f172a", fontSize: "13px", width: "80px", textAlign: "center" }}>Mã HĐ</th>
-                  <th style={{ fontWeight: 700, color: "#0f172a", fontSize: "13px", width: "180px" }}>Tên hoạt động</th>
+                  <th style={{ fontWeight: 700, color: "#0f172a", fontSize: "13px", width: "70px", textAlign: "center" }}>Mã HĐ</th>
+                  <th style={{ fontWeight: 700, color: "#0f172a", fontSize: "13px", width: "220px" }}>Tên hoạt động</th>
                   <th style={{ fontWeight: 700, color: "#0f172a", fontSize: "13px", width: "130px" }}>Bộ môn</th>
                   <th style={{ fontWeight: 700, color: "#0f172a", fontSize: "13px", width: "100px" }}>Loại</th>
-                  <th style={{ fontWeight: 700, color: "#0f172a", fontSize: "13px", width: "180px" }}>Nội dung</th>
-                  <th style={{ fontWeight: 700, color: "#0f172a", fontSize: "13px", width: "110px" }}>Thời gian dự kiến</th>
-                  <th style={{ fontWeight: 700, color: "#0f172a", fontSize: "13px", width: "110px" }}>Địa điểm</th>
-                  <th style={{ fontWeight: 700, color: "#0f172a", fontSize: "13px", width: "80px", textAlign: "center" }}>SL dự kiến</th>
-                  <th style={{ fontWeight: 700, color: "#0f172a", fontSize: "13px", width: "90px", textAlign: "center" }}>Trạng thái</th>
-                  <th style={{ fontWeight: 700, color: "#0f172a", fontSize: "13px", width: "235px", textAlign: "right" }}>Thao tác</th>
+                  <th style={{ fontWeight: 700, color: "#0f172a", fontSize: "13px", width: "210px" }}>Nội dung</th>
+                  <th style={{ fontWeight: 700, color: "#0f172a", fontSize: "13px", width: "125px" }}>Thời gian dự kiến</th>
+                  <th style={{ fontWeight: 700, color: "#0f172a", fontSize: "13px", width: "155px" }}>Địa điểm</th>
+                  <th style={{ fontWeight: 700, color: "#0f172a", fontSize: "13px", width: "180px", textAlign: "center" }}>SL dự kiến</th>
+                  <th style={{ fontWeight: 700, color: "#0f172a", fontSize: "13px", width: "250px", textAlign: "center" }}>Trạng thái</th>
+                  <th style={{ fontWeight: 700, color: "#0f172a", fontSize: "13px", width: "270px", textAlign: "left" }}>Thao tác</th>
                 </tr>
               </thead>
               <tbody>
                 {loading ? (
                   <tr>
-                    <td colSpan={9} style={{ textAlign: "center", padding: "30px", color: "#64748b" }}>
+                    <td colSpan={10} style={{ textAlign: "center", padding: "30px", color: "#64748b" }}>
                       Đang tải danh sách hoạt động học thuật…
                     </td>
                   </tr>
                 ) : filteredActivities.length === 0 ? (
                   <tr>
-                    <td colSpan={9} style={{ textAlign: "center", padding: "30px", color: "#64748b" }}>
+                    <td colSpan={10} style={{ textAlign: "center", padding: "30px", color: "#64748b" }}>
                       Không tìm thấy hoạt động học thuật phù hợp với điều kiện tìm kiếm.
                     </td>
                   </tr>
@@ -852,7 +846,18 @@ export default function AcademicActivitiesPanel({ view = "activities", user, onN
                     const tgDuKienStr = formatDate(act["TgDuKien"]);
                     const diaDiem = text(act, "DiaDiem");
                     const slsv = value(act, "SLSVDuKien");
-                    const trangThai = text(act, "TrangThai");
+                    const rawTrangThai = text(act, "TrangThai");
+                    const proposalStatus = text(act, "TrangThaiDeXuatBoMon");
+                    const annualPlanStatus = text(act, "TrangThaiKeHoachKhoa");
+                    const maKeHoachKhoa = value(act, "MaKeHoachKhoa");
+                    const trangThai = rawTrangThai === "Chờ duyệt"
+                      ? proposalStatus === "Chờ khoa" ? "Chờ Trưởng ban học thuật tổng hợp"
+                        : proposalStatus === "Đã duyệt" && annualPlanStatus === "Chờ Trưởng khoa ký duyệt" ? "Chờ Trưởng khoa duyệt"
+                          : proposalStatus === "Đã duyệt" && annualPlanStatus === "Đã duyệt" ? "Đã duyệt"
+                            : proposalStatus === "Đã duyệt" && maKeHoachKhoa && ["Dự thảo", "Cần bổ sung"].includes(annualPlanStatus) ? "Đã gộp kế hoạch, chờ trình Trưởng khoa"
+                              : proposalStatus === "Đã duyệt" && maKeHoachKhoa ? "Đã gộp kế hoạch"
+                              : proposalStatus === "Đã duyệt" ? "Đã tổng hợp, chờ gộp kế hoạch" : "Chờ Trưởng khoa"
+                      : rawTrangThai;
 
                     // Badges for Loai
                     let loaiStyle = { background: "#e0f2fe", color: "#0369a1" };
@@ -914,35 +919,28 @@ export default function AcademicActivitiesPanel({ view = "activities", user, onN
                           <span style={{ fontWeight: 600, color: "#0f172a" }}>{slsv}</span>
                         </td>
 
-                        {/* Trạng thái: Mặc định Dự thảo */}
-                        <td style={{ textAlign: "center" }}>
-                          <span className={`${s.statusPill} ${s.badgeAmber}`}>
+                        {/* Trạng thái hoạt động */}
+                        <td className={s.academicActivitiesStatusCell}>
+                          <span className={`${s.statusPill} ${s.academicActivitiesStatusPill} ${trangThai === "Đã duyệt" ? s.badgeGreen : s.badgeAmber}`}>
                             {trangThai}
                           </span>
                         </td>
 
                         {/* Thao tác */}
-                        <td className={s.activityActionsCell} style={{ textAlign: "right" }}>
+                        <td className={s.activityActionsCell} style={{ textAlign: "left" }}>
                           <div className={s.rowActions}>
-                            <button type="button" title="Mở Kinh phí & quyết toán" className={s.rowActionBtn} onClick={() => onNavigateExpenses ? onNavigateExpenses(id, tenHoatDong) : setBudgetActivity(act)}>
-                              💰 Kinh phí
-                            </button>
                             <button type="button" title="Xem hoạt động" className={s.rowActionBtn} onClick={() => openViewModal(act)}>
                               👁 Xem
                             </button>
-                            <button
-                              type="button"
-                              title="Sửa hoạt động"
-                              className={s.rowActionBtn}
-                              onClick={() => openEditModal(act)}
-                            >
-                              ✏️ Sửa
-                            </button>
-                            {canManageActivities(user?.roles ?? []) && trangThai === "Chờ duyệt" ? <button type="button" title="Duyệt hoạt động" className={s.rowActionBtn} onClick={() => handleApproveActivity(act)}>
-                              ✅ Duyệt
-                            </button> : <button type="button" title="Gửi phê duyệt" className={s.rowActionBtn} onClick={() => handleSubmitApproval(act)}>
+                            {!isFacultyLeader && <>
+                              <button type="button" title="Mở Kinh phí & quyết toán" className={s.rowActionBtn} onClick={() => onNavigateExpenses ? onNavigateExpenses(id, tenHoatDong) : setBudgetActivity(act)}>💰 Kinh phí</button>
+                              <button type="button" title="Sửa hoạt động" className={s.rowActionBtn} onClick={() => openEditModal(act)}>✏️ Sửa</button>
+                            </>}
+                            {["Dự thảo", "Từ chối"].includes(rawTrangThai) ? <button type="button" title="Gửi hoạt động và kinh phí sang Ban bộ môn" className={s.rowActionBtn} disabled={busy} onClick={() => handleSubmitApproval(act)}>
                               <svg viewBox="0 0 24 24" width="13" height="13" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><path d="m22 2-7 20-4-9-9-4Z" /><path d="M22 2 11 13" /></svg>
                               Gửi
+                            </button> : <button type="button" className={s.rowActionBtn} disabled title={trangThai === "Chờ Trưởng bộ môn" ? "Đề xuất đang được Ban bộ môn xem xét" : "Đề xuất đã được chuyển sang bước tiếp theo"}>
+                            {trangThai === "Chờ Trưởng bộ môn" ? "Chờ Ban bộ môn" : trangThai === "Chờ Trưởng ban học thuật tổng hợp" ? "Chờ tổng hợp" : trangThai}
                             </button>}
                           </div>
                         </td>
@@ -1234,7 +1232,7 @@ export default function AcademicActivitiesPanel({ view = "activities", user, onN
                         background: "#ffffff",
                       }}
                     >
-                      <option value="">(Chưa chọn / Thuộc Khoa)</option>
+                      <option value="">Chưa chọn bộ môn...</option>
                       {departments.map((d, i) => (
                         <option key={`f-bm-${i}`} value={Number(value(d, "MaBM"))}>
                           {text(d, "TenBM")}
@@ -1264,17 +1262,24 @@ export default function AcademicActivitiesPanel({ view = "activities", user, onN
                   </div>
                 </div>
 
-                <div style={{ display: "grid", gridTemplateColumns: "0.8fr 0.8fr 1fr", gap: "12px", marginBottom: "16px" }}>
+                <div className={s.activityMetaGrid}>
                   <div>
                     <label style={{ display: "block", marginBottom: "6px", fontSize: "13px", fontWeight: 600, color: "#1e293b" }}>Bộ môn phụ trách</label>
                     <select value={activityForm.maBM} onChange={(e) => setActivityForm({ ...activityForm, maBM: e.target.value })} style={{ width: "100%", padding: "10px 12px", borderRadius: "8px", border: "1px solid #cbd5e1", fontSize: "14px", background: "#ffffff" }}>
-                      <option value="">(Chưa chọn / Thuộc Khoa)</option>
+                      <option value="">Chưa chọn bộ môn...</option>
                       {departments.map((d, i) => <option key={`f-bm-lower-${i}`} value={Number(value(d, "MaBM"))}>{text(d, "TenBM")}</option>)}
                     </select>
                   </div>
                   <div>
                     <label style={{ display: "block", marginBottom: "6px", fontSize: "13px", fontWeight: 600, color: "#1e293b" }}>Năm học <span style={{ color: "#ef4444" }}>*</span></label>
                     <input required type="text" maxLength={20} placeholder="Ví dụ: 2025-2026" value={activityForm.namHoc} onChange={(e) => setActivityForm({ ...activityForm, namHoc: e.target.value })} style={{ width: "100%", padding: "10px 12px", borderRadius: "8px", border: "1px solid #cbd5e1", fontSize: "14px" }} />
+                  </div>
+                  <div>
+                    <label style={{ display: "block", marginBottom: "6px", fontSize: "13px", fontWeight: 600, color: "#1e293b" }}>Cấp tổ chức</label>
+                    <select value={activityForm.capTC} onChange={(e) => setActivityForm({ ...activityForm, capTC: e.target.value })} style={{ width: "100%", padding: "10px 12px", borderRadius: "8px", border: "1px solid #cbd5e1", fontSize: "14px", background: "#ffffff" }}>
+                      <option value="">Có thể để trống...</option>
+                      <option value="Cấp Khoa/Liên bộ môn">Cấp Khoa/Liên bộ môn</option>
+                    </select>
                   </div>
                   <div>
                     <label style={{ display: "block", marginBottom: "6px", fontSize: "13px", fontWeight: 600, color: "#1e293b" }}>Loại hoạt động <span style={{ color: "#ef4444" }}>*</span></label>
@@ -1284,13 +1289,13 @@ export default function AcademicActivitiesPanel({ view = "activities", user, onN
                   </div>
                 </div>
 
-                {/* 2 cột: Loại hoạt động & Thời gian dự kiến (DATE) */}
+                {/* Thời gian dự kiến được lưu dưới dạng văn bản */}
                 <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: "12px", marginBottom: "16px" }}>
                   <div>
                     <label style={{ display: "block", marginBottom: "6px", fontSize: "13px", fontWeight: 600, color: "#1e293b" }}>
                       Thời gian dự kiến <span style={{ color: "#ef4444", fontWeight: "bold" }}>*</span>
                     </label>
-                    <input type="date" required value={activityForm.tgDuKien} onChange={(e) => setActivityForm({ ...activityForm, tgDuKien: e.target.value })} style={{ width: "100%", padding: "10px 12px", borderRadius: "8px", border: "1px solid #cbd5e1", fontSize: "14px" }} />
+                    <input type="text" required maxLength={225} placeholder="Nhập thời gian dự kiến..." value={activityForm.tgDuKien} onChange={(e) => setActivityForm({ ...activityForm, tgDuKien: e.target.value })} style={{ width: "100%", padding: "10px 12px", borderRadius: "8px", border: "1px solid #cbd5e1", fontSize: "14px" }} />
                   </div>
 
                   <div>
@@ -1351,11 +1356,12 @@ export default function AcademicActivitiesPanel({ view = "activities", user, onN
                       SL sinh viên dự kiến <span style={{ color: "#ef4444", fontWeight: "bold" }}>*</span>
                     </label>
                     <input
-                      type="number"
+                      type="text"
                       required
-                      min={0}
+                      maxLength={225}
+                      placeholder="Nhập số lượng dự kiến..."
                       value={activityForm.slsvDuKien}
-                      onChange={(e) => setActivityForm({ ...activityForm, slsvDuKien: Number(e.target.value) })}
+                      onChange={(e) => setActivityForm({ ...activityForm, slsvDuKien: e.target.value })}
                       style={{
                         width: "100%",
                         padding: "10px 12px",
@@ -1370,7 +1376,20 @@ export default function AcademicActivitiesPanel({ view = "activities", user, onN
                 {/* Tiến độ thực hiện */}
                 <div style={{ marginBottom: "16px" }}>
                   <label style={{ display: "block", marginBottom: "6px", fontSize: "13px", fontWeight: 600, color: "#475569" }}>Tiến độ thực hiện</label>
-                  <input type="text" maxLength={225} placeholder="Đang chuẩn bị, Hoàn thành..." value={activityForm.tienDoTH} onChange={(e) => setActivityForm({ ...activityForm, tienDoTH: e.target.value })} style={{ width: "100%", minHeight: "80px", height: "80px", padding: "10px 12px", borderRadius: "8px", border: "1px solid #cbd5e1", fontSize: "14px" }} />
+                  <textarea
+                    rows={3}
+                    placeholder="Đang chuẩn bị, Hoàn thành..."
+                    value={activityForm.tienDoTH}
+                    onChange={(e) => setActivityForm({ ...activityForm, tienDoTH: e.target.value })}
+                    style={{
+                      width: "100%",
+                      padding: "10px 12px",
+                      borderRadius: "8px",
+                      border: "1px solid #cbd5e1",
+                      fontSize: "14px",
+                      lineHeight: "1.4",
+                    }}
+                  />
                 </div>
 
                 {/* Trạng thái */}

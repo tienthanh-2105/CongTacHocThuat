@@ -3,6 +3,7 @@
 import { useCallback, useEffect, useState, useMemo } from "react";
 import { workflowRequest } from "@/services/workflow";
 import s from "./dashboard.module.css";
+import NoticeDialog from "./NoticeDialog";
 
 type Row = Record<string, unknown>;
 
@@ -242,18 +243,7 @@ export default function UsersManagementPanel({ currentUserId }: { currentUserId?
   return (
     <div className={s.usersPanelWrapper}>
       {/* Alert notices */}
-      {error && (
-        <div className={s.errorAlert} role="alert">
-          <span>⚠️ {error}</span>
-          <button onClick={() => setError("")}>✕</button>
-        </div>
-      )}
-      {notice && (
-        <div className={s.successAlert} role="status">
-          <span>✓ {notice}</span>
-          <button onClick={() => setNotice("")}>✕</button>
-        </div>
-      )}
+      {error ? <NoticeDialog message={error} kind="error" onClose={() => setError("")} /> : notice ? <NoticeDialog message={notice} kind="success" onClose={() => setNotice("")} /> : null}
 
       {/* Top Header */}
       <div className={s.usersHeaderRow}>

@@ -21,13 +21,13 @@ const config = {
 
 const requiredTables = [
   'KHOA', 'BOMON', 'LOP', 'NGUOIDUNG', 'VAITRO', 'TAIKHOAN', 'PHANQUYEN',
-  'VAITRO_QUYEN', 'SINHVIEN', 'GIANGVIEN', 'CANBOKHOA', 'QUANTRIVIEN',
+  'VAITRO_QUYEN', 'SINHVIEN', 'GIANGVIEN', 'CANBOKHOA',
   'KEHOACHHOCTHUAT', 'HOATDONGHOCTHUAT', 'CUOCTHI', 'SEMINAR', 'BANCUOCTHI',
   'BANTOCHUC', 'DOITHI', 'THANHVIENDOI', 'DKTHAMGIA', 'PHANCONGCOVU', 'DETAI',
   'MAQR', 'DIEMDANH', 'GIAITHUONG', 'KETQUAHOCTHUAT', 'DIEMRENLUYEN',
   'HOSOQUYETTOAN', 'CHIPHITHUCTE', 'PHIENDANGNHAP',
 ];
-const workflowTables = ['SCHEMAMIGRATION', 'CHITIETKEHOACH', 'VONGTHI', 'BAITHI', 'CHAMDIEMVONG', 'HANGDOICHODANGKY', 'THONGBAO', 'TEPSEMINAR', 'GIANGVIEN_BOMON', 'DUTRUKINHPHI', 'KINHPHIHOATDONG'];
+const workflowTables = ['SCHEMAMIGRATION', 'CHITIETKEHOACH', 'VONGTHI', 'BAITHI', 'CHAMDIEMVONG', 'HANGDOICHODANGKY', 'THONGBAO', 'TEPSEMINAR', 'GIANGVIEN_BOMON', 'DUTRUKINHPHI', 'KINHPHIHOATDONG', 'KEHOACHTOCHUC', 'PHANCONGVONGTHI', 'DETHIVONG', 'DANGKYVONGTHI'];
 
 async function getApplicationTables(pool) {
   const result = await pool.request().query(
@@ -59,6 +59,14 @@ async function check(pool) {
   const workflowFound = new Set(workflowResult.recordset.map(row => row.TABLE_NAME.toUpperCase()));
   const workflowMissing = workflowTables.filter(name => !workflowFound.has(name));
   if (workflowMissing.length) throw new Error(`Missing workflow tables: ${workflowMissing.join(', ')}. Run npm run db:migrate.`);
+  const linkageResult = await pool.request().query(`SELECT COLUMN_NAME FROM INFORMATION_SCHEMA.COLUMNS
+    WHERE TABLE_SCHEMA='dbo' AND TABLE_NAME='HOATDONGHOCTHUAT' AND COLUMN_NAME IN ('MaKeHoach','MaKeHoachKhoa')`);
+  const linkageFound = new Set(linkageResult.recordset.map(row => row.COLUMN_NAME.toUpperCase()));
+  const linkageMissing = ['MaKeHoach', 'MaKeHoachKhoa'].filter(name => !linkageFound.has(name.toUpperCase()));
+  if (linkageMissing.length) throw new Error(`Missing activity-plan linkage columns: ${linkageMissing.map(name => `HOATDONGHOCTHUAT.${name}`).join(', ')}. Run npm run db:migrate.`);
+  const scopeResult = await pool.request().query(`SELECT COLUMN_NAME FROM INFORMATION_SCHEMA.COLUMNS
+    WHERE TABLE_SCHEMA='dbo' AND TABLE_NAME='HOATDONGHOCTHUAT' AND COLUMN_NAME='CapTC'`);
+  if (!scopeResult.recordset.length) throw new Error('Missing HOATDONGHOCTHUAT.CapTC. Run npm run db:migrate.');
   console.log('SQL Server schema is ready.');
 }
 
@@ -104,8 +112,8 @@ async function migrate(pool) {
         CREATE TABLE dbo.SCHEMAMIGRATION (MaMigration NVARCHAR(100) NOT NULL PRIMARY KEY, ApDungLuc DATETIMEOFFSET NOT NULL DEFAULT SYSDATETIMEOFFSET());
     `);
     const migrations = legacy
-      ? ['003_legacy_sqlserver_compat.sql', '002_workflow_extensions.sql', '004_workflow_roles_status.sql', '005_activity_owner.sql', '006_activity_semester_year.sql', '007_activity_status.sql', '008_activity_times.sql', '009_activity_time_only.sql', '010_activity_progress_max.sql', '011_activity_plan_compat.sql', '012_activity_pending_status.sql', '013_plan_approval_stages.sql', '014_lecturer_department_links.sql', '015_activity_budget_approval.sql']
-      : ['002_workflow_extensions.sql', '004_workflow_roles_status.sql', '005_activity_owner.sql', '006_activity_semester_year.sql', '007_activity_status.sql', '008_activity_times.sql', '009_activity_time_only.sql', '010_activity_progress_max.sql', '011_activity_plan_compat.sql', '012_activity_pending_status.sql', '013_plan_approval_stages.sql', '014_lecturer_department_links.sql', '004_allow_budget_detail_before_draft.sql', '015_activity_budget_approval.sql'];
+      ? ['003_legacy_sqlserver_compat.sql', '002_workflow_extensions.sql', '004_workflow_roles_status.sql', '005_activity_owner.sql', '006_activity_semester_year.sql', '007_activity_status.sql', '008_activity_times.sql', '009_activity_time_only.sql', '010_activity_progress_max.sql', '011_activity_plan_compat.sql', '012_activity_pending_status.sql', '013_plan_approval_stages.sql', '014_lecturer_department_links.sql', '015_activity_budget_approval.sql', '016_activity_plan_legacy_link.sql', '017_detailed_activity_plans.sql', '018_competition_round_workflow.sql', '019_proposal_signatures.sql', '020_workflow_publication_status.sql', '021_budget_line_status.sql', '022_plan_faculty_budget_note.sql', '023_department_competition_plans.sql', '024_department_board_activity_link.sql', '025_budget_request_changes.sql', '026_activity_scope_default.sql', '027_drop_activity_scope.sql', '028_activity_scope_default_nullable.sql', '029_activity_schedule_and_capacity_text.sql', '030_activity_budget_round_totals.sql', '031_budget_line_request_changes.sql', '032_annual_budget_estimates.sql']
+      : ['002_workflow_extensions.sql', '004_workflow_roles_status.sql', '005_activity_owner.sql', '006_activity_semester_year.sql', '007_activity_status.sql', '008_activity_times.sql', '009_activity_time_only.sql', '010_activity_progress_max.sql', '011_activity_plan_compat.sql', '012_activity_pending_status.sql', '013_plan_approval_stages.sql', '014_lecturer_department_links.sql', '004_allow_budget_detail_before_draft.sql', '015_activity_budget_approval.sql', '016_activity_plan_legacy_link.sql', '017_detailed_activity_plans.sql', '018_competition_round_workflow.sql', '019_proposal_signatures.sql', '020_workflow_publication_status.sql', '021_budget_line_status.sql', '022_plan_faculty_budget_note.sql', '023_department_competition_plans.sql', '024_department_board_activity_link.sql', '025_budget_request_changes.sql', '026_activity_scope_default.sql', '027_drop_activity_scope.sql', '028_activity_scope_default_nullable.sql', '029_activity_schedule_and_capacity_text.sql', '030_activity_budget_round_totals.sql', '031_budget_line_request_changes.sql', '032_annual_budget_estimates.sql'];
     for (const fileName of migrations) {
       const migration = path.resolve(__dirname, '../migrations', fileName);
       if (!fs.existsSync(migration)) continue;

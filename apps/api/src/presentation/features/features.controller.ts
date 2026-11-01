@@ -1,4 +1,4 @@
-import { Body, Controller, Get, Inject, Param, ParseIntPipe, Patch, Post, UseGuards } from '@nestjs/common';
+import { BadRequestException, Body, Controller, Get, Inject, Param, ParseIntPipe, Patch, Post, UseGuards } from '@nestjs/common';
 import { ApiBearerAuth, ApiCookieAuth, ApiOperation, ApiTags } from '@nestjs/swagger';
 import { FeaturesService } from '../../business/features/features.service';
 import { SessionGuard } from '../auth/auth.guards';
@@ -68,7 +68,7 @@ export class SeminarsController {
   @Post()
   @ApiOperation({ summary: 'Tạo seminar và hoạt động học thuật liên kết (cán bộ khoa/giảng viên)' })
   create(@Req() request: AuthRequest, @Body() dto: CreateSeminarDto) {
-    return this.service.createSeminar(request.auth!, dto);
+    void request; void dto; throw new BadRequestException('Lập đề xuất Seminar trong Hoạt động học thuật, bản chi phí và kế hoạch tổ chức; chỉ công bố sau khi khoa và CTSV ký');
   }
 
   @Get(':id')
