@@ -48,7 +48,7 @@ export default function LoginPage() {
     try {
       await login(username.trim(), password);
       setPassword("");
-      router.replace("/dashboard");
+      router.replace("/dashboard/news");
     } catch (cause) {
       setError(
         cause instanceof Error ? cause.message : "Đăng nhập không thành công.",

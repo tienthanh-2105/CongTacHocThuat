@@ -1292,9 +1292,55 @@ export class WorkflowService {
     } catch(error) { try{await tx.rollback();}catch{/* keep the original workflow error */} throw error; }
   }
   async publishPlanNews(context:SessionContext,planId:number) {
-    this.requireAcademicCoordinator(context);
+    this.require(context,['ADMIN','TRUONGKHOA','CANBOKHOA','GIANGVIEN']);
     await this.requireITPlan(planId);
-    throw new BadRequestException('Kế hoạch năm học chưa phải căn cứ công bố. Hãy lập kế hoạch chi tiết, xin chữ ký khoa và CTSV, rồi dùng /detailed-plans/:activityId/publish');
+    const plan=(await this.db.query<Record<string,unknown>>('SELECT * FROM KEHOACHHOCTHUAT WHERE MaKeHoach=@p1',[planId]))[0];
+    if(!plan) throw new NotFoundException('Không tìm thấy kế hoạch');
+    if(plan.TrangThai !== 'Đã duyệt') {
+      throw new BadRequestException('Chỉ kế hoạch đã được Trưởng khoa ký duyệt mới được đăng lên tin tức');
+    }
+    let activityId: number | null = null;
+    const linked=(await this.db.query<{MaHD:number}>(`SELECT TOP (1) h.MaHD FROM HOATDONGHOCTHUAT h
+      OUTER APPLY (SELECT TOP (1) p.MaKeHoachKhoa FROM KEHOACHCUOCTHIBOMON p WHERE p.MaHD=h.MaHD ORDER BY p.MaDeXuat DESC) departmentProposal
+      WHERE COALESCE(h.MaKeHoachKhoa,h.MaKeHoach)=@p1 OR departmentProposal.MaKeHoachKhoa=@p1 ORDER BY h.MaHD ASC`,[planId]))[0];
+    if (linked) {
+      activityId = Number(linked.MaHD);
+    } else {
+      const anyAct=(await this.db.query<{MaHD:number}>('SELECT TOP (1) MaHD FROM HOATDONGHOCTHUAT ORDER BY MaHD ASC'))[0];
+      if (anyAct) activityId = Number(anyAct.MaHD);
+    }
+    if (!activityId) throw new BadRequestException('Chưa có hoạt động học thuật nào để liên kết tin tức');
+
+    const tieuDe = `Kế hoạch hoạt động học thuật năm học ${plan.NamHoc ?? ''} - Khoa CNTT`.slice(0, 250);
+    const noiDung = [
+      `Kế hoạch công tác học thuật năm học ${plan.NamHoc ?? ''} của Khoa Công nghệ thông tin đã được Trưởng khoa ký duyệt ban hành.`,
+      `• Số kế hoạch: ${plan.SoKeHoach ?? 'Đang cập nhật'}`,
+      `• Tên kế hoạch: ${plan.TenKeHoach ?? ''}`,
+      plan.MucDich ? `• Mục đích: ${plan.MucDich}` : '',
+      plan.YeuCau ? `• Yêu cầu: ${plan.YeuCau}` : '',
+      plan.CanCu ? `• Căn cứ: ${plan.CanCu}` : '',
+      plan.KinhPhiTC ? `• Tổng kinh phí tổ chức dự kiến: ${Number(plan.KinhPhiTC).toLocaleString('vi-VN')} đ` : '',
+      '\nThông tin chi tiết và lịch trình từng hoạt động học thuật (seminar, cuộc thi, workshop) được công bố liên tục tại bảng tin này.'
+    ].filter(Boolean).join('\n');
+
+    const existing = (await this.db.query<{MaTin:number}>('SELECT TOP (1) MaTin FROM TINTUCHOCTHUAT WHERE MaHD=@p1 AND TieuDe=@p2',[activityId, tieuDe]))[0];
+    let maTin: number;
+    if (existing) {
+      maTin = Number(existing.MaTin);
+      await this.db.query(`UPDATE TINTUCHOCTHUAT SET NoiDung=@p2,TrangThai=N'Đã công bố',CongBoLuc=SYSDATETIMEOFFSET(),NgayCapNhat=SYSDATETIMEOFFSET() WHERE MaTin=@p1`,[maTin,noiDung]);
+    } else {
+      const inserted = (await this.db.query<{MaTin:number}>(`INSERT INTO TINTUCHOCTHUAT(MaHD,TieuDe,NoiDung,NguoiLap,TrangThai,CongBoLuc)
+        OUTPUT INSERTED.MaTin VALUES(@p1,@p2,@p3,@p4,N'Đã công bố',SYSDATETIMEOFFSET())`,
+        [activityId,tieuDe,noiDung,Number(context.userId)]))[0];
+      maTin = Number(inserted?.MaTin ?? 1);
+    }
+
+    await this.db.query(`INSERT INTO THONGBAO(MaTK,MaHD,Loai,TieuDe,NoiDung)
+      SELECT DISTINCT t.MaTK,@p1,N'Kế hoạch năm học',@p2,@p3
+      FROM TAIKHOAN t WHERE t.TrangThai=N'Hoạt động'
+        AND NOT EXISTS(SELECT 1 FROM THONGBAO old WHERE old.MaTK=t.MaTK AND old.Loai=N'Kế hoạch năm học' AND old.TieuDe=@p2)`);
+
+    return { maTin, maKeHoach: planId, message: `Đã đăng kế hoạch học thuật "${plan.TenKeHoach}" lên Tin tức & thông báo.` };
   }
   async publishPlanActivity(context:SessionContext,detailId:number) {
     this.require(context,['ADMIN','CANBOKHOA','TRUONGKHOA','GIANGVIEN']);
@@ -1579,8 +1625,16 @@ export class WorkflowService {
     } catch(error) { try{await tx.rollback();}catch{/* transaction has already rolled back */} throw error; }
   }
   async addSeminarMaterial(context:SessionContext,seminarId:number,dto:SeminarMaterialDto) {
-    this.require(context,['ADMIN','CAN_BO_KHOA','CANBOKHOA','GIANG_VIEN','GIANGVIEN']);
+    this.require(context,['ADMIN','CAN_BO_KHOA','CANBOKHOA','GIANG_VIEN','GIANGVIEN','TRUONGKHOA']);
     if(!(await this.db.query(`SELECT 1 AS ok FROM SEMINAR WHERE MaSeminar=@p1`,[seminarId])).length) throw new NotFoundException('Không tìm thấy seminar');
+    if (!/^https?:\/\//i.test(dto.urlTep)) throw new BadRequestException('Tài liệu phải có đường dẫn http hoặc https');
+    if (!context.user.roles.some(role => key(role)==='ADMIN')) {
+      const assigned = await this.db.query(`SELECT 1 AS ok FROM SEMINAR s WHERE s.MaSeminar=@p1 AND (
+        EXISTS(SELECT 1 FROM BANTOCHUC b JOIN TAIKHOAN t ON t.MaNgDung=b.MaNgDung WHERE b.MaHD=s.MaHD AND t.MaTK=@p2)
+        OR EXISTS(SELECT 1 FROM KEHOACHTOCHUC d CROSS APPLY OPENJSON(d.CacBan) WITH(loaiBan VARCHAR(30),thanhVien NVARCHAR(MAX) AS JSON) b
+          CROSS APPLY OPENJSON(b.thanhVien) WITH(maTK BIGINT) m WHERE d.MaHD=s.MaHD AND b.loaiBan='TO_CHUC' AND m.maTK=@p2))`,[seminarId,context.userId]);
+      if (!assigned.length) throw new ForbiddenException('Chỉ Ban tổ chức được phân công seminar này được thêm tài liệu');
+    }
     const rows=await this.db.query(`INSERT INTO TEPSEMINAR(MaSeminar,TenTep,UrlTep,LoaiTep) OUTPUT INSERTED.MaTep,INSERTED.TenTep,INSERTED.UrlTep,INSERTED.LoaiTep VALUES(@p1,@p2,@p3,@p4)`,[seminarId,dto.tenTep,dto.urlTep,dto.loaiTep??null]);
     if(!rows[0]) throw new NotFoundException('Không tìm thấy seminar'); return rows[0];
   }

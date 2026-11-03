@@ -1,4 +1,5 @@
-import Dashboard from "./Dashboard";
+import { redirect } from "next/navigation";
+
 export default function Page() {
-  return <Dashboard />;
+  redirect("/dashboard/news");
 }

@@ -1,0 +1,4 @@
+-- Committees and lecturer assignments are part of the signed plan snapshot.
+IF COL_LENGTH(N'dbo.KEHOACHTOCHUC',N'CacBan') IS NULL
+  ALTER TABLE dbo.KEHOACHTOCHUC ADD CacBan NVARCHAR(MAX) NOT NULL CONSTRAINT DF_KHTC_CACBAN DEFAULT N'[]'
+    CONSTRAINT CK_KHTC_CACBAN CHECK(ISJSON(CacBan)=1 AND LEFT(LTRIM(CacBan),1)=N'[');

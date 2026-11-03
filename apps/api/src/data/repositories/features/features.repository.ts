@@ -1,7 +1,7 @@
 import { Inject, Injectable } from '@nestjs/common';
 import sql from 'mssql';
 import { DatabaseService } from '../../database.service';
-import type { CreateExpenseDto, CreateSeminarDto } from '../../../presentation/features/features.dto';
+import type { CreateExpenseDto, CreateSeminarDto, UpdateSeminarDetailsDto } from '../../../presentation/features/features.dto';
 
 @Injectable()
 export class FeaturesRepository {
@@ -23,7 +23,7 @@ export class FeaturesRepository {
 
   async getMobileActivities(userId: string) {
     return this.db.query(
-      `SELECT dk.MaDK, dk.MaHD, h.TenHoatDong, h.MoTa, h.TgBatDau, h.TgKetThuc, h.DiaDiem,
+      `SELECT dk.MaDK, dk.MaHD, h.TenHoatDong, h.NoiDung AS MoTa, h.TgBatDau, h.TgKetThuc, h.DiaDiem,
               dk.NgayDK, dk.HinhThuc, dk.TrangThai, s.MaSeminar, s.ChuDe,
               c.MaCThi, c.TenCuocThi
        FROM TAIKHOAN a
@@ -67,10 +67,11 @@ export class FeaturesRepository {
 
   async listSeminars() {
     return this.db.query(
-      `SELECT TOP (100) s.MaSeminar, s.MaHD, s.ChuDe, s.NoiDung, s.DoiTuongTG, s.ThoiLuong,s.DienGia,s.ChuongTrinh,
-              s.DVChuTri, s.DVPhoiHop, h.TenHoatDong, h.NoiDung AS MoTa, h.TgDuKien, h.DiaDiem, h.SLSVDuKien, h.TrangThai,
+      `SELECT TOP (100) s.MaSeminar, s.MaHD, s.ChuDe, s.NoiDung, s.DoiTuongTG, s.ThoiLuong,s.ChuongTrinh,
+              s.DVChuTri, h.TenHoatDong, h.NoiDung AS MoTa, h.TgDuKien, h.DiaDiem, h.SLSVDuKien, h.TrangThai,d.ThoiGianBatDau,d.ThoiGianKetThuc,d.HanDangKy,
+              (SELECT c.DienGia as hoTen, c.TenChuDe as chuDeTrinhBay FROM CHUDE c WHERE c.MaSeminar=s.MaSeminar FOR JSON PATH) AS DienGia,
               (SELECT t.MaTep,t.TenTep,t.UrlTep,t.LoaiTep FROM TEPSEMINAR t WHERE t.MaSeminar=s.MaSeminar FOR JSON PATH) AS TaiLieu
-       FROM SEMINAR s JOIN HOATDONGHOCTHUAT h ON h.MaHD = s.MaHD
+       FROM SEMINAR s JOIN HOATDONGHOCTHUAT h ON h.MaHD = s.MaHD LEFT JOIN KEHOACHTOCHUC d ON d.MaHD=h.MaHD
        ORDER BY h.TgBatDau DESC`);
   }
 
@@ -78,11 +79,12 @@ export class FeaturesRepository {
     return this.db.query(
       `SELECT TOP (100) h.MaHD, h.TenHoatDong, h.NoiDung, h.TgDuKien,
               h.DiaDiem, h.SLSVDuKien, h.TrangThai,
-              c.MaCThi, c.TenCuocThi, c.HinhThucThi, c.TheLe,
+              c.MaCThi, c.TenCuocThi, c.HinhThucThi, c.TheLe,d.ThoiGianBatDau,d.ThoiGianKetThuc,d.HanDangKy,
               s.MaSeminar, s.ChuDe
        FROM HOATDONGHOCTHUAT h
        LEFT JOIN CUOCTHI c ON c.MaHD = h.MaHD
        LEFT JOIN SEMINAR s ON s.MaHD = h.MaHD
+       LEFT JOIN KEHOACHTOCHUC d ON d.MaHD=h.MaHD
        WHERE ISNULL(h.TrangThai,N'') <> N'Đã hủy'
        ORDER BY h.MaHD DESC`,
     );
@@ -90,9 +92,10 @@ export class FeaturesRepository {
 
   async findSeminar(id: number) {
     const rows = await this.db.query(
-      `SELECT s.MaSeminar, s.MaHD, s.ChuDe, s.NoiDung, s.DoiTuongTG, s.ThoiLuong,s.DienGia,s.ChuongTrinh,
-              s.DVChuTri, s.DVPhoiHop, h.TenHoatDong, h.MoTa, h.TgBatDau, h.TgKetThuc,
+      `SELECT s.MaSeminar, s.MaHD, s.ChuDe, s.NoiDung, s.DoiTuongTG, s.ThoiLuong,s.ChuongTrinh,
+              s.DVChuTri, h.TenHoatDong, h.NoiDung AS MoTa, h.TgBatDau, h.TgKetThuc,
               h.HanDangKy, h.DiaDiem, h.SLToiDa, h.TrangThai,
+              (SELECT c.DienGia as hoTen, c.TenChuDe as chuDeTrinhBay FROM CHUDE c WHERE c.MaSeminar=s.MaSeminar FOR JSON PATH) AS DienGia,
               (SELECT t.MaTep,t.TenTep,t.UrlTep,t.LoaiTep FROM TEPSEMINAR t WHERE t.MaSeminar=s.MaSeminar FOR JSON PATH) AS TaiLieu
        FROM SEMINAR s JOIN HOATDONGHOCTHUAT h ON h.MaHD = s.MaHD
        WHERE s.MaSeminar = @p1`, [id]);
@@ -102,6 +105,16 @@ export class FeaturesRepository {
   async findSeminarActivityId(id: number): Promise<number | null> {
     const rows = await this.db.query<{ MaHD: number }>('SELECT MaHD FROM SEMINAR WHERE MaSeminar = @p1', [id]);
     return rows[0]?.MaHD ?? null;
+  }
+  async updateSeminarDetails(accountId: string, admin: boolean, id: number, dto: UpdateSeminarDetailsDto) {
+    return (await this.db.query(`UPDATE s SET DVChuTri=COALESCE(@p4,s.DVChuTri),
+      ThoiLuong=COALESCE(@p5,s.ThoiLuong),ChuongTrinh=COALESCE(@p6,s.ChuongTrinh) OUTPUT INSERTED.*
+      FROM SEMINAR s WHERE s.MaSeminar=@p1 AND (@p3=1
+        OR EXISTS(SELECT 1 FROM BANTOCHUC b JOIN TAIKHOAN t ON t.MaNgDung=b.MaNgDung WHERE b.MaHD=s.MaHD AND t.MaTK=@p2)
+        OR EXISTS(SELECT 1 FROM KEHOACHTOCHUC d CROSS APPLY OPENJSON(d.CacBan) WITH(loaiBan VARCHAR(30),thanhVien NVARCHAR(MAX) AS JSON) b
+          CROSS APPLY OPENJSON(b.thanhVien) WITH(maTK BIGINT) m WHERE d.MaHD=s.MaHD AND b.loaiBan='TO_CHUC' AND m.maTK=@p2))`,
+      [id,accountId,admin ? 1 : 0,dto.dvChuTri?.trim() ?? null,dto.thoiLuong ?? null,
+        dto.chuongTrinh ? JSON.stringify(dto.chuongTrinh) : null]))[0] ?? null;
   }
 
   async activityExists(id: number): Promise<boolean> {
@@ -132,13 +145,11 @@ export class FeaturesRepository {
       seminarRequest.input('audience', sql.NVarChar(sql.MAX), dto.doiTuongTG ?? null);
       seminarRequest.input('duration', sql.Int, dto.thoiLuong ?? null);
       seminarRequest.input('hostUnit', sql.NVarChar(200), dto.dvChuTri ?? null);
-      seminarRequest.input('coordinator', sql.NVarChar(200), dto.dvPhoiHop ?? null);
-      seminarRequest.input('speakers', sql.NVarChar(sql.MAX), JSON.stringify(dto.dienGia ?? []));
       seminarRequest.input('agenda', sql.NVarChar(sql.MAX), JSON.stringify(dto.chuongTrinh ?? []));
       const seminar = await seminarRequest.query<{ MaSeminar: number }>(
-        `INSERT INTO SEMINAR(MaHD, ChuDe, NoiDung, DoiTuongTG, ThoiLuong, DVChuTri, DVPhoiHop,DienGia,ChuongTrinh)
+        `INSERT INTO SEMINAR(MaHD, ChuDe, NoiDung, DoiTuongTG, ThoiLuong, DVChuTri, ChuongTrinh)
          OUTPUT INSERTED.MaSeminar
-         VALUES(@activityId, @topic, @content, @audience, @duration, @hostUnit, @coordinator,@speakers,@agenda)`);
+         VALUES(@activityId, @topic, @content, @audience, @duration, @hostUnit, @agenda)`);
       const notificationRequest = new sql.Request(transaction);
       notificationRequest.input('activityId', sql.BigInt, maHD);
       notificationRequest.input('title', sql.NVarChar(250), dto.tenHoatDong);
@@ -183,8 +194,10 @@ export class FeaturesRepository {
       expenseRequest.input('accountId', sql.BigInt, accountId);
       expenseRequest.input('receipts', sql.NVarChar(sql.MAX), JSON.stringify(dto.chungTu ?? []));
       const expense = await expenseRequest.query<{ MaCP: number }>(
-        `INSERT INTO CHIPHITHUCTE(MaHD, MaHS, NoiDung, SoTien, NgChi, NguoiGhi, ChungTu)
-         OUTPUT INSERTED.MaCP VALUES(@activityId, @settlementId, @description, @amount, @spentOn, @accountId, @receipts)`);
+        `DECLARE @expenseKeys TABLE(MaCP BIGINT);
+         INSERT INTO CHIPHITHUCTE(MaHD, MaHS, NoiDung, SoTien, NgChi, NguoiGhi, ChungTu)
+         OUTPUT INSERTED.MaCP INTO @expenseKeys VALUES(@activityId, @settlementId, @description, @amount, @spentOn, @accountId, @receipts);
+         SELECT MaCP FROM @expenseKeys;`);
       await transaction.commit();
       return { maCP: expense.recordset[0].MaCP, maHS: settlementId, maHD: dto.maHD };
     } catch (error) {
@@ -205,7 +218,7 @@ export class FeaturesRepository {
        LEFT JOIN NGUOIDUNG nguoiDuyet ON nguoiDuyet.MaNgDung = tkDuyet.MaNgDung
        WHERE hs.MaHD = @p1 ORDER BY hs.MaHS DESC`, [activityId]);
     const expenses = await this.db.query(
-      `SELECT cp.MaCP, cp.MaHD, cp.NoiDung, cp.SoTien, cp.NgChi, cp.NguoiGhi,
+      `SELECT cp.MaCP, cp.MaHD, cp.NoiDung, cp.SoTien, cp.NgChi, cp.NguoiGhi,cp.ChungTu,
               nd.HoTen AS TenNguoiGhi
        FROM CHIPHITHUCTE cp
        LEFT JOIN TAIKHOAN tk ON tk.MaTK = cp.NguoiGhi

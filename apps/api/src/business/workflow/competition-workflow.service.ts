@@ -2,6 +2,8 @@ import { BadRequestException, ConflictException, ForbiddenException, Inject, Inj
 import { DatabaseService } from '../../data/database.service';
 import type { SessionContext } from '../auth/auth.types';
 import type { CompetitionAwardDto, CompetitionRoundDto, GradedCompetitionResultDto, RoundAssignmentDto, RoundExamDto, RoundRegistrationDto, RoundScoreDto, RoundStatusDto, RoundSubmissionDto } from '../../presentation/workflow/competition-workflow.dto';
+import { readPlanCommittees } from '../detailed-plans/plan-committees';
+import type { CompetitionTopicDto } from '../../presentation/workflow/competition-workflow.dto';
 
 type Row = Record<string, unknown>;
 type Competition = {MaCThi:number;MaHD:number;MaKhoa:number;TenCuocThi:string;TenHoatDong:string;TrangThai:string;TrangThaiKeHoach:string;HinhThucThi:string};
@@ -35,6 +37,8 @@ export class CompetitionWorkflowService {
     const assigned=await this.db.query(`SELECT TOP(1) t.MaTK FROM TAIKHOAN t
       LEFT JOIN CANBOKHOA cb ON cb.MaNgDung=t.MaNgDung
       WHERE t.MaTK=@p1 AND (EXISTS(SELECT 1 FROM BANTOCHUC b WHERE b.MaHD=@p2 AND b.MaNgDung=t.MaNgDung)
+      OR EXISTS(SELECT 1 FROM KEHOACHTOCHUC d CROSS APPLY OPENJSON(d.CacBan) WITH(loaiBan VARCHAR(30),thanhVien NVARCHAR(MAX) AS JSON) b
+        CROSS APPLY OPENJSON(b.thanhVien) WITH(maTK BIGINT) m WHERE d.MaHD=@p2 AND b.loaiBan='TO_CHUC' AND m.maTK=t.MaTK)
       OR (cb.MaKhoa=@p3 AND @p4=1))`,[context.userId,competition.MaHD,competition.MaKhoa,roles(context,['CANBOKHOA','TRUONGKHOA'])?1:0]);
     return Boolean(assigned.length);
   }
@@ -84,7 +88,7 @@ export class CompetitionWorkflowService {
     const competition=await this.scopeCompetition(id);
     const canOrganize=await this.organizer(context,competition);
     const registration=await this.studentRegistration(context,competition);
-    const [rounds,awards,results,staff,teams]=await Promise.all([
+    const [rounds,awards,results,staff,teams,plan,topics]=await Promise.all([
       this.db.query('SELECT * FROM VONGTHI WHERE MaCThi=@p1 ORDER BY ThuTu',[id]),
       this.db.query('SELECT * FROM GIAITHUONG WHERE MaCThi=@p1 ORDER BY MaGT',[id]),
       this.db.query(`SELECT k.*,COALESCE(gt.TenGT,k.TenGiai) AS TenGiaiThuong,d.TenDoi,n.HoTen,s.MSSV FROM KETQUAHOCTHUAT k
@@ -92,11 +96,36 @@ export class CompetitionWorkflowService {
         LEFT JOIN SINHVIEN s ON s.MaSV=dk.MaSV LEFT JOIN NGUOIDUNG n ON n.MaNgDung=s.MaNgDung
         WHERE k.MaCThi=@p1 AND (@p2=1 OR k.TrangThai=N'Đã công bố') ORDER BY k.XepHang,k.MaKQ`,[id,canOrganize?1:0]),
       canOrganize?this.db.query(`SELECT t.MaTK,n.HoTen,bm.TenBM FROM TAIKHOAN t JOIN NGUOIDUNG n ON n.MaNgDung=t.MaNgDung
-        JOIN GIANGVIEN gv ON gv.MaNgDung=n.MaNgDung JOIN BOMON bm ON bm.MaBM=gv.MaBM
-        WHERE bm.MaKhoa=@p1 AND t.TrangThai=N'Hoạt động' ORDER BY n.HoTen`,[competition.MaKhoa]):Promise.resolve([]),
+        JOIN GIANGVIEN gv ON gv.MaNgDung=n.MaNgDung LEFT JOIN BOMON bm ON bm.MaBM=gv.MaBM
+        WHERE t.TrangThai=N'Hoạt động' AND (bm.MaKhoa=@p1 OR EXISTS(SELECT 1 FROM GIANGVIEN_BOMON link
+          JOIN BOMON linked ON linked.MaBM=link.MaBM WHERE link.MaGV=gv.MaGV AND linked.MaKhoa=@p1)) ORDER BY n.HoTen`,[competition.MaKhoa]):Promise.resolve([]),
       registration?this.db.query(`SELECT d.MaDoi,d.TenDoi FROM DOITHI d JOIN THANHVIENDOI tv ON tv.MaDoi=d.MaDoi WHERE d.MaCThi=@p1 AND tv.MaSV=@p2`,[id,registration.MaSV]):Promise.resolve([]),
+      canOrganize ? this.db.query<{CacBan:string}>('SELECT CacBan FROM KEHOACHTOCHUC WHERE MaHD=@p1',[competition.MaHD]) : Promise.resolve([]),
+      this.db.query(`SELECT t.MaDeTai,t.MaDoi,t.MaDK,t.TenDeTai,t.LinhVuc,t.MoTa,t.GVHD,t.TrangThai,d.TenDoi,n.HoTen
+        FROM DETAI t LEFT JOIN DOITHI d ON d.MaDoi=t.MaDoi LEFT JOIN DKTHAMGIA dk ON dk.MaDK=t.MaDK
+        LEFT JOIN SINHVIEN sv ON sv.MaSV=dk.MaSV LEFT JOIN NGUOIDUNG n ON n.MaNgDung=sv.MaNgDung
+        WHERE t.MaCThi=@p1 ORDER BY t.MaDeTai DESC`,[id]),
     ]);
-    return {competition,rounds,awards,results,staff,teams,registration,canOrganize};
+    return {competition,rounds,awards,results,staff,teams,registration,canOrganize,topics,cacBan:readPlanCommittees(plan[0]?.CacBan)};
+  }
+  async createTopic(context: SessionContext, id: number, dto: CompetitionTopicDto) {
+    const competition = await this.scopeCompetition(id);
+    const registration = await this.studentRegistration(context,competition);
+    if (!registration) throw new ForbiddenException('Cần đăng ký dự thi trước khi đăng ký đề tài');
+    if (!dto.tenDeTai.trim()) throw new BadRequestException('Cần nhập tên đề tài');
+    const teams = await this.db.query<{MaDoi:number}>(`SELECT d.MaDoi FROM DOITHI d JOIN THANHVIENDOI tv ON tv.MaDoi=d.MaDoi
+      WHERE d.MaCThi=@p1 AND tv.MaSV=@p2`,[id,registration.MaSV]);
+    if (dto.maDoi && !teams.some(team => Number(team.MaDoi) === dto.maDoi)) throw new ForbiddenException('Bạn không thuộc đội của cuộc thi này');
+    if ((teams.length || competition.HinhThucThi === 'Theo đội') && !dto.maDoi) throw new BadRequestException('Chọn đội của bạn để đăng ký đề tài');
+    return (await this.db.query(`INSERT INTO DETAI(MaCThi,MaDK,MaDoi,TenDeTai,LinhVuc,MoTa,GVHD,TrangThai)
+      OUTPUT INSERTED.* VALUES(@p1,@p2,@p3,@p4,@p5,@p6,@p7,N'Đang thực hiện')`,
+      [id,dto.maDoi ? null : registration.MaDK,dto.maDoi ?? null,dto.tenDeTai.trim(),dto.linhVuc?.trim() || null,dto.moTa?.trim() || null,dto.gvhd?.trim() || '']))[0];
+  }
+  async topicStatus(context: SessionContext, id: number, status: string) {
+    const topic = (await this.db.query<{MaCThi:number}>('SELECT MaCThi FROM DETAI WHERE MaDeTai=@p1',[id]))[0];
+    if (!topic) throw new NotFoundException('Không tìm thấy đề tài');
+    await this.requireOrganizer(context,await this.scopeCompetition(topic.MaCThi));
+    return (await this.db.query('UPDATE DETAI SET TrangThai=@p2 OUTPUT INSERTED.* WHERE MaDeTai=@p1',[id,status]))[0];
   }
   async createRound(context:SessionContext,id:number,dto:CompetitionRoundDto) {
     const competition=await this.scopeCompetition(id); await this.requireOrganizer(context,competition);
@@ -108,9 +137,15 @@ export class CompetitionWorkflowService {
   async assignRound(context:SessionContext,id:number,dto:RoundAssignmentDto) {
     const {round,competition}=await this.roundScope(id); await this.requireOrganizer(context,competition);
     if(round.TrangThai!=='Chưa mở'||new Date(round.BatDauLuc).getTime()<=Date.now()) throw new BadRequestException('Chỉ phân công trước khi vòng thi bắt đầu');
-    const staff=await this.db.query(`SELECT t.MaTK FROM TAIKHOAN t JOIN GIANGVIEN gv ON gv.MaNgDung=t.MaNgDung JOIN BOMON bm ON bm.MaBM=gv.MaBM
-      WHERE t.MaTK=@p1 AND bm.MaKhoa=@p2 AND t.TrangThai=N'Hoạt động'`,[dto.maTK,competition.MaKhoa]);
+    const staff=await this.db.query(`SELECT t.MaTK FROM TAIKHOAN t JOIN GIANGVIEN gv ON gv.MaNgDung=t.MaNgDung LEFT JOIN BOMON bm ON bm.MaBM=gv.MaBM
+      WHERE t.MaTK=@p1 AND t.TrangThai=N'Hoạt động' AND (bm.MaKhoa=@p2 OR EXISTS(SELECT 1 FROM GIANGVIEN_BOMON link
+        JOIN BOMON linked ON linked.MaBM=link.MaBM WHERE link.MaGV=gv.MaGV AND linked.MaKhoa=@p2))`,[dto.maTK,competition.MaKhoa]);
     if(!staff.length) throw new BadRequestException('Chọn tài khoản giảng viên đang hoạt động của Khoa Công nghệ thông tin');
+    const plan=(await this.db.query<{CacBan:string}>('SELECT CacBan FROM KEHOACHTOCHUC WHERE MaHD=@p1',[competition.MaHD]))[0];
+    const committees=readPlanCommittees(plan?.CacBan);
+    const committeeType=dto.vaiTro==='RA_DE'?'DE_THI':'CHAM_THI';
+    const committee=committees.find(item=>item.loaiBan===committeeType);
+    if(committee && !committee.thanhVien.some(member=>member.maTK===dto.maTK)) throw new BadRequestException(dto.vaiTro==='RA_DE'?'Giảng viên phải thuộc Ban đề thi trong kế hoạch đã ký':'Giảng viên phải thuộc Ban giám khảo trong kế hoạch đã ký');
     return (await this.mutation(`INSERT INTO PHANCONGVONGTHI(MaVong,MaTK,VaiTro,NguoiPhanCong) OUTPUT INSERTED.* VALUES(@p1,@p2,@p3,@p4)`,[id,dto.maTK,dto.vaiTro,context.userId]))[0];
   }
   async setRoundStatus(context:SessionContext,id:number,dto:RoundStatusDto) {

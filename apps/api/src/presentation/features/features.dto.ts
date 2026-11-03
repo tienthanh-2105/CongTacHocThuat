@@ -78,3 +78,11 @@ export class CreateExpenseDto {
   @IsOptional() @IsArray() @ArrayMaxSize(20) @IsString({ each: true }) @MaxLength(2048, { each: true })
   chungTu?: string[];
 }
+
+export class UpdateSeminarDetailsDto {
+  @IsOptional() @IsString() @MaxLength(200) dvChuTri?: string;
+  @IsOptional() @IsString() @MaxLength(200) dvPhoiHop?: string;
+  @IsOptional() @Type(() => Number) @IsInt() @Min(1) @Max(1440) thoiLuong?: number;
+  @IsOptional() @IsArray() @ArrayMaxSize(30) @ValidateNested({ each: true }) @Type(() => SeminarSpeakerDto) dienGia?: SeminarSpeakerDto[];
+  @IsOptional() @IsArray() @ArrayMaxSize(100) @ValidateNested({ each: true }) @Type(() => SeminarAgendaItemDto) chuongTrinh?: SeminarAgendaItemDto[];
+}

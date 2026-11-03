@@ -1,0 +1,63 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 440 270" width="100%" height="100%">
+  <defs>
+    <radialGradient id="blueGlow" cx="50%" cy="50%" r="60%">
+      <stop offset="0%" stop-color="#1e40af" />
+      <stop offset="60%" stop-color="#0f172a" />
+      <stop offset="100%" stop-color="#020617" />
+    </radialGradient>
+    <linearGradient id="gold" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#fef08a" />
+      <stop offset="40%" stop-color="#facc15" />
+      <stop offset="70%" stop-color="#eab308" />
+      <stop offset="100%" stop-color="#ca8a04" />
+    </linearGradient>
+  </defs>
+
+  <!-- Background -->
+  <rect width="440" height="270" fill="url(#blueGlow)" />
+
+  <!-- Elegant Decorative Border -->
+  <rect x="15" y="15" width="410" height="240" rx="8" fill="none" stroke="url(#gold)" stroke-width="1.5" stroke-dasharray="8,4" opacity="0.6" />
+  <rect x="22" y="22" width="396" height="226" rx="6" fill="none" stroke="url(#gold)" stroke-width="0.8" opacity="0.4" />
+
+  <!-- Laurel Wreath Top -->
+  <g transform="translate(220, 50)" fill="url(#gold)">
+    <!-- Stars -->
+    <polygon points="0,-18 3,-9 12,-9 5,-3 8,6 0,1 -8,6 -5,-3 -12,-9 -3,-9" />
+    <polygon points="-24,-14 -22,-7 -15,-7 -20,-2 -18,5 -24,1 -30,5 -28,-2 -33,-7 -26,-7" />
+    <polygon points="24,-14 26,-7 33,-7 28,-2 30,5 24,1 18,5 20,-2 15,-7 22,-7" />
+
+    <!-- Left Wreath Leaf branch -->
+    <path d="M-15 0 C-35 -10 -55 5 -60 25 C-55 20 -40 10 -25 15 C-20 8 -17 3 -15 0 Z" opacity="0.8" />
+    <path d="M-30 8 C-45 5 -60 22 -62 38 C-56 32 -45 22 -35 25 Z" opacity="0.8" />
+    <!-- Right Wreath Leaf branch -->
+    <path d="M15 0 C35 -10 55 5 60 25 C55 20 40 10 25 15 C20 8 17 3 15 0 Z" opacity="0.8" />
+    <path d="M30 8 C45 5 60 22 62 38 C56 32 45 22 35 25 Z" opacity="0.8" />
+  </g>
+
+  <!-- Title: CHÚC MỪNG -->
+  <text x="220" y="85" font-family="system-ui, -apple-system, sans-serif" font-size="13" font-weight="800" fill="url(#gold)" text-anchor="middle" letter-spacing="3">
+    CHÚC MỪNG
+  </text>
+  <text x="220" y="112" font-family="system-ui, -apple-system, sans-serif" font-size="17" font-weight="900" fill="#ffffff" text-anchor="middle" letter-spacing="1">
+    GV NGUYỄN VĂN LẼ
+  </text>
+  <text x="220" y="132" font-family="system-ui, -apple-system, sans-serif" font-size="11" font-weight="600" fill="#93c5fd" text-anchor="middle">
+    KHOA CÔNG NGHỆ THÔNG TIN · HUIT
+  </text>
+
+  <!-- Central Badge: IEEE TKDE -->
+  <rect x="50" y="150" width="340" height="58" rx="6" fill="#0f172a" stroke="url(#gold)" stroke-width="1.2" opacity="0.9" />
+  <text x="220" y="174" font-family="system-ui, -apple-system, sans-serif" font-size="13" font-weight="800" fill="url(#gold)" text-anchor="middle" letter-spacing="0.5">
+    IEEE Transactions on
+  </text>
+  <text x="220" y="194" font-family="system-ui, -apple-system, sans-serif" font-size="12" font-weight="700" fill="#ffffff" text-anchor="middle" letter-spacing="0.3">
+    Knowledge and Data Engineering
+  </text>
+
+  <!-- Ranking tag -->
+  <rect x="130" y="222" width="180" height="24" rx="12" fill="#ca8a04" />
+  <text x="220" y="238" font-family="system-ui, -apple-system, sans-serif" font-size="10.5" font-weight="800" fill="#000000" text-anchor="middle" letter-spacing="0.5">
+    TOP TẠP CHÍ QUỐC TẾ Q1 (SCIE)
+  </text>
+</svg>

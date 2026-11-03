@@ -1,0 +1,12 @@
+-- Cho phép cột DienGia trong bảng CHUDE có giá trị NULL
+IF EXISTS (
+    SELECT 1 
+    FROM INFORMATION_SCHEMA.COLUMNS 
+    WHERE TABLE_SCHEMA = 'dbo' 
+      AND TABLE_NAME = 'CHUDE' 
+      AND COLUMN_NAME = 'DienGia'
+      AND IS_NULLABLE = 'NO'
+)
+BEGIN
+    ALTER TABLE dbo.CHUDE ALTER COLUMN DienGia NVARCHAR(150) NULL;
+END

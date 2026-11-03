@@ -1,5 +1,10 @@
 "use client";
 import OrganizationPanel from "./OrganizationPanel";
+import StudentParticipationPanel from "./StudentParticipationPanel";
+import NewsPanel from "./NewsPanel";
+import SeminarPanel from "./SeminarPanel";
+import SettlementPanel from "./SettlementPanel";
+import { workflowRequest } from "@/services/workflow";
 import { useEffect, useRef, useState } from "react";
 import { usePathname, useRouter } from "next/navigation";
 import { getCurrentUser, logout, type AuthUser } from "@/services/auth";
@@ -24,6 +29,13 @@ function HomeIcon() {
   return <svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">
     <path d="M2 10.6 11.3 2.7a1.1 1.1 0 0 1 1.4 0L17 6.3V3h3v5.9l2 1.7-1.5 1.8L12 5.2l-8.5 7.2L2 10.6Z" />
     <path d="m5 12.4 7-5.9 7 5.9V22h-5v-7h-4v7H5v-9.6Z" />
+  </svg>;
+}
+
+function NewsIcon() {
+  return <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+    <path d="M4 22h16a2 2 0 0 0 2-2V4a2 2 0 0 0-2-2H8a2 2 0 0 0-2 2v16a2 2 0 0 1-2 2Zm0 0a2 2 0 0 1-2-2v-9c0-1.1.9-2 2-2h2" />
+    <path d="M18 14h-8M15 18h-5M10 6h8v4h-8V6Z" />
   </svg>;
 }
 function Icon({ type = 0 }: { type?: number }) {
@@ -58,6 +70,9 @@ export default function Dashboard() {
   const [menu, setMenu] = useState(false);
   const [profile, setProfile] = useState(false);
   const [notifications, setNotifications] = useState(false);
+  const [notificationRows, setNotificationRows] = useState<{ MaThongBao: number; TieuDe: string }[]>([]);
+  const [notificationLoading, setNotificationLoading] = useState(false);
+  const [notificationError, setNotificationError] = useState("");
   const [query, setQuery] = useState("");
   const headerRef = useRef<HTMLElement>(null);
   const [accountView, setAccountView] = useState<"info" | "password" | null>(null);
@@ -68,7 +83,6 @@ export default function Dashboard() {
   const [routeExpenseActivity, setRouteExpenseActivity] = useState<{ id: number | null; name: string }>({ id: null, name: "" });
   useEffect(() => {
     let alive = true;
-    if (dashboardUserCache !== undefined) setUser(dashboardUserCache);
     const request = dashboardUserRequest ?? (dashboardUserRequest = getCurrentUser());
     request
       .then((value) => {
@@ -86,17 +100,33 @@ export default function Dashboard() {
     };
   }, [router, attempt]);
   useEffect(() => {
-    if (pathname !== "/dashboard/expenses") {
-      setRouteExpenseActivity({ id: null, name: "" });
+    let active = true;
+    queueMicrotask(() => {
+      if (!active) return;
+      if (pathname !== "/dashboard/expenses") { setRouteExpenseActivity({ id: null, name: "" }); return; }
+      const params = new URLSearchParams(window.location.search);
+      const activityId = Number(params.get("activityId"));
+      setRouteExpenseActivity({ id: Number.isSafeInteger(activityId) && activityId > 0 ? activityId : null, name: params.get("activityName") ?? "" });
+    });
+    return () => { active = false; };
+  }, [pathname]);
+  useEffect(() => {
+    if (pathname === "/dashboard" || pathname === "/dashboard/") {
+      router.replace("/dashboard/news");
       return;
     }
-    const params = new URLSearchParams(window.location.search);
-    const activityId = Number(params.get("activityId"));
-    setRouteExpenseActivity({
-      id: Number.isSafeInteger(activityId) && activityId > 0 ? activityId : null,
-      name: params.get("activityName") ?? "",
-    });
-  }, [pathname]);
+    const routeSection = pathname.startsWith("/dashboard/") ? pathname.slice("/dashboard/".length).split("/")[0] : "news";
+    if (routeSection === "detailed-plans" || routeSection === "detailed-plans-seminar" || routeSection === "detailed-plans-competition") {
+      router.replace("/dashboard/detailed-plans-all");
+      return;
+    }
+    const targetSection = sections.find((s) => s.id === routeSection);
+    if (targetSection?.parentId) {
+      setOpenParentId(targetSection.parentId);
+    } else if (sections.some((s) => s.parentId === routeSection)) {
+      setOpenParentId(routeSection);
+    }
+  }, [pathname, router]);
   useEffect(() => {
     const close = (event: KeyboardEvent) => {
       if (event.key === "Escape") {
@@ -158,7 +188,7 @@ export default function Dashboard() {
     }
     setAccountView(null);
     if (sections.some((section) => section.id === id)) {
-      const target = id === "overview" ? "/dashboard" : `/dashboard/${id}${search ? `?${search}` : ""}`;
+      const target = `/dashboard/${id}${search ? `?${search}` : ""}`;
       const current = `${pathname}${window.location.search}`;
       if (current !== target) router.push(target);
     }
@@ -174,7 +204,11 @@ export default function Dashboard() {
   function handleSidebarClick(item: DashboardSection) {
     const hasChildren = visibleSections.some((sub) => sub.parentId === item.id);
     if (hasChildren) {
-      setOpenParentId((prev) => (prev === item.id ? null : item.id));
+      const isAlreadyOpen = openParentId === item.id;
+      setOpenParentId(isAlreadyOpen ? null : item.id);
+      if (!isAlreadyOpen && item.id === "detailed-plans" && selected.parentId !== "detailed-plans") {
+        navigate("detailed-plans-all");
+      }
     } else {
       navigate(item.id);
     }
@@ -203,7 +237,7 @@ export default function Dashboard() {
   const facultyDean = user.roles.some((role) => role.normalize("NFD").replace(/[\u0300-\u036f]/g, "").replace(/[^a-z0-9]/gi, "").toUpperCase() === "TRUONGKHOA")
     || (user.position ?? "").normalize("NFD").replace(/[\u0300-\u036f]/g, "").replace(/[^a-z0-9]/gi, "").toUpperCase().startsWith("TRUONGKHOA");
   const visibleSections = sectionsForRoles(user.roles).filter((section) =>
-    (academicCoordinator || facultyDean || !["budget-estimates", "actual-expenses"].includes(section.id)) &&
+    (academicCoordinator || facultyDean || section.id !== "budget-estimates") &&
     (section.id !== "department-plans" ||
       (["Trưởng bộ môn", "Phụ trách bộ môn"].includes(user.position?.trim() ?? "") &&
         !user.roles.some((role) => ["TRUONGKHOA", "ADMIN"].includes(role.toUpperCase())) &&
@@ -212,10 +246,12 @@ export default function Dashboard() {
   if (!visibleSections.length) {
     return <main className={s.loading}><div><Icon type={1} /><h1>Tài khoản chưa được cấp quyền sử dụng chức năng web.</h1><button disabled={busy} onClick={signOut}>Đăng xuất</button></div></main>;
   }
-  const routeSection = pathname.startsWith("/dashboard/") ? pathname.slice("/dashboard/".length).split("/")[0] : "overview";
+  const routeSection = pathname.startsWith("/dashboard/") ? pathname.slice("/dashboard/".length).split("/")[0] : "news";
   const activeSectionId = visibleSections.some((item) => item.id === routeSection)
     ? routeSection
-    : visibleSections[0]?.id ?? "overview";
+    : visibleSections.some((item) => item.id === "news")
+    ? "news"
+    : visibleSections[0]?.id ?? "news";
   const selected = visibleSections.find((item) => item.id === activeSectionId)!;
   const matches = visibleSections.filter((item) =>
     item.title.toLocaleLowerCase("vi").includes(query.toLocaleLowerCase("vi")),
@@ -237,7 +273,7 @@ export default function Dashboard() {
           </div>
         </div>
         <nav aria-label="Chức năng hệ thống">
-          {visibleSections.filter((item) => item.id !== "detailed-plans").map((item, index) => {
+          {visibleSections.map((item, index) => {
             const isSub = Boolean(item.parentId);
             if (isSub && item.parentId !== openParentId && item.parentId !== selected.parentId) {
               return null;
@@ -255,6 +291,8 @@ export default function Dashboard() {
               >
                 {item.id === "overview" ? (
                   <HomeIcon />
+                ) : item.id === "news" ? (
+                  <NewsIcon />
                 ) : isSub ? null : (
                   <Icon type={index} />
                 )}
@@ -284,10 +322,6 @@ export default function Dashboard() {
             );
           })}
         </nav>
-        <div className={s.year}>
-          <small>HỌC KỲ ĐANG ÁP DỤNG · MINH HỌA</small>
-          <strong>Học kỳ 1 · 2026–2027</strong>
-        </div>
         <div className={s.sidebarFoot}>Nền tảng học thuật của khoa</div>
       </aside>
       <div className={s.workspace}>
@@ -329,8 +363,14 @@ export default function Dashboard() {
                 className={s.bell}
                 aria-label="Thông báo"
                 aria-expanded={notifications}
-                onClick={() => {
+                onClick={async () => {
                   setNotifications(!notifications);
+                  if (!notifications) {
+                    setNotificationLoading(true); setNotificationError("");
+                    try { setNotificationRows(await workflowRequest<typeof notificationRows>("/notifications/mine")); }
+                    catch { setNotificationError("Không tải được thông báo. Mở trang tin tức để thử lại."); }
+                    finally { setNotificationLoading(false); }
+                  }
                   setProfile(false);
                 }}
               >
@@ -345,7 +385,7 @@ export default function Dashboard() {
                 </svg><span className={s.bellLabel}>Thông báo</span>
               </button>
               {notifications && (
-                <div className={s.popup}><strong>Thông báo</strong><p>Chưa kết nối dữ liệu thông báo.</p><button onClick={() => { navigate("news"); setNotifications(false); }}>Xem tin tức & thông báo</button></div>
+                <div className={s.popup}><strong>Thông báo</strong>{notificationLoading ? <p>Đang tải…</p> : notificationError ? <p>{notificationError}</p> : notificationRows.length ? notificationRows.slice(0,5).map(item => <p key={item.MaThongBao}>{item.TieuDe}</p>) : <p>Chưa có thông báo.</p>}<button onClick={() => { navigate("news"); setNotifications(false); }}>Xem tin tức & thông báo</button></div>
               )}
             </div>
             <div className={s.popupWrap}>
@@ -426,8 +466,29 @@ export default function Dashboard() {
             <AcademicActivitiesPanel view="organizing" user={user} onNavigateTab={(tab) => navigate(tab === "activities" ? "academic-activities" : tab === "steering" ? "academic-steering" : tab === "organizing" ? "academic-organizing" : "academic-support")} />
           ) : activeSectionId === "academic-support" ? (
             <AcademicActivitiesPanel view="support" user={user} onNavigateTab={(tab) => navigate(tab === "activities" ? "academic-activities" : tab === "steering" ? "academic-steering" : tab === "organizing" ? "academic-organizing" : "academic-support")} />
+          ) : activeSectionId === "actual-expenses" ? (
+            <SettlementPanel user={user} />
+          ) : activeSectionId === "seminars" ? (
+            <SeminarPanel user={user} />
+          ) : activeSectionId === "news" ? (
+            <NewsPanel />
+          ) : user.roles.includes("SINHVIEN") && ["registrations", "support", "training-points"].includes(activeSectionId) ? (
+            <StudentParticipationPanel key={activeSectionId} section={activeSectionId} />
           ) : (
-            ["detailed-plans", "competitions", "results"].includes(activeSectionId) ? <OrganizationPanel key={activeSectionId} detailed={activeSectionId === "detailed-plans"} user={user} /> : <BusinessPanel sectionId={activeSectionId} user={user} initialActivityId={routeExpenseActivity.id ?? expenseActivityId} initialActivityName={routeExpenseActivity.id ? routeExpenseActivity.name : expenseActivityName} />
+            ["detailed-plans", "detailed-plans-all", "detailed-plans-seminar", "detailed-plans-competition", "detailed-plans-assignment", "competitions", "results"].includes(activeSectionId) ? (
+              <OrganizationPanel
+                key={activeSectionId}
+                detailed={["detailed-plans", "detailed-plans-all", "detailed-plans-seminar", "detailed-plans-competition", "detailed-plans-assignment"].includes(activeSectionId)}
+                filterType={
+                  activeSectionId === "detailed-plans-assignment" ? "Phân công thực hiện" :
+                  undefined
+                }
+                user={user}
+                onNavigateTab={(tab, activityId) => navigate(tab, activityId ? `activityId=${activityId}` : undefined)}
+              />
+            ) : (
+              <BusinessPanel sectionId={activeSectionId} user={user} initialActivityId={routeExpenseActivity.id ?? expenseActivityId} initialActivityName={routeExpenseActivity.id ? routeExpenseActivity.name : expenseActivityName} />
+            )
           )}
         </main>
       </div>

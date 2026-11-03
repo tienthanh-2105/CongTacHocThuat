@@ -3,6 +3,7 @@ dist/
 dist-test/
 .env
 *.log
+logs/
 backups/
 .next/
 .expo/

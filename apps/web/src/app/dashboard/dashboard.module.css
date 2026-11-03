@@ -1763,6 +1763,19 @@
   line-height: 1.2;
   transition: background 0.15s;
 }
+.planCommittees { grid-column: 1 / -1; min-width: 0; margin: 16px 0; padding: 16px; border: 1px solid #cfdae8; border-radius: 10px; }
+.planCommittees > legend { padding: 0 8px; color: #183d70; font-weight: 700; }
+.planCommittee { min-width: 0; margin: 14px 0; padding: 16px; border: 1px solid #dce6f3; border-radius: 8px; background: #f8fbff; }
+.planCommittee > legend, .planMember > legend { padding: 0 6px; font-weight: 600; color: #294766; }
+.planCommitteeFields { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 260px), 1fr)); gap: 14px; margin-bottom: 12px; }
+.planMember { min-width: 0; margin: 12px 0; padding: 12px; border: 1px solid #dce6f3; border-radius: 6px; background: #fff; }
+.planAssignmentTable { overflow-x: auto; }
+.planAssignmentTable table { width: 100%; min-width: 650px; border-collapse: collapse; font-size: 13px; }
+.planAssignmentTable caption { text-align: left; margin-bottom: 8px; }
+.planAssignmentTable th, .planAssignmentTable td { padding: 10px; border: 1px solid #cfdae8; text-align: left; vertical-align: top; }
+.planAssignmentTable th { background: #edf4ff; color: #1f456f; }
+.planTask { white-space: pre-wrap; overflow-wrap: anywhere; }
+
 .committeeActions {
   display: flex;
   justify-content: flex-end;

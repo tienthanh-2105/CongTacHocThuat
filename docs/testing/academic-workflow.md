@@ -10,6 +10,16 @@
 
 Điểm danh lấy mức điểm rèn luyện trong kế hoạch đã được CTSV ký, gửi chờ CTSV xác nhận. Các hồ sơ cũ giữ nguyên trạng thái và lịch sử; không tự động coi hồ sơ cũ là đã hoàn tất chữ ký mới.
 
+## Các ban và phân công trong kế hoạch chi tiết
+
+Trong **Kế hoạch tổ chức**, bộ môn thêm Ban tổ chức, Ban đề thi, Ban thư ký, Ban giám khảo, Ban hậu cần, Ban truyền thông hoặc ban khác. Mỗi ban có nhiệm vụ chung; từng giảng viên có vai trò, nhiệm vụ cụ thể, hạn hoàn thành và kết quả cần bàn giao. Một giảng viên có thể tham gia nhiều ban nhưng chỉ xuất hiện một lần trong mỗi ban.
+
+Lưu kế hoạch sẽ lưu cả danh sách ban và phân công. Trước khi trình ký, mỗi ban đã lập phải có giảng viên; cần Ban tổ chức cho mọi hoạt động và Ban đề thi cho cuộc thi. Chỉ chọn tài khoản giảng viên đang hoạt động thuộc khoa. Hồ sơ đang chờ ký hoặc đã duyệt khóa cả nội dung và phân công; yêu cầu bổ sung mở lại hồ sơ để chỉnh sửa và xin ký lại.
+
+Thành viên Ban tổ chức trong kế hoạch đã ký có quyền công bố và tổ chức chính cuộc thi đó. Khi phân công từng vòng, người ra đề phải thuộc Ban đề thi đã duyệt; nếu kế hoạch lập Ban giám khảo thì người chấm phải thuộc ban này. Hồ sơ cũ chưa có danh sách ban tiếp tục dùng phân quyền Ban tổ chức và phân công vòng thi hiện có; khi trình lại phải bổ sung các ban theo quy định trên.
+
+Migration `033_detailed_plan_committees.sql` bổ sung cột JSON `KEHOACHTOCHUC.CacBan`, giữ nguyên nội dung và chữ ký của các hồ sơ đã có.
+
 ## Kiểm tra
 
 `npm run test:unit` kiểm tra quyền, thứ tự ký, điều kiện mở đăng ký và các trường hợp chặn trong vòng thi.

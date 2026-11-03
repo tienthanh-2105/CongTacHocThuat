@@ -2,7 +2,7 @@ import { BadRequestException, ForbiddenException, Inject, Injectable, NotFoundEx
 import { FeaturesRepository } from '../../data/repositories/features/features.repository';
 import { RegistrationService } from '../registration/registration.service';
 import type { SessionContext } from '../auth/auth.types';
-import type { CreateExpenseDto, CreateSeminarDto } from '../../presentation/features/features.dto';
+import type { CreateExpenseDto, CreateSeminarDto, UpdateSeminarDetailsDto } from '../../presentation/features/features.dto';
 
 function roleKey(value: string): string {
   return value.normalize('NFD').replace(/[\u0300-\u036f]/g, '').toUpperCase().replace(/[^A-Z0-9]/g, '');
@@ -67,6 +67,12 @@ export class FeaturesService {
     const seminar = await this.repository.findSeminar(id);
     if (!seminar) throw new NotFoundException(`Không tìm thấy seminar ${id}`);
     return seminar;
+  }
+  async updateSeminar(context: SessionContext, id: number, dto: UpdateSeminarDetailsDto) {
+    this.requireRole(context,['ADMIN','GIANGVIEN','CANBOKHOA','TRUONGKHOA']);
+    const result = await this.repository.updateSeminarDetails(context.userId,context.user.roles.includes('ADMIN'),id,dto);
+    if (!result) throw new ForbiddenException('Chỉ Ban tổ chức được phân công seminar này được cập nhật thông tin');
+    return result;
   }
 
   async createSeminar(context: SessionContext, dto: CreateSeminarDto) {

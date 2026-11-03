@@ -37,6 +37,16 @@ export class CompetitionAwardDto {
   @IsOptional() @Type(() => Number) @IsNumber({maxDecimalPlaces:2}) @Min(0) tienThuong?: number;
   @IsOptional() @Type(() => Number) @IsInt() @Min(1) slGiai?: number;
 }
+export class CompetitionTopicDto {
+  @IsString() @IsNotEmpty() @MaxLength(250) tenDeTai!: string;
+  @IsOptional() @IsString() @MaxLength(200) linhVuc?: string;
+  @IsOptional() @IsString() @MaxLength(10000) moTa?: string;
+  @IsOptional() @IsString() @MaxLength(150) gvhd?: string;
+  @IsOptional() @Type(() => Number) @IsInt() @Min(1) maDoi?: number;
+}
+export class CompetitionTopicStatusDto {
+  @IsIn(['Đang thực hiện','Đã hoàn thành','Không đạt','Đã rút']) trangThai!: string;
+}
 export class GradedCompetitionResultDto {
   @Type(() => Number) @IsInt() @Min(1) maBai!: number;
   @IsOptional() @Type(() => Number) @IsInt() @Min(1) maGT?: number;

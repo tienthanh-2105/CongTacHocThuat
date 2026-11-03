@@ -1,0 +1,61 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 440 270" width="100%" height="100%">
+  <defs>
+    <linearGradient id="compBg" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#1e1b4b" />
+      <stop offset="50%" stop-color="#1e3a8a" />
+      <stop offset="100%" stop-color="#0f172a" />
+    </linearGradient>
+    <linearGradient id="goldComp" x1="0%" y1="0%" x2="100%" y2="0%">
+      <stop offset="0%" stop-color="#f59e0b" />
+      <stop offset="100%" stop-color="#fbbf24" />
+    </linearGradient>
+  </defs>
+
+  <rect width="440" height="270" fill="url(#compBg)" />
+
+  <!-- Trophy & Stage Glow -->
+  <circle cx="220" cy="115" r="75" fill="#f59e0b" opacity="0.12" filter="blur(15px)" />
+
+  <!-- University Header -->
+  <rect x="25" y="18" width="390" height="30" rx="6" fill="#0f172a" opacity="0.75" stroke="#334155" stroke-width="1" />
+  <text x="220" y="33" font-family="system-ui, -apple-system, sans-serif" font-size="9" font-weight="700" fill="#e2e8f0" text-anchor="middle" letter-spacing="0.8">
+    TRƯỜNG ĐẠI HỌC CÔNG THƯƠNG TP. HỒ CHÍ MINH (HUIT)
+  </text>
+  <text x="220" y="44" font-family="system-ui, -apple-system, sans-serif" font-size="8" font-weight="600" fill="#fbbf24" text-anchor="middle" letter-spacing="0.5">
+    KHOA CÔNG NGHỆ THÔNG TIN
+  </text>
+
+  <!-- Trophy Icon -->
+  <g transform="translate(195, 62)">
+    <path d="M12 8 C12 8 8 8 6 16 C4 24 10 28 14 28 L16 28 C18 36 28 42 34 42 C40 42 50 36 52 28 L54 28 C58 28 64 24 62 16 C60 8 56 8 56 8 Z" fill="url(#goldComp)" />
+    <path d="M28 42 L24 54 L44 54 L40 42 Z" fill="#d97706" />
+    <rect x="20" y="54" width="28" height="8" rx="2" fill="#78350f" />
+    <text x="34" y="26" font-family="sans-serif" font-size="12" font-weight="bold" fill="#78350f" text-anchor="middle">★</text>
+  </g>
+
+  <!-- Competition Title -->
+  <rect x="70" y="136" width="300" height="26" rx="13" fill="#ffffff" opacity="0.1" stroke="#f59e0b" stroke-width="1" />
+  <text x="220" y="153" font-family="system-ui, -apple-system, sans-serif" font-size="13" font-weight="800" fill="url(#goldComp)" text-anchor="middle" letter-spacing="1">
+    CUỘC THI HỌC THUẬT SINH VIÊN
+  </text>
+
+  <text x="220" y="180" font-family="system-ui, -apple-system, sans-serif" font-size="10" font-weight="600" fill="#e2e8f0" text-anchor="middle">
+    Sân chơi trí tuệ, sáng tạo và công nghệ
+  </text>
+
+  <text x="220" y="196" font-family="system-ui, -apple-system, sans-serif" font-size="8.5" fill="#94a3b8" text-anchor="middle">
+    Khám phá tiềm năng · Phát triển giải pháp công nghệ thông tin
+  </text>
+
+  <!-- Footer Tags -->
+  <rect x="25" y="224" width="390" height="26" rx="6" fill="#0f172a" opacity="0.6" />
+  <text x="45" y="241" font-family="system-ui, -apple-system, sans-serif" font-size="8.5" font-weight="600" fill="#cbd5e1">
+    🏆 GIẢI THƯỞNG HẤP DẪN
+  </text>
+  <text x="220" y="241" font-family="system-ui, -apple-system, sans-serif" font-size="8.5" font-weight="600" fill="#fbbf24" text-anchor="middle">
+    ★ CẤP KHOA &amp; TRƯỜNG
+  </text>
+  <text x="395" y="241" font-family="system-ui, -apple-system, sans-serif" font-size="8.5" font-weight="600" fill="#38bdf8" text-anchor="end">
+    HUIT IT CONTESTS
+  </text>
+</svg>

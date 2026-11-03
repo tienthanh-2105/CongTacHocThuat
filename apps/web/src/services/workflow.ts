@@ -30,10 +30,15 @@ export async function workflowRequest<T = unknown>(
         await new Promise((resolve) => setTimeout(resolve, 250));
         continue;
       }
-      const message = payload && typeof payload === "object" && "message" in payload
+      const rawMsg = payload && typeof payload === "object" && "message" in payload
         ? (payload as { message?: unknown }).message
         : null;
-      throw new Error(`${typeof message === "string" ? message : `Yêu cầu thất bại (${response.status})`} · ${method} ${path}`);
+      const message = Array.isArray(rawMsg)
+        ? rawMsg.join(", ")
+        : typeof rawMsg === "string"
+        ? rawMsg
+        : `Yêu cầu thất bại (${response.status})`;
+      throw new Error(`${message} · ${method} ${path}`);
     }
     return payload as T;
   }

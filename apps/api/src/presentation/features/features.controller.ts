@@ -4,7 +4,7 @@ import { FeaturesService } from '../../business/features/features.service';
 import { SessionGuard } from '../auth/auth.guards';
 import type { AuthRequest } from '../auth/auth.http';
 import { Req } from '@nestjs/common';
-import { CreateExpenseDto, CreateSeminarDto } from './features.dto';
+import { CreateExpenseDto, CreateSeminarDto, UpdateSeminarDetailsDto } from './features.dto';
 
 @ApiTags('mobile')
 @ApiBearerAuth()
@@ -74,6 +74,10 @@ export class SeminarsController {
   @Get(':id')
   @ApiOperation({ summary: 'Chi tiết seminar' })
   get(@Param('id', ParseIntPipe) id: number) { return this.service.getSeminar(id); }
+  @Patch(':id')
+  update(@Req() request: AuthRequest, @Param('id', ParseIntPipe) id: number, @Body() dto: UpdateSeminarDetailsDto) {
+    return this.service.updateSeminar(request.auth!, id, dto);
+  }
 
   @Post(':id/register')
   @ApiOperation({ summary: 'Sinh viên đăng ký tham gia seminar' })

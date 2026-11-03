@@ -528,12 +528,12 @@ function budgetEstimatePdfDocument(detail: { header: Row; lines: Row[] }) {
   return `<!doctype html><html lang="vi"><head><meta charset="utf-8"/><title>Du-tru-kinh-phi-${escapeHtml(label(header, "MaDuTruKP"))}</title>
     <style>
       @page{size:A4 portrait;margin:25.4mm 15mm}*{box-sizing:border-box}body{font-family:"Times New Roman",Times,serif;color:#111;font-size:12pt;line-height:1.25;margin:0}
-      .letterhead{display:grid;grid-template-columns:1fr 1fr;gap:5mm;text-align:center;line-height:1.25}.letterhead strong{display:block}.faculty{text-decoration:underline;text-underline-offset:2px}.documentNumber,.dateLine{margin-top:7mm;white-space:nowrap}.dateLine{font-style:italic;font-size:11pt}.title{text-align:center;font-size:13pt;font-weight:bold;text-transform:uppercase;margin:9mm 0 1mm}.year{text-align:center;margin:0 0 6mm}
+      .letterhead{display:grid;grid-template-columns:74mm minmax(0,1fr);gap:6mm;text-align:center;line-height:1.25}.letterheadBlock{display:grid;grid-template-rows:16mm auto}.letterheadHeading{min-height:16mm;white-space:nowrap}.letterhead strong{display:block}.faculty{text-decoration:underline;text-underline-offset:2px}.documentNumber,.dateLine{margin-top:7mm;white-space:nowrap}.dateLine{font-style:italic;font-size:11pt}.title{text-align:center;font-size:13pt;font-weight:bold;text-transform:uppercase;margin:9mm 0 1mm}.year{text-align:center;margin:0 0 6mm}
       table{width:100%;border-collapse:collapse;table-layout:fixed;margin:0 0 5mm}col:nth-child(1){width:8.8%}col:nth-child(2){width:10.6%}col:nth-child(3){width:19.3%}col:nth-child(4){width:35.3%}col:nth-child(5){width:16.3%}col:nth-child(6){width:9.7%}
       th,td{border:1px solid #111;padding:4px 5px;text-align:left;vertical-align:top;overflow-wrap:anywhere;font-size:12pt}th{font-weight:bold}.roundTotal th{font-weight:normal}.roundTotal td,.grandTotal td,.grandTotal th,.sourceTotal td,.sourceTotal th{font-weight:bold}.aggregateTable{margin-top:3mm}.signatures{display:grid;grid-template-columns:repeat(5,minmax(0,1fr));gap:2mm;margin-top:16mm;text-align:center;break-inside:avoid}.signatures strong{font-size:12pt}.signatureGap{height:22mm}.signatureNote{font-size:10pt;font-style:italic}
       @media print{thead{display:table-header-group}tfoot{display:table-row-group}tr{break-inside:avoid}.activityTable{break-inside:auto}.signatures{break-inside:avoid}}
     </style></head><body>
-      <div class="letterhead"><div><div>TRƯỜNG ĐẠI HỌC CÔNG THƯƠNG<br/>THÀNH PHỐ HỒ CHÍ MINH</div><strong class="faculty">KHOA CÔNG NGHỆ THÔNG TIN</strong><p class="documentNumber">Số: ${escapeHtml(label(header, "MaDuTruKP"))}</p></div><div><strong>CỘNG HÒA XÃ HỘI CHỦ NGHĨA VIỆT NAM</strong><strong class="faculty">Độc lập – Tự do – Hạnh phúc</strong><p class="dateLine">${escapeHtml(dateLine)}</p></div></div>
+      <div class="letterhead"><div class="letterheadBlock"><div class="letterheadHeading">TRƯỜNG ĐẠI HỌC CÔNG THƯƠNG<br/>THÀNH PHỐ HỒ CHÍ MINH<strong class="faculty">KHOA CÔNG NGHỆ THÔNG TIN</strong></div><p class="documentNumber">Số: ${escapeHtml(label(header, "MaDuTruKP"))}</p></div><div class="letterheadBlock"><div class="letterheadHeading"><strong>CỘNG HÒA XÃ HỘI CHỦ NGHĨA VIỆT NAM</strong><strong class="faculty">Độc lập – Tự do – Hạnh phúc</strong></div><p class="dateLine">${escapeHtml(dateLine)}</p></div></div>
       <h1 class="title">${escapeHtml(label(header, "TenTieuDe") || "Dự trù kinh phí hoạt động học thuật")}</h1>
       <p class="year">Năm học: ${escapeHtml(label(header, "NamHoc"))}</p>
       ${activityTables || "<p>Hồ sơ chưa có khoản kinh phí hoạt động.</p>"}
@@ -1499,6 +1499,7 @@ export default function BusinessPanel({ sectionId, user, initialActivityId, init
                   {canManagePlans && ["Dự thảo", "Cần bổ sung"].includes(status) && <button type="button" className={s.dangerButton} disabled={busy} onClick={() => void deletePlan(id, label(row, "TenKeHoach"))}>Xóa</button>}
                   {canApprove && <button type="button" className={s.secondaryButton} disabled={busy} onClick={() => void run(`/plans/${id}/review`, "PATCH", { action: "approve" }, "Đã duyệt kế hoạch.")}>Duyệt</button>}
                   {status === "Đã duyệt" && <button type="button" className={s.secondaryButton} onClick={() => void exportApprovedPlan(id)}>Xuất</button>}
+                  {status === "Đã duyệt" && <button type="button" className={s.secondaryButton} disabled={busy} onClick={() => void run(`/plans/${id}/publish-news`, "POST", {}, `Đã đăng kế hoạch "${label(row, "TenKeHoach")}" lên Tin tức & thông báo.`)}>Đăng lên tin tức</button>}
                 </div>
               </div>
             </article>;
@@ -1587,6 +1588,7 @@ export default function BusinessPanel({ sectionId, user, initialActivityId, init
                 if (exportAnnualPlanPdf(detail, planLinkedActivities, visibleLegacyPlanActivities, Array.isArray(readValue(detail, "deXuatBoMon")) ? readValue(detail, "deXuatBoMon") as Row[] : [])) setNotice("Đã mở bản in kế hoạch. Trong hộp thoại in, chọn ‘Save as PDF’ hoặc ‘Lưu dưới dạng PDF’ để tải tệp.");
                 else setError("Trình duyệt đã chặn cửa sổ xuất PDF. Hãy cho phép cửa sổ bật lên rồi thử lại.");
               }}>Xuất kế hoạch PDF</button>}
+              {planStatus === "Đã duyệt" && <button type="button" className={s.secondaryButton} disabled={busy} onClick={() => void run(`/plans/${selectedId}/publish-news`, "POST", {}, `Đã đăng kế hoạch "${label(detail, "TenKeHoach")}" lên Tin tức & thông báo.`)}>📢 Đăng lên tin tức</button>}
 
             </div>
           </section>

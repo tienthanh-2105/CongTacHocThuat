@@ -3,9 +3,12 @@ import { NestFactory } from "@nestjs/core";
 import { ConfigService } from "@nestjs/config";
 import { ValidationPipe } from "@nestjs/common";
 import { SwaggerModule, DocumentBuilder } from "@nestjs/swagger";
+import type { NestExpressApplication } from "@nestjs/platform-express";
 import { AppModule } from "./app.module";
 async function bootstrap() {
-  const app = await NestFactory.create(AppModule);
+  const app = await NestFactory.create<NestExpressApplication>(AppModule, { bodyParser: false });
+  app.useBodyParser("json", { limit: "50mb" });
+  app.useBodyParser("urlencoded", { extended: true, limit: "50mb" });
   const config = app.get(ConfigService);
   app.setGlobalPrefix("api/v1");
   app.enableCors({

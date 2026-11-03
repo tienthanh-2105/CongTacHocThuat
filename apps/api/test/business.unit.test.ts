@@ -17,6 +17,25 @@ import { detailedPlanReviewStage, validateDetailedPlanDates } from '../src/busin
 import { requireOpenRegistration } from '../src/business/registration/registration-policy';
 import { CompetitionWorkflowService } from '../src/business/workflow/competition-workflow.service';
 import { DepartmentPlansService } from '../src/business/workflow/department-plans.service';
+import { validatePlanCommittees } from '../src/business/detailed-plans/plan-committees';
+import type { PlanCommitteeDto } from '../src/presentation/detailed-plans/detailed-plans.dto';
+
+test('Kế hoạch chi tiết: kiểm tra ban và giảng viên trước khi trình ký', () => {
+  const organizer: PlanCommitteeDto = { loaiBan: 'TO_CHUC', tenBan: 'Ban tổ chức', thanhVien: [
+    { maTK: 17, vaiTro: 'Trưởng ban', nhiemVu: 'Công bố kế hoạch và tổ chức cuộc thi' },
+  ] };
+  const exam: PlanCommitteeDto = { loaiBan: 'DE_THI', tenBan: 'Ban đề thi', thanhVien: [
+    { maTK: 18, vaiTro: 'Thành viên', nhiemVu: 'Soạn đề sơ loại' },
+  ] };
+  assert.doesNotThrow(() => validatePlanCommittees([], [17,18]));
+  assert.doesNotThrow(() => validatePlanCommittees([organizer], [17,18], true, false));
+  assert.throws(() => validatePlanCommittees([organizer], [17,18], true, true), isHttpStatus(400));
+  assert.doesNotThrow(() => validatePlanCommittees([organizer,exam], [17,18], true, true));
+  assert.throws(() => validatePlanCommittees([organizer,exam], [17], true, true), isHttpStatus(400));
+  assert.throws(() => validatePlanCommittees([organizer,{ ...exam, thanhVien: [] }], [17,18], true, true), isHttpStatus(400));
+  assert.throws(() => validatePlanCommittees([{ ...organizer, thanhVien: [...organizer.thanhVien,...organizer.thanhVien] }], [17]), isHttpStatus(400));
+  assert.throws(() => validatePlanCommittees([organizer,{ ...organizer,tenBan:'Điều hành' }], [17]), isHttpStatus(400));
+});
 
 test('Đề xuất bộ môn: quyền Trưởng bộ môn đã lưu ở chức vụ, không cấp cho Trưởng khoa và Phó khoa', async () => {
   const memberships = [{ MaBM: 2, TenBM: 'Hệ thống thông tin', VaiTro: 'Trưởng bộ môn' }];
@@ -39,6 +58,10 @@ const isHttpStatus = (status: number) => (error: unknown) =>
   error instanceof HttpException && error.getStatus() === status;
 
 test('Quy trình ký chi tiết và điều kiện mở đăng ký', () => {
+  assert.deepEqual(detailedPlanReviewStage('Chờ khoa xét duyệt',['TRUONGKHOA'],'approve'),{stage:'faculty',status:'Đã duyệt'});
+  assert.deepEqual(detailedPlanReviewStage('Chờ khoa xét duyệt',['CANBOKHOA'],'approve'),{stage:'faculty',status:'Đã duyệt'});
+  assert.deepEqual(detailedPlanReviewStage('Chờ khoa xét duyệt',['ADMIN'],'approve'),{stage:'faculty',status:'Đã duyệt'});
+  assert.throws(()=>detailedPlanReviewStage('Chờ khoa xét duyệt',['GIANGVIEN'],'approve'),isHttpStatus(403));
   assert.deepEqual(detailedPlanReviewStage('Chờ khoa ký',['TRUONGKHOA'],'approve'),{stage:'faculty',status:'Chờ CTSV ký'});
   assert.deepEqual(detailedPlanReviewStage('Chờ CTSV ký',['PHONGCTSV'],'approve'),{stage:'student-affairs',status:'Đã duyệt'});
   assert.throws(()=>detailedPlanReviewStage('Chờ khoa ký',['PHONGCTSV'],'approve'),isHttpStatus(403));

@@ -2,6 +2,8 @@ import { CompetitionWorkflowService } from '../business/workflow/competition-wor
 import { CompetitionWorkflowController } from '../presentation/workflow/competition-workflow.controller';
 import { DepartmentPlansService } from '../business/workflow/department-plans.service';
 import { DepartmentPlansController } from '../presentation/workflow/department-plans.controller';
+import { NewsService } from '../business/workflow/news.service';
+import { NewsController } from '../presentation/workflow/news.controller';
 import { Module } from '@nestjs/common';
 import { AuthModule } from './auth.module';
 import { RegistrationModule } from './registration.module';
@@ -16,7 +18,7 @@ import { AcademicActivitiesController, ActivityChangesController, AdminAccountsC
 
 @Module({
   imports: [DatabaseModule, AuthModule, RegistrationModule],
-  controllers: [DepartmentPlansController, CompetitionWorkflowController, MobileController, NotificationsController, UserNotificationsController, ActivitiesController, WaitlistController, ActivityChangesController, SeminarsController, SeminarMaterialsController, ExpensesController, SettlementsController, ReportsController, PlansController, CompetitionRoundsController, SubmissionsController, CompetitionResultsController, TrainingPointsController, AttendanceController, SummaryReportsController, AdminAccountsController, AcademicActivitiesController, DetailedPlansController],
-  providers: [DepartmentPlansService, CompetitionWorkflowService, FeaturesRepository, FeaturesService, WorkflowService, DetailedPlansService],
+  controllers: [NewsController, DepartmentPlansController, CompetitionWorkflowController, MobileController, NotificationsController, UserNotificationsController, ActivitiesController, WaitlistController, ActivityChangesController, SeminarsController, SeminarMaterialsController, ExpensesController, SettlementsController, ReportsController, PlansController, CompetitionRoundsController, SubmissionsController, CompetitionResultsController, TrainingPointsController, AttendanceController, SummaryReportsController, AdminAccountsController, AcademicActivitiesController, DetailedPlansController],
+  providers: [NewsService, DepartmentPlansService, CompetitionWorkflowService, FeaturesRepository, FeaturesService, WorkflowService, DetailedPlansService],
 })
 export class FeaturesModule {}

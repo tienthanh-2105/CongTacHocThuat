@@ -31,8 +31,8 @@ Script đăng nhập từng tài khoản, mở các mục được cấp trong m
 | USER-01 | Tài khoản và hồ sơ | Tạo hồ sơ sinh viên, tạo/liên kết tài khoản, đổi mật khẩu, ngừng/hoạt động lại tài khoản | MSSV và tài khoản liên kết đúng một hồ sơ; đăng nhập theo trạng thái; tài khoản không hoạt động không được cấp phiên |
 | CLASS-01 | Lớp và hồ sơ cán bộ | Tạo/sửa lớp, tạo/sửa hồ sơ cán bộ và gán bộ môn | Khóa ngoại hợp lệ; danh sách lớp, khoa và bộ môn hiển thị chính xác |
 | PLAN-01 | Lập kế hoạch | Tạo kế hoạch năm học, thêm cuộc thi/seminar và dự toán, gửi duyệt | Kế hoạch và các hoạt động con được lưu, trạng thái chuyển sang chờ duyệt |
-| PLAN-02 | Duyệt kế hoạch | Duyệt lần lượt Trưởng khoa → Phòng KHCN → Ban giám hiệu; thử yêu cầu bổ sung/từ chối | Chỉ vai trò đúng duyệt được bước hiện tại; lưu người duyệt, thời điểm, ghi chú và lịch sử |
-| ACT-01 | Hoạt động chi tiết | Tạo hoạt động, gửi khoa duyệt, kiểm tra trạng thái trước/sau duyệt | Không công bố hoặc mở đăng ký trước khi đủ các bước duyệt nghiệp vụ |
+| PLAN-02 | Duyệt kế hoạch | Phụ trách bộ môn chuyển đề xuất; Trưởng ban học thuật tổng hợp; Trưởng khoa ký kế hoạch chung; thử yêu cầu bổ sung/từ chối | Chỉ vai trò đúng duyệt được bước hiện tại; lưu người duyệt, thời điểm, ghi chú và lịch sử |
+| ACT-01 | Kế hoạch tổ chức chi tiết | Lập các ban và phân công giảng viên; trình khoa ký rồi CTSV ký; Ban tổ chức công bố | Không sửa nội dung/phân công khi đang chờ ký; không công bố hoặc mở đăng ký khi thiếu chữ ký; mức DRL lấy từ kế hoạch CTSV đã ký |
 | BUD-01 | Dự trù kinh phí | Thêm nhiều khoản cho một hoạt động; gửi khoa duyệt; duyệt/từ chối; tải file dự trù | Tổng tiền bằng tổng các khoản; trạng thái và người duyệt đúng; file chỉ gồm hồ sơ cần tổng hợp |
 | SET-01 | Quyết toán | Ghi hóa đơn/chi phí thực tế; gửi hồ sơ; duyệt; thử chi vượt dự toán | Hồ sơ tổng hợp đúng hoạt động; chi phí vượt giới hạn bị chặn hoặc báo rõ theo quy định |
 | SEM-01 | Seminar | Tạo seminar đủ chủ đề, nội dung, đơn vị/người chủ trì, diễn giả, chương trình và tài liệu; mở lại chi tiết | Dữ liệu nhập được lưu và hiển thị lại; thiếu trường bắt buộc bị báo rõ; không tự công bố khi chưa duyệt |

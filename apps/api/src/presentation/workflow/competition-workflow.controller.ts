@@ -4,6 +4,7 @@ import { SessionGuard } from '../auth/auth.guards';
 import type { AuthRequest } from '../auth/auth.http';
 import { CompetitionWorkflowService } from '../../business/workflow/competition-workflow.service';
 import { CompetitionAwardDto, CompetitionRoundDto, GradedCompetitionResultDto, RoundAssignmentDto, RoundExamDto, RoundRegistrationDto, RoundScoreDto, RoundStatusDto, RoundSubmissionDto } from './competition-workflow.dto';
+import { CompetitionTopicDto, CompetitionTopicStatusDto } from './competition-workflow.dto';
 
 @ApiTags('competition-workflow') @ApiBearerAuth() @ApiCookieAuth() @UseGuards(SessionGuard)
 @Controller('competition-workflow')
@@ -11,6 +12,8 @@ export class CompetitionWorkflowController {
   constructor(@Inject(CompetitionWorkflowService) private readonly service: CompetitionWorkflowService) {}
   @Get('competitions') competitions(@Req() r:AuthRequest){return this.service.competitions(r.auth!);}
   @Get('competitions/:id') competition(@Req() r:AuthRequest,@Param('id',ParseIntPipe) id:number){return this.service.competition(r.auth!,id);}
+  @Post('competitions/:id/topics') topic(@Req() r:AuthRequest,@Param('id',ParseIntPipe) id:number,@Body() dto:CompetitionTopicDto){return this.service.createTopic(r.auth!,id,dto);}
+  @Patch('topics/:id/status') topicStatus(@Req() r:AuthRequest,@Param('id',ParseIntPipe) id:number,@Body() dto:CompetitionTopicStatusDto){return this.service.topicStatus(r.auth!,id,dto.trangThai);}
   @Post('competitions/:id/rounds') createRound(@Req() r:AuthRequest,@Param('id',ParseIntPipe) id:number,@Body() dto:CompetitionRoundDto){return this.service.createRound(r.auth!,id,dto);}
   @Post('competitions/:id/awards') award(@Req() r:AuthRequest,@Param('id',ParseIntPipe) id:number,@Body() dto:CompetitionAwardDto){return this.service.createAward(r.auth!,id,dto);}
   @Post('competitions/:id/results') result(@Req() r:AuthRequest,@Param('id',ParseIntPipe) id:number,@Body() dto:GradedCompetitionResultDto){return this.service.createResult(r.auth!,id,dto);}
