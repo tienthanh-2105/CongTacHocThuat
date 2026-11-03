@@ -692,11 +692,11 @@ export function CompetitionPlanEditor({
           <table style={{ width: "100%", borderCollapse: "collapse", background: "#ffffff", borderRadius: "6px", overflow: "hidden", border: "1px solid #e2e8f0" }}>
             <thead>
               <tr style={{ background: "#f1f5f9", borderBottom: "1px solid #e2e8f0", fontSize: "13px" }}>
-                <th style={{ padding: "10px 12px", width: "60px", textAlign: "center", fontWeight: 700, color: "#475569" }}>STT</th>
+                <th style={{ padding: "10px 12px", width: "50px", textAlign: "center", fontWeight: 700, color: "#475569" }}>STT</th>
                 <th style={{ padding: "10px 12px", textAlign: "left", fontWeight: 700, color: "#475569" }}>Nội dung thực hiện</th>
-                <th style={{ padding: "10px 12px", width: "180px", textAlign: "left", fontWeight: 700, color: "#475569" }}>Thời gian hoàn thành</th>
+                <th style={{ padding: "10px 12px", width: "270px", textAlign: "left", fontWeight: 700, color: "#475569" }}>Thời gian hoàn thành</th>
                 <th style={{ padding: "10px 12px", width: "270px", textAlign: "left", fontWeight: 700, color: "#475569" }}>Người thực hiện</th>
-                <th style={{ padding: "10px 12px", width: "60px", textAlign: "center", fontWeight: 700, color: "#475569" }}>Xóa</th>
+                <th style={{ padding: "10px 12px", width: "50px", textAlign: "center", fontWeight: 700, color: "#475569" }}>Xóa</th>
               </tr>
             </thead>
             <tbody>
@@ -980,9 +980,9 @@ export function CompetitionPlanView({ selected }: { selected: Row }) {
             <table style={{ width: "100%", borderCollapse: "collapse", background: "#ffffff", borderRadius: "6px", overflow: "hidden", border: "1px solid #e2e8f0" }}>
               <thead>
                 <tr style={{ background: "#f1f5f9", borderBottom: "1px solid #e2e8f0", fontSize: "13px" }}>
-                  <th style={{ padding: "10px 12px", width: "60px", textAlign: "center", fontWeight: 700, color: "#475569" }}>STT</th>
+                  <th style={{ padding: "10px 12px", width: "50px", textAlign: "center", fontWeight: 700, color: "#475569" }}>STT</th>
                   <th style={{ padding: "10px 12px", textAlign: "left", fontWeight: 700, color: "#475569" }}>Nội dung thực hiện</th>
-                  <th style={{ padding: "10px 12px", width: "180px", textAlign: "left", fontWeight: 700, color: "#475569" }}>Thời gian hoàn thành</th>
+                  <th style={{ padding: "10px 12px", width: "270px", textAlign: "left", fontWeight: 700, color: "#475569" }}>Thời gian hoàn thành</th>
                   <th style={{ padding: "10px 12px", width: "270px", textAlign: "left", fontWeight: 700, color: "#475569" }}>Người thực hiện</th>
                 </tr>
               </thead>

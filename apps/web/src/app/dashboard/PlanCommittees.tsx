@@ -323,9 +323,9 @@ export function PlanCommitteesSummary({
               <thead>
                 <tr style={{ background: "#f8fafc" }}>
                   <th style={{ width: "5%", padding: "8px 6px", border: "1px solid #e2e8f0", textAlign: "center", color: "#475569", fontWeight: 600, boxSizing: "border-box" }}>STT</th>
-                  <th style={{ width: "37.5%", padding: "8px 12px", border: "1px solid #e2e8f0", textAlign: "left", color: "#475569", fontWeight: 600, boxSizing: "border-box" }}>Nội dung</th>
-                  <th style={{ width: "15%", padding: "8px 12px", border: "1px solid #e2e8f0", textAlign: "left", color: "#475569", fontWeight: 600, boxSizing: "border-box" }}>Thời gian hoàn thành</th>
-                  <th style={{ width: "42.5%", padding: "8px 12px", border: "1px solid #e2e8f0", textAlign: "left", color: "#475569", fontWeight: 600, boxSizing: "border-box" }}>Phân công thực hiện</th>
+                  <th style={{ width: "35%", padding: "8px 12px", border: "1px solid #e2e8f0", textAlign: "left", color: "#475569", fontWeight: 600, boxSizing: "border-box" }}>Nội dung</th>
+                  <th style={{ width: "22%", padding: "8px 12px", border: "1px solid #e2e8f0", textAlign: "left", color: "#475569", fontWeight: 600, boxSizing: "border-box" }}>Thời gian hoàn thành</th>
+                  <th style={{ width: "38%", padding: "8px 12px", border: "1px solid #e2e8f0", textAlign: "left", color: "#475569", fontWeight: 600, boxSizing: "border-box" }}>Phân công thực hiện</th>
                 </tr>
               </thead>
               <tbody>
@@ -958,9 +958,9 @@ export function PlanCommitteesEditor({
             <thead>
               <tr style={{ background: "#f8fafc" }}>
                 <th style={{ width: "5%", padding: "8px 6px", border: "1px solid #e2e8f0", textAlign: "center", color: "#475569", fontWeight: 600, boxSizing: "border-box" }}>STT</th>
-                <th style={{ width: "37.5%", padding: "8px 10px", border: "1px solid #e2e8f0", textAlign: "left", color: "#475569", fontWeight: 600, boxSizing: "border-box" }}>Nội dung</th>
-                <th style={{ width: "15%", padding: "8px 10px", border: "1px solid #e2e8f0", textAlign: "left", color: "#475569", fontWeight: 600, boxSizing: "border-box" }}>Thời gian hoàn thành</th>
-                <th style={{ width: "37.5%", padding: "8px 10px", border: "1px solid #e2e8f0", textAlign: "left", color: "#475569", fontWeight: 600, boxSizing: "border-box" }}>Phân công thực hiện</th>
+                <th style={{ width: "35%", padding: "8px 10px", border: "1px solid #e2e8f0", textAlign: "left", color: "#475569", fontWeight: 600, boxSizing: "border-box" }}>Nội dung</th>
+                <th style={{ width: "22%", padding: "8px 10px", border: "1px solid #e2e8f0", textAlign: "left", color: "#475569", fontWeight: 600, boxSizing: "border-box" }}>Thời gian hoàn thành</th>
+                <th style={{ width: "33%", padding: "8px 10px", border: "1px solid #e2e8f0", textAlign: "left", color: "#475569", fontWeight: 600, boxSizing: "border-box" }}>Phân công thực hiện</th>
                 <th style={{ width: "5%", padding: "8px 6px", border: "1px solid #e2e8f0", textAlign: "center", color: "#475569", fontWeight: 600, boxSizing: "border-box" }}>Xóa</th>
               </tr>
             </thead>
