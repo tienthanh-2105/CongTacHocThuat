@@ -80,6 +80,8 @@ export class CreateExpenseDto {
 }
 
 export class UpdateSeminarDetailsDto {
+  @IsOptional() @IsString() noiDung?: string;
+  @IsOptional() @IsString() mucDich?: string;
   @IsOptional() @IsString() @MaxLength(200) dvChuTri?: string;
   @IsOptional() @IsString() @MaxLength(200) dvPhoiHop?: string;
   @IsOptional() @Type(() => Number) @IsInt() @Min(1) @Max(1440) thoiLuong?: number;

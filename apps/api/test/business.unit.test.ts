@@ -57,6 +57,33 @@ test('Đề xuất bộ môn: quyền Trưởng bộ môn đã lưu ở chức v
 const isHttpStatus = (status: number) => (error: unknown) =>
   error instanceof HttpException && error.getStatus() === status;
 
+test('Phân công đề xuất: chặn sai phạm vi, người chủ trì và dữ liệu không hợp lệ trước khi ghi', async () => {
+  const head = { ...context(['GIANGVIEN']), user: { ...context(['GIANGVIEN']).user, position: 'Phụ trách bộ môn' } };
+  const db = { query: async () => [{ MaBM: 2, TenBM: 'Hệ thống thông tin', VaiTro: 'Phụ trách bộ môn' }] } as unknown as DatabaseService;
+  const service = new DepartmentPlansService(db);
+  const valid = { maBM: 2, tenHoatDong: 'Seminar kiểm thử', loaiHoatDong: 'Seminar' as const, namHoc: '2098-2099', noiDung: 'Lập đề xuất và dự trù kinh phí', hanHoanThanh: '2099-01-01', maTKs: [18,19], nguoiChuTri: 18 };
+  await assert.rejects(service.assign(context(['GIANGVIEN']),valid),isHttpStatus(403));
+  await assert.rejects(service.assign(head,{ ...valid, maBM: 3 }),isHttpStatus(403));
+  await assert.rejects(service.assign(head,{ ...valid, maTKs: [] }),isHttpStatus(400));
+  await assert.rejects(service.assign(head,{ ...valid, maTKs: [18,18] }),isHttpStatus(400));
+  await assert.rejects(service.assign(head,{ ...valid, nguoiChuTri: 20 }),isHttpStatus(400));
+  await assert.rejects(service.assign(head,{ ...valid, hanHoanThanh: '2020-01-01' }),isHttpStatus(400));
+  await assert.rejects(service.assign(head,{ ...valid, hanHoanThanh: '2099-02-30' }),isHttpStatus(400));
+  await assert.rejects(service.assign(head,{ ...valid, tenHoatDong: '  ' }),isHttpStatus(400));
+  await assert.rejects(service.assign(head,{ ...valid, namHoc: '2098-2100' }),isHttpStatus(400));
+  const memberService = new DepartmentPlansService({ query: async () => [{ MaBM: 2, VaiTro: 'Ban bộ môn' }] } as unknown as DatabaseService);
+  await assert.rejects(memberService.assign(head,valid),isHttpStatus(403));
+});
+
+test('Thông báo: đánh dấu đã đọc phải theo tài khoản hiện tại', async () => {
+  const db = { query: async (_statement: string, params: unknown[]) => {
+    assert.deepEqual(params,[123,'17']);
+    return [];
+  } } as unknown as DatabaseService;
+  await assert.rejects(new WorkflowService(db).readNotification(context(['GIANGVIEN']),123),isHttpStatus(404));
+  await assert.rejects(new DepartmentPlansService(db).assignment(context(['GIANGVIEN']),123),isHttpStatus(404));
+});
+
 test('Quy trình ký chi tiết và điều kiện mở đăng ký', () => {
   assert.deepEqual(detailedPlanReviewStage('Chờ khoa xét duyệt',['TRUONGKHOA'],'approve'),{stage:'faculty',status:'Đã duyệt'});
   assert.deepEqual(detailedPlanReviewStage('Chờ khoa xét duyệt',['CANBOKHOA'],'approve'),{stage:'faculty',status:'Đã duyệt'});

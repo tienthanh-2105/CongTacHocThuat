@@ -300,8 +300,7 @@ export function CompetitionPlanEditor({
     value.thoiGianKetThuc = endObj.toISOString();
     value.hanDangKy = deadlineObj.toISOString();
 
-    // Chuyển trạng thái qua Cần lập ban đề thi
-    value.trangThai = "Cần lập ban đề thi";
+    value.trangThai = "Chờ phân công thực hiện";
 
     await onSave(value);
   }

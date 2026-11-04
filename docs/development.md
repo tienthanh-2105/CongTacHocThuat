@@ -34,6 +34,14 @@ npm run dev:mobile
 
 Flutter: mở `apps/flutter` bằng Android Studio, cấu hình địa chỉ API trong app theo emulator hoặc thiết bị đang dùng, sau đó chạy cấu hình Android.
 
+## Phân công lập đề xuất của bộ môn
+
+Tại **Ban bộ môn**, Phụ trách bộ môn chọn nhiều giảng viên trong bộ môn rồi bấm **PC Thực hiện KH**. Biểu mẫu lưu tên cuộc thi/seminar, năm học, yêu cầu lập đề xuất và dự trù kinh phí, hạn hoàn thành và một người chủ trì. Các thành viên dùng chung một nhiệm vụ phân công; mỗi người nhận một thông báo riêng ở góc phải và có thể mở chi tiết nhiệm vụ. Việc lập hồ sơ đề xuất và dự trù tiếp tục tại **Hoạt động học thuật**.
+
+Migration `043_department_proposal_assignments.sql` bổ sung bảng phân công, người thực hiện và liên kết thông báo; áp dụng bằng `npm run db:migrate`. Chỉ người giao và người được giao xem được chi tiết. Lưu phân công, danh sách người thực hiện và thông báo nằm trong cùng một transaction.
+
+Khi API và web đang chạy, có thể kiểm tra luồng bằng `node scripts/verify-department-assignments.cjs` (cần Google Chrome). Kịch bản tạo bộ môn/tài khoản thử riêng, kiểm tra quyền và thao tác trình duyệt, sau đó tự xóa dữ liệu thử; ảnh kiểm tra được lưu tại `artifacts/department-assignments/`.
+
 ## Kiểm tra mã nguồn
 
 ```powershell

@@ -1,11 +1,12 @@
 "use client";
 import OrganizationPanel from "./OrganizationPanel";
 import StudentParticipationPanel from "./StudentParticipationPanel";
+import TrainingPointsPanel from "./TrainingPointsPanel";
 import NewsPanel from "./NewsPanel";
 import SeminarPanel from "./SeminarPanel";
 import SettlementPanel from "./SettlementPanel";
 import { workflowRequest } from "@/services/workflow";
-import { useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { usePathname, useRouter } from "next/navigation";
 import { getCurrentUser, logout, type AuthUser } from "@/services/auth";
 import AccountPanel from "./AccountPanel";
@@ -24,6 +25,44 @@ import NoticeDialog from "./NoticeDialog";
 let dashboardUserCache: AuthUser | null | undefined;
 let dashboardUserRequest: Promise<AuthUser | null> | null = null;
 import DepartmentPlansPanel from "./DepartmentPlansPanel";
+import DepartmentAssignmentDetails from "./DepartmentAssignmentDetails";
+
+type DashboardNotification = { MaThongBao: number; TieuDe: string; NoiDung: string; MaPhanCongDeXuat?: number | null; DocLuc?: string | null; MaHD?: number | null; Loai?: string | null };
+
+function parseNotificationContent(raw?: string): {
+  text: string;
+  isPdf?: boolean;
+  pdfData?: string;
+  pdfName?: string;
+  pdfSize?: number;
+  image?: string;
+} {
+  if (!raw) return { text: "" };
+  const trimmed = raw.trim();
+  if (trimmed.startsWith("{") && (trimmed.includes('"pdfData"') || trimmed.includes('"image"') || trimmed.includes('"isPdf"'))) {
+    try {
+      const obj = JSON.parse(trimmed);
+      return {
+        text: obj.text || "",
+        isPdf: Boolean(obj.isPdf || obj.pdfData),
+        pdfData: obj.pdfData,
+        pdfName: obj.pdfName || "thong-bao.pdf",
+        pdfSize: obj.pdfSize,
+        image: obj.image,
+      };
+    } catch {
+      // not json
+    }
+  }
+  return { text: raw };
+}
+
+function formatNotificationFileSize(bytes?: number): string {
+  if (!bytes || isNaN(bytes)) return "";
+  if (bytes < 1024) return `${bytes} B`;
+  if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`;
+  return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
+}
 
 function HomeIcon() {
   return <svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">
@@ -70,9 +109,15 @@ export default function Dashboard() {
   const [menu, setMenu] = useState(false);
   const [profile, setProfile] = useState(false);
   const [notifications, setNotifications] = useState(false);
-  const [notificationRows, setNotificationRows] = useState<{ MaThongBao: number; TieuDe: string }[]>([]);
+  const [notificationRows, setNotificationRows] = useState<DashboardNotification[]>([]);
+  const unreadNotificationCount = notificationRows.filter((row) => !row.DocLuc).length;
+  const [assignmentId, setAssignmentId] = useState<number | null>(null);
+  const [notificationDetail, setNotificationDetail] = useState<DashboardNotification | null>(null);
+  const closeAssignment = useCallback(() => setAssignmentId(null), []);
   const [notificationLoading, setNotificationLoading] = useState(false);
   const [notificationError, setNotificationError] = useState("");
+  const [pendingPlanNotice, setPendingPlanNotice] = useState("");
+  const hasShownLoginNotice = useRef(false);
   const [query, setQuery] = useState("");
   const headerRef = useRef<HTMLElement>(null);
   const [accountView, setAccountView] = useState<"info" | "password" | null>(null);
@@ -81,6 +126,57 @@ export default function Dashboard() {
   const [expenseActivityId, setExpenseActivityId] = useState<number | null>(null);
   const [expenseActivityName, setExpenseActivityName] = useState("");
   const [routeExpenseActivity, setRouteExpenseActivity] = useState<{ id: number | null; name: string }>({ id: null, name: "" });
+  useEffect(() => {
+    if (!user?.id) return;
+    let active = true;
+    let loading = false;
+    const refresh = async () => {
+      if (loading || document.visibilityState === "hidden") return;
+      loading = true;
+      try {
+        const rows = await workflowRequest<DashboardNotification[]>("/notifications/mine");
+        if (active) {
+          setNotificationRows(rows);
+          const isDean = user?.roles?.some((r) => ["TRUONGKHOA", "ADMIN"].includes(r.toUpperCase()))
+            || Boolean(user?.position && /Trưởng khoa/i.test(user.position));
+          if (isDean && !hasShownLoginNotice.current) {
+            const unreadPlans = rows.filter((r) => !r.DocLuc && (r.Loai === "Kế hoạch chi tiết" || r.TieuDe?.toLowerCase().includes("chờ duyệt")));
+            if (unreadPlans.length > 0) {
+              hasShownLoginNotice.current = true;
+              setPendingPlanNotice(
+                unreadPlans.length === 1
+                  ? `Có 1 kế hoạch chi tiết đang ở trạng thái "Chờ khoa xét duyệt": ${unreadPlans[0].TieuDe.replace(/^Kế hoạch chi tiết chờ duyệt:\s*/i, "")}.`
+                  : `Có ${unreadPlans.length} kế hoạch chi tiết đang ở trạng thái "Chờ khoa xét duyệt" cần Trưởng khoa xét duyệt.`
+              );
+            }
+          }
+        }
+      } catch { /* Opening the notification menu provides a retry and error message. */ }
+      finally { loading = false; }
+    };
+    void refresh();
+    const onRefresh = () => { void refresh(); };
+    const timer = window.setInterval(onRefresh, 30000);
+    window.addEventListener("focus", onRefresh);
+    document.addEventListener("visibilitychange", onRefresh);
+    window.addEventListener("academic-notifications-changed", onRefresh);
+    return () => {
+      active = false;
+      window.clearInterval(timer);
+      window.removeEventListener("focus", onRefresh);
+      document.removeEventListener("visibilitychange", onRefresh);
+      window.removeEventListener("academic-notifications-changed", onRefresh);
+    };
+  }, [user?.id]);
+  async function openNotification(item: DashboardNotification) {
+    try {
+      await workflowRequest(`/notifications/${item.MaThongBao}/read`, { method: "PATCH" });
+      setNotificationRows((rows) => rows.map((row) => row.MaThongBao === item.MaThongBao ? { ...row, DocLuc: row.DocLuc || new Date().toISOString() } : row));
+      setNotifications(false);
+      if (item.MaPhanCongDeXuat) setAssignmentId(item.MaPhanCongDeXuat);
+      else setNotificationDetail(item);
+    } catch { setNotificationError("Không mở được thông báo. Vui lòng thử lại."); }
+  }
   useEffect(() => {
     let alive = true;
     const request = dashboardUserRequest ?? (dashboardUserRequest = getCurrentUser());
@@ -93,6 +189,7 @@ export default function Dashboard() {
         else setUser(value);
       })
       .catch(() => {
+        dashboardUserRequest = null;
         if (alive) setError("Không thể kết nối máy chủ. Vui lòng thử lại.");
       });
     return () => {
@@ -121,10 +218,13 @@ export default function Dashboard() {
       return;
     }
     const targetSection = sections.find((s) => s.id === routeSection);
+    const availableSections = user ? sectionsForRoles(user.roles) : sections;
     if (targetSection?.parentId) {
       setOpenParentId(targetSection.parentId);
-    } else if (sections.some((s) => s.parentId === routeSection)) {
+    } else if (availableSections.some((s) => s.parentId === routeSection)) {
       setOpenParentId(routeSection);
+    } else {
+      setOpenParentId(null);
     }
   }, [pathname, router]);
   useEffect(() => {
@@ -133,6 +233,7 @@ export default function Dashboard() {
         setMenu(false);
         setProfile(false);
         setNotifications(false);
+        setNotificationDetail(null);
       }
     };
     window.addEventListener("keydown", close);
@@ -179,9 +280,10 @@ export default function Dashboard() {
       setRouteExpenseActivity({ id: null, name: "" });
     }
     const targetSection = sections.find((s) => s.id === id);
+    const availableSections = user ? sectionsForRoles(user.roles) : sections;
     if (targetSection?.parentId) {
       setOpenParentId(targetSection.parentId);
-    } else if (sections.some((s) => s.parentId === id)) {
+    } else if (availableSections.some((s) => s.parentId === id)) {
       setOpenParentId(id);
     } else {
       setOpenParentId(null);
@@ -204,6 +306,11 @@ export default function Dashboard() {
   function handleSidebarClick(item: DashboardSection) {
     const hasChildren = visibleSections.some((sub) => sub.parentId === item.id);
     if (hasChildren) {
+      if (item.id === "news") {
+        setOpenParentId("news");
+        navigate("news");
+        return;
+      }
       const isAlreadyOpen = openParentId === item.id;
       setOpenParentId(isAlreadyOpen ? null : item.id);
       if (!isAlreadyOpen && item.id === "detailed-plans" && selected.parentId !== "detailed-plans") {
@@ -222,8 +329,10 @@ export default function Dashboard() {
           {error && (
             <button
               onClick={() => {
+                dashboardUserRequest = null;
+                dashboardUserCache = undefined;
                 setError("");
-                setAttempt(attempt + 1);
+                setAttempt((a) => a + 1);
               }}
             >
               Thử lại
@@ -361,7 +470,7 @@ export default function Dashboard() {
             <div className={s.popupWrap}>
               <button
                 className={s.bell}
-                aria-label="Thông báo"
+                aria-label={`Thông báo${unreadNotificationCount ? `, ${unreadNotificationCount} chưa đọc` : ""}`}
                 aria-expanded={notifications}
                 onClick={async () => {
                   setNotifications(!notifications);
@@ -374,6 +483,7 @@ export default function Dashboard() {
                   setProfile(false);
                 }}
               >
+                <span className={s.bellIcon}>
                 <svg
                   viewBox="0 0 24 24"
                   fill="none"
@@ -382,10 +492,11 @@ export default function Dashboard() {
                   aria-hidden="true"
                 >
                   <path d="M18 8a6 6 0 0 0-12 0c0 7-3 7-3 9h18c0-2-3-2-3-9M10 21h4" />
-                </svg><span className={s.bellLabel}>Thông báo</span>
+                </svg>{unreadNotificationCount > 0 && <span className={s.notificationCount} aria-hidden="true">{unreadNotificationCount > 99 ? "99+" : unreadNotificationCount}</span>}
+                </span><span className={s.bellLabel}>Thông báo</span>
               </button>
               {notifications && (
-                <div className={s.popup}><strong>Thông báo</strong>{notificationLoading ? <p>Đang tải…</p> : notificationError ? <p>{notificationError}</p> : notificationRows.length ? notificationRows.slice(0,5).map(item => <p key={item.MaThongBao}>{item.TieuDe}</p>) : <p>Chưa có thông báo.</p>}<button onClick={() => { navigate("news"); setNotifications(false); }}>Xem tin tức & thông báo</button></div>
+                <div className={`${s.popup} ${s.notificationPopup}`}><strong>Thông báo</strong>{notificationLoading ? <p>Đang tải…</p> : notificationError ? <p role="alert">{notificationError}</p> : notificationRows.length ? <div className={s.notificationList}>{notificationRows.map(item => <button type="button" key={item.MaThongBao} className={!item.DocLuc ? s.notificationUnread : undefined} onClick={() => void openNotification(item)}><strong>{item.TieuDe}</strong><small>{item.DocLuc ? "Đã đọc" : "Chưa đọc"}{item.MaPhanCongDeXuat ? " · Xem phân công" : item.Loai === "Kế hoạch chi tiết" || item.MaHD ? " · Xem & Ký duyệt" : " · Xem chi tiết"}</small></button>)}</div> : <p>Chưa có thông báo.</p>}<button type="button" onClick={() => { navigate("news"); setNotifications(false); }}>Xem tin tức & thông báo</button></div>
               )}
             </div>
             <div className={s.popupWrap}>
@@ -406,6 +517,8 @@ export default function Dashboard() {
                   <small>
                     {user.roles.includes("ADMIN")
                       ? "Quản trị viên"
+                      : user.roles.includes("SINHVIEN")
+                      ? "Sinh viên"
                       : user.roles.join(", ")}
                   </small>
                 </span>
@@ -424,7 +537,7 @@ export default function Dashboard() {
           </div>
         </header>
         <main className={s.main}>
-          {activeSectionId !== "users" && activeSectionId !== "staff-profiles" && activeSectionId !== "student-profiles" && activeSectionId !== "classes" && activeSectionId !== "plans" && !activeSectionId.startsWith("academic-") && accountView !== "info" && (
+          {activeSectionId !== "users" && activeSectionId !== "staff-profiles" && activeSectionId !== "student-profiles" && activeSectionId !== "classes" && activeSectionId !== "plans" && !activeSectionId.startsWith("academic-") && !(activeSectionId === "training-points" && !user?.roles?.includes("SINHVIEN")) && activeSectionId !== "seminars" && accountView !== "info" && (
             <div className={s.heading}>
               <div>
                 <h1>{selected.title}</h1>
@@ -470,10 +583,12 @@ export default function Dashboard() {
             <SettlementPanel user={user} />
           ) : activeSectionId === "seminars" ? (
             <SeminarPanel user={user} />
-          ) : activeSectionId === "news" ? (
-            <NewsPanel />
+          ) : activeSectionId === "news" || activeSectionId === "news-management" ? (
+            <NewsPanel key={activeSectionId} manage={activeSectionId === "news-management"} user={user} onNavigate={navigate} />
           ) : user.roles.includes("SINHVIEN") && ["registrations", "support", "training-points"].includes(activeSectionId) ? (
-            <StudentParticipationPanel key={activeSectionId} section={activeSectionId} />
+            <StudentParticipationPanel key={activeSectionId} section={activeSectionId} user={user} onNavigate={navigate} />
+          ) : activeSectionId === "training-points" ? (
+            <TrainingPointsPanel user={user} />
           ) : (
             ["detailed-plans", "detailed-plans-all", "detailed-plans-seminar", "detailed-plans-competition", "detailed-plans-assignment", "competitions", "results"].includes(activeSectionId) ? (
               <OrganizationPanel
@@ -492,6 +607,317 @@ export default function Dashboard() {
           )}
         </main>
       </div>
+      {assignmentId !== null && <DepartmentAssignmentDetails key={assignmentId} id={assignmentId} onClose={closeAssignment} />}
+      {notificationDetail && (() => {
+        const parsed = parseNotificationContent(notificationDetail.NoiDung);
+        const isPlan =
+          notificationDetail.Loai === "Kế hoạch chi tiết" ||
+          notificationDetail.TieuDe?.toLowerCase().includes("kế hoạch chi tiết");
+        const hasPdf = Boolean(parsed.isPdf && parsed.pdfData);
+        const hasImage = Boolean(parsed.image);
+
+        return (
+          <div className={s.modalOverlay} onClick={() => setNotificationDetail(null)}>
+            <section
+              className={`${s.modalCard} ${s.departmentAssignmentDialog}`}
+              role="dialog"
+              aria-modal="true"
+              aria-labelledby="notification-detail-title"
+              onClick={(event) => event.stopPropagation()}
+              style={{
+                width: hasPdf ? "min(920px, calc(100vw - 32px))" : "min(720px, calc(100vw - 32px))",
+                maxHeight: "92vh",
+                display: "flex",
+                flexDirection: "column",
+                overflow: "hidden",
+                borderRadius: "12px",
+                boxShadow: "0 20px 40px rgba(0,0,0,0.15)",
+              }}
+            >
+              <div
+                className={s.departmentAssignmentDialogHeading}
+                style={{
+                  padding: "18px 24px",
+                  borderBottom: "1px solid #e2e8f0",
+                  background: "#ffffff",
+                  display: "flex",
+                  justifyContent: "space-between",
+                  alignItems: "flex-start",
+                  gap: "16px",
+                  flexShrink: 0,
+                }}
+              >
+                <div style={{ display: "flex", alignItems: "flex-start", gap: "12px" }}>
+                  <span style={{ fontSize: "24px", lineHeight: "1.2", marginTop: "2px" }}>
+                    {hasPdf ? "📄" : "🔔"}
+                  </span>
+                  <div>
+                    <h2
+                      id="notification-detail-title"
+                      style={{
+                        fontSize: "18px",
+                        fontWeight: 700,
+                        lineHeight: 1.4,
+                        color: "#0f172a",
+                        margin: 0,
+                      }}
+                    >
+                      {notificationDetail.TieuDe}
+                    </h2>
+                    {notificationDetail.Loai && (
+                      <span
+                        style={{
+                          display: "inline-block",
+                          marginTop: "6px",
+                          fontSize: "12px",
+                          padding: "2px 8px",
+                          borderRadius: "4px",
+                          background: "#f1f5f9",
+                          color: "#475569",
+                          fontWeight: 600,
+                        }}
+                      >
+                        {notificationDetail.Loai}
+                      </span>
+                    )}
+                  </div>
+                </div>
+                <button
+                  type="button"
+                  className={s.modalCloseBtn}
+                  aria-label="Đóng thông báo"
+                  onClick={() => setNotificationDetail(null)}
+                  style={{
+                    fontSize: "24px",
+                    lineHeight: "1",
+                    background: "transparent",
+                    border: "none",
+                    cursor: "pointer",
+                    color: "#94a3b8",
+                    padding: "4px 8px",
+                  }}
+                >
+                  ×
+                </button>
+              </div>
+
+              <div
+                className={s.departmentAssignmentBody}
+                style={{
+                  padding: "20px 24px",
+                  overflowY: "auto",
+                  flex: 1,
+                  display: "flex",
+                  flexDirection: "column",
+                  gap: "16px",
+                }}
+              >
+                {/* Text content */}
+                {parsed.text ? (
+                  <div
+                    style={{
+                      color: "#334155",
+                      fontSize: "14px",
+                      lineHeight: "1.65",
+                      whiteSpace: "pre-line",
+                      background: hasPdf ? "#f8fafc" : "transparent",
+                      padding: hasPdf ? "12px 16px" : "0",
+                      borderRadius: hasPdf ? "8px" : "0",
+                      border: hasPdf ? "1px solid #e2e8f0" : "none",
+                    }}
+                  >
+                    {parsed.text}
+                  </div>
+                ) : !hasPdf && !hasImage ? (
+                  <p className={s.departmentAssignmentContent} style={{ color: "#64748b", fontStyle: "italic", margin: 0 }}>
+                    Không có nội dung văn bản chi tiết.
+                  </p>
+                ) : null}
+
+                {/* Attached image if present */}
+                {hasImage && parsed.image && (
+                  <div style={{ textAlign: "center", borderRadius: "8px", overflow: "hidden", border: "1px solid #e2e8f0" }}>
+                    <img
+                      src={parsed.image}
+                      alt={notificationDetail.TieuDe}
+                      style={{ maxWidth: "100%", maxHeight: "420px", display: "block", margin: "0 auto", objectFit: "contain" }}
+                    />
+                  </div>
+                )}
+
+                {/* Attached PDF document reader & downloader */}
+                {hasPdf && parsed.pdfData && (
+                  <div
+                    style={{
+                      borderRadius: "10px",
+                      border: "1px solid #cbd5e1",
+                      overflow: "hidden",
+                      background: "#ffffff",
+                      boxShadow: "0 2px 8px rgba(0,0,0,0.04)",
+                    }}
+                  >
+                    {/* PDF Header / Download Bar */}
+                    <div
+                      style={{
+                        display: "flex",
+                        alignItems: "center",
+                        justifyContent: "space-between",
+                        flexWrap: "wrap",
+                        gap: "12px",
+                        padding: "10px 16px",
+                        background: "#f1f5f9",
+                        borderBottom: "1px solid #cbd5e1",
+                      }}
+                    >
+                      <div style={{ display: "flex", alignItems: "center", gap: "10px" }}>
+                        <span style={{ fontSize: "22px" }}>📄</span>
+                        <div>
+                          <strong style={{ color: "#0f172a", fontSize: "14px", display: "block" }}>
+                            {parsed.pdfName || "tai-lieu.pdf"}
+                          </strong>
+                          <small style={{ color: "#64748b", fontSize: "12px" }}>
+                            {formatNotificationFileSize(parsed.pdfSize) || "Tài liệu PDF đính kèm"}
+                          </small>
+                        </div>
+                      </div>
+
+                      <div style={{ display: "flex", gap: "8px" }}>
+                        <a
+                          href={parsed.pdfData}
+                          download={parsed.pdfName || "tai-lieu.pdf"}
+                          style={{
+                            display: "inline-flex",
+                            alignItems: "center",
+                            gap: "6px",
+                            padding: "6px 14px",
+                            borderRadius: "6px",
+                            background: "#dc2626",
+                            color: "#ffffff",
+                            textDecoration: "none",
+                            fontWeight: 600,
+                            fontSize: "13px",
+                          }}
+                        >
+                          <span>📥</span>
+                          <span>Tải về PDF</span>
+                        </a>
+                        <a
+                          href={parsed.pdfData}
+                          target="_blank"
+                          rel="noopener noreferrer"
+                          style={{
+                            display: "inline-flex",
+                            alignItems: "center",
+                            gap: "6px",
+                            padding: "6px 14px",
+                            borderRadius: "6px",
+                            background: "#ffffff",
+                            color: "#334155",
+                            border: "1px solid #cbd5e1",
+                            textDecoration: "none",
+                            fontWeight: 600,
+                            fontSize: "13px",
+                          }}
+                        >
+                          <span>↗️</span>
+                          <span>Mở toàn màn hình</span>
+                        </a>
+                      </div>
+                    </div>
+
+                    {/* Interactive PDF reader iframe */}
+                    <iframe
+                      src={parsed.pdfData}
+                      style={{
+                        width: "100%",
+                        height: "540px",
+                        border: "none",
+                        display: "block",
+                      }}
+                      title={parsed.pdfName || "Tài liệu PDF"}
+                    />
+                  </div>
+                )}
+              </div>
+
+              {/* Modal Footer */}
+              <div
+                style={{
+                  padding: "14px 24px",
+                  borderTop: "1px solid #e2e8f0",
+                  background: "#f8fafc",
+                  display: "flex",
+                  justifyContent: "flex-end",
+                  gap: "10px",
+                  flexWrap: "wrap",
+                  alignItems: "center",
+                  flexShrink: 0,
+                }}
+              >
+                <button
+                  type="button"
+                  style={{
+                    padding: "8px 16px",
+                    borderRadius: "6px",
+                    background: "#ffffff",
+                    color: "#475569",
+                    border: "1px solid #cbd5e1",
+                    fontWeight: 600,
+                    cursor: "pointer",
+                    fontSize: "14px",
+                  }}
+                  onClick={() => setNotificationDetail(null)}
+                >
+                  Đóng
+                </button>
+
+                <button
+                  type="button"
+                  style={{
+                    padding: "8px 16px",
+                    borderRadius: "6px",
+                    background: "#2563eb",
+                    color: "#ffffff",
+                    border: "none",
+                    fontWeight: 600,
+                    cursor: "pointer",
+                    fontSize: "14px",
+                  }}
+                  onClick={() => {
+                    setNotificationDetail(null);
+                    navigate("news");
+                  }}
+                >
+                  Xem trong Tin tức & thông báo →
+                </button>
+
+                {isPlan && (
+                  <button
+                    type="button"
+                    style={{
+                      padding: "8px 18px",
+                      borderRadius: "6px",
+                      background: "#059669",
+                      color: "#ffffff",
+                      border: "none",
+                      fontWeight: 600,
+                      cursor: "pointer",
+                      fontSize: "14px",
+                    }}
+                    onClick={() => {
+                      setNotificationDetail(null);
+                      navigate("detailed-plans-all");
+                    }}
+                  >
+                    Đi đến Kế hoạch chi tiết để Ký duyệt →
+                  </button>
+                )}
+              </div>
+            </section>
+          </div>
+        );
+      })()}
+      {pendingPlanNotice && <NoticeDialog title="Thông báo xét duyệt kế hoạch" message={pendingPlanNotice} kind="success" onClose={() => setPendingPlanNotice("")} />}
     </div>
   );
 }

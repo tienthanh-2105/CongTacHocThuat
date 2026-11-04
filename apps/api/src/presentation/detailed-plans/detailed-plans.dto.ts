@@ -22,6 +22,8 @@ export class PlanWorkItemDto {
   @IsOptional() @Type(() => Number) @IsInt() stt?: number;
   @IsString() @IsNotEmpty() @MaxLength(4000) noiDung!: string;
   @IsOptional() @IsString() thoiGian?: string;
+  @IsOptional() @IsString() @MaxLength(40) thoiGianKetThuc?: string;
+  @IsOptional() @IsString() @MaxLength(100) dateText?: string;
   @IsOptional() @Type(() => Number) @IsInt() maTK?: number;
   @IsOptional() @IsString() @MaxLength(1000) hoTen?: string;
 }

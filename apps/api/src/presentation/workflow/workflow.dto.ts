@@ -93,6 +93,13 @@ export class CheckInDto {
   @IsString() @IsNotEmpty() @MaxLength(100) code!: string;
 }
 
+export class BroadcastNotificationDto {
+  @IsString() @IsNotEmpty() @MaxLength(255) tieuDe!: string;
+  @IsString() @IsNotEmpty() noiDung!: string;
+  @IsOptional() @IsString() doiTuong?: string;
+  @IsOptional() kenh?: string[];
+}
+
 export class SeminarMaterialDto {
   @IsString() @IsNotEmpty() @MaxLength(250) tenTep!: string;
   @IsString() @IsNotEmpty() @MaxLength(2048) urlTep!: string;

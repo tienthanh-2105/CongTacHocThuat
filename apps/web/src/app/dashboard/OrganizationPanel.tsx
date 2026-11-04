@@ -14,6 +14,8 @@ type Row = Record<string, unknown>;
 type Field = { name: string; label: string; type?: string; optional?: boolean; options?: { value: string; label: string }[] };
 const text = (r: Row, k: string) => String(r[k] ?? "");
 const rows = (v: unknown): Row[] => Array.isArray(v) ? v as Row[] : [];
+const pendingAssignmentStatuses = ["Chờ phân công thực hiện", "Cần lập ban đề thi"];
+const editablePlanStatuses = [...pendingAssignmentStatuses, "Dự thảo", "Cần bổ sung", "Từ chối"];
 const date = (v: unknown) => v ? new Date(String(v)).toLocaleString("vi-VN") : "Chưa cập nhật";
 const inputDate = (v: unknown) => { if (!v) return ""; const d = new Date(String(v)); return new Date(d.getTime() - d.getTimezoneOffset() * 60000).toISOString().slice(0,16); };
 
@@ -65,7 +67,7 @@ export default function OrganizationPanel({
       bg = "#dcfce7";
       color = "#15803d";
       border = "#86efac";
-    } else if (st === "Cần lập ban đề thi" || st === "Chờ phân công thực hiện") {
+    } else if (pendingAssignmentStatuses.includes(st)) {
       bg = "#fff7ed";
       color = "#c2410c";
       border = "#fed7aa";
@@ -168,6 +170,7 @@ export default function OrganizationPanel({
 
   const detailId = selected ? text(selected, "MaHD") : "";
   const status = selected ? text(selected, "TrangThai") : "";
+  const awaitingAssignment = pendingAssignmentStatuses.includes(status);
   const canEdit = detailed && Boolean(selected?.canEdit);
   const canSign = user.roles.includes("ADMIN") || ((status === "Chờ khoa xét duyệt" || status === "Chờ khoa ký") && (user.roles.includes("TRUONGKHOA") || user.roles.includes("CANBOKHOA"))) || (status === "Chờ CTSV ký" && user.roles.includes("PHONGCTSV"));
   const competition = selected?.competition as Row | undefined;
@@ -363,9 +366,9 @@ export default function OrganizationPanel({
                   const hasPlan = Boolean(r.MaKHToChuc);
                   const isApproved = st === "Đã duyệt";
                   const isSubmitted = ["Chờ khoa xét duyệt", "Chờ khoa ký", "Chờ CTSV ký", "Đã duyệt"].includes(st);
-                  const canEditPlan = isMyDept && (!hasPlan || ["Chờ phân công thực hiện", "Cần lập ban đề thi", "Dự thảo", "Cần bổ sung", "Từ chối"].includes(st));
-                  const canAssign = isMyDept && hasPlan && ["Chờ phân công thực hiện", "Cần lập ban đề thi", "Dự thảo", "Cần bổ sung", "Từ chối"].includes(st);
-                  const canSubmit = isMyDept && hasPlan && ["Dự thảo", "Cần lập ban đề thi", "Cần bổ sung", "Từ chối"].includes(st);
+                  const canEditPlan = isMyDept && (!hasPlan || editablePlanStatuses.includes(st));
+                  const canAssign = isMyDept && hasPlan && editablePlanStatuses.includes(st);
+                  const canSubmit = isMyDept && hasPlan && ["Dự thảo", "Cần bổ sung", "Từ chối"].includes(st);
                   const canSignRow = user.roles.includes("ADMIN") ||
                     ((st === "Chờ khoa xét duyệt" || st === "Chờ khoa ký") && (user.roles.includes("TRUONGKHOA") || user.roles.includes("CANBOKHOA"))) ||
                     (st === "Chờ CTSV ký" && user.roles.includes("PHONGCTSV"));
@@ -593,7 +596,7 @@ export default function OrganizationPanel({
                                     ? "Kế hoạch đã được trình xét duyệt / đã duyệt"
                                     : !hasPlan
                                     ? "Chưa lưu kế hoạch chi tiết để gửi"
-                                    : st === "Chờ phân công thực hiện"
+                                    : pendingAssignmentStatuses.includes(st)
                                     ? "Cần hoàn tất phân công thực hiện (chuyển sang Dự thảo) trước khi trình khoa ký"
                                     : "Trình Khoa xét duyệt kế hoạch chi tiết"
                                 }
@@ -736,7 +739,7 @@ export default function OrganizationPanel({
                                     ? "Kế hoạch đã được trình xét duyệt / đã duyệt"
                                     : !hasPlan
                                     ? "Chưa lưu kế hoạch chi tiết để gửi"
-                                    : st === "Chờ phân công thực hiện"
+                                    : pendingAssignmentStatuses.includes(st)
                                     ? "Cần hoàn tất phân công thực hiện (chuyển sang Dự thảo) trước khi trình khoa ký"
                                     : "Trình Khoa xét duyệt kế hoạch chi tiết"
                                 }
@@ -986,7 +989,7 @@ export default function OrganizationPanel({
                 📑 Đi đến lập kế hoạch chi tiết
               </button>
             </div>
-          ) : canEdit && ["Chờ phân công thực hiện", "Dự thảo", "Cần bổ sung", "Từ chối"].includes(status) ? (
+          ) : canEdit && editablePlanStatuses.includes(status) ? (
             <form
               onSubmit={(e) => {
                 e.preventDefault();
@@ -1047,9 +1050,9 @@ export default function OrganizationPanel({
 
                 <button
                   type="button"
-                  disabled={busy || planDirty || status === "Chờ phân công thực hiện"}
+                  disabled={busy || planDirty || awaitingAssignment}
                   title={
-                    status === "Chờ phân công thực hiện"
+                    awaitingAssignment
                       ? "Cần bấm Lưu phân công thực hiện trước khi trình khoa ký"
                       : "Trình Khoa xét duyệt kế hoạch chi tiết"
                   }
@@ -1060,19 +1063,19 @@ export default function OrganizationPanel({
                   }}
                   style={{
                     padding: "9px 20px",
-                    background: status === "Chờ phân công thực hiện" ? "#f1f5f9" : "#16a34a",
-                    color: status === "Chờ phân công thực hiện" ? "#94a3b8" : "#ffffff",
+                    background: awaitingAssignment ? "#f1f5f9" : "#16a34a",
+                    color: awaitingAssignment ? "#94a3b8" : "#ffffff",
                     border: "none",
                     borderRadius: "6px",
                     fontSize: "13.5px",
                     fontWeight: 600,
-                    cursor: (busy || planDirty || status === "Chờ phân công thực hiện") ? "not-allowed" : "pointer",
+                    cursor: (busy || planDirty || awaitingAssignment) ? "not-allowed" : "pointer",
                   }}
                 >
                   Trình khoa ký
                 </button>
 
-                {status === "Chờ phân công thực hiện" && (
+                {awaitingAssignment && (
                   <span style={{ fontSize: "12.5px", color: "#b45309", fontWeight: 500 }}>
                     * Bấm nút &quot;Lưu phân công thực hiện&quot; để chuyển trạng thái sang &quot;Dự thảo&quot; và mở khóa nút Trình khoa ký.
                   </span>
@@ -1233,18 +1236,18 @@ export default function OrganizationPanel({
               gap: "12px",
               padding: "12px 16px",
               borderRadius: "8px",
-              background: status === "Chờ phân công thực hiện" ? "#fff7ed" : "#eff6ff",
-              border: status === "Chờ phân công thực hiện" ? "1px solid #fed7aa" : "1px solid #bfdbfe",
+              background: awaitingAssignment ? "#fff7ed" : "#eff6ff",
+              border: awaitingAssignment ? "1px solid #fed7aa" : "1px solid #bfdbfe",
               margin: "16px 0",
             }}>
               <div>
-                <div style={{ fontWeight: 600, color: status === "Chờ phân công thực hiện" ? "#c2410c" : "#1e40af", fontSize: "14px" }}>
-                  {status === "Chờ phân công thực hiện"
+                <div style={{ fontWeight: 600, color: awaitingAssignment ? "#c2410c" : "#1e40af", fontSize: "14px" }}>
+                  {awaitingAssignment
                     ? "⚠️ Kế hoạch đang ở trạng thái: Chờ phân công thực hiện"
                     : `Trạng thái: ${status}`}
                 </div>
                 <div style={{ fontSize: "13px", color: "#64748b", marginTop: "2px" }}>
-                  {status === "Chờ phân công thực hiện"
+                  {awaitingAssignment
                     ? "Mục Các ban và phân công giảng viên đã được tách sang trang riêng. Hãy sang trang Phân công thực hiện để phân công giảng viên."
                     : "Xem và quản lý các ban thực hiện tại trang Phân công thực hiện."}
                 </div>
@@ -1277,9 +1280,9 @@ export default function OrganizationPanel({
           <div className={s.businessActions}>
             {canEdit && selected.MaKHToChuc ? (
               <button
-                disabled={busy || planDirty || status === "Chờ phân công thực hiện"}
+                disabled={busy || planDirty || awaitingAssignment}
                 title={
-                  status === "Chờ phân công thực hiện"
+                  awaitingAssignment
                     ? "Cần hoàn tất phân công thực hiện (chuyển sang Dự thảo) trước khi trình khoa ký"
                     : "Trình Khoa xét duyệt kế hoạch chi tiết"
                 }

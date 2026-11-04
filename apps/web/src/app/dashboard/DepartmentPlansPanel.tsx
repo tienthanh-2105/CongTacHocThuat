@@ -3,13 +3,13 @@
 import { useCallback, useEffect, useState } from "react";
 import { workflowRequest } from "@/services/workflow";
 import NoticeDialog from "./NoticeDialog";
+import DepartmentAssignmentPanel, { type DepartmentMember } from "./DepartmentAssignmentPanel";
 import s from "./dashboard.module.css";
 
 type Department = { MaBM: number; TenBM: string; VaiTro: string };
 type Proposal = { MaDeXuat: number; MaHD?: number | null; MaBM: number; TenBM: string; TenHoatDong?: string | null; NamHoc: string; TenCuocThi: string; NoiDung: string; DuTruKinhPhi: number; TenNguoiLap: string; TrangThai: string; GhiChuDuyet?: string | null; MaKeHoachKhoa?: number | null; TrangThaiKeHoachKhoa?: string | null; LaNguoiLap?: boolean; LaTruongBM?: boolean; HocVi?: string | null; ChucDanh?: string | null; ChucVu?: string | null };
 type FacultyPlan = { MaKeHoach: number; SoKeHoach: string; NamHoc: string; TrangThai: string };
 type Form = { maBM: number; namHoc: string; tenCuocThi: string; noiDung: string; duTruKinhPhi: number };
-type Member = { HoTen: string; Email?: string; HocVi?: string; VaiTro: string; TenBM: string };
 const initial: Form = { maBM: 0, namHoc: "2026-2027", tenCuocThi: "", noiDung: "", duTruKinhPhi: 0 };
 const money = (value: number) => `${Number(value).toLocaleString("vi-VN")} đ`;
 function proposalStatusLabel(proposal: Proposal) {
@@ -27,20 +27,19 @@ function proposalStatusLabel(proposal: Proposal) {
 
 export default function DepartmentPlansPanel({ mode, facultyPlans = [] }: { mode: "lecturer" | "faculty"; facultyPlans?: FacultyPlan[] }) {
   const [departments, setDepartments] = useState<Department[]>([]);
-  const [members, setMembers] = useState<Member[]>([]);
+  const [members, setMembers] = useState<DepartmentMember[]>([]);
   const [proposals, setProposals] = useState<Proposal[]>([]);
   const [form, setForm] = useState<Form>(initial);
   const [editingId, setEditingId] = useState<number | null>(null);
   const [busy, setBusy] = useState(false);
   const [notice, setNotice] = useState<{ message: string; kind: "success" | "error" } | null>(null);
   const [year, setYear] = useState("");
-  const [showBoardMembers, setShowBoardMembers] = useState(false);
   const [selectedProposalIds, setSelectedProposalIds] = useState<number[]>([]);
   const [viewingProposal, setViewingProposal] = useState<Proposal | null>(null);
   const load = useCallback(async () => {
     if (mode === "lecturer") {
       const [membershipRows, proposalRows, memberRows] = await Promise.all([
-        workflowRequest<Department[]>("/department-plans/my-departments"), workflowRequest<Proposal[]>("/department-plans"), workflowRequest<Member[]>("/department-plans/board-members"),
+        workflowRequest<Department[]>("/department-plans/my-departments"), workflowRequest<Proposal[]>("/department-plans"), workflowRequest<DepartmentMember[]>("/department-plans/board-members"),
       ]);
       setDepartments(membershipRows);
       setMembers(memberRows);
@@ -101,10 +100,7 @@ export default function DepartmentPlansPanel({ mode, facultyPlans = [] }: { mode
   const allWaitingSelected = waitingForHead.length > 0 && waitingForHead.every((proposal) => selectedProposalIds.includes(proposal.MaDeXuat));
   return <>
     {notice && <NoticeDialog message={notice.message} kind={notice.kind} onClose={() => setNotice(null)} />}
-    {mode === "lecturer" && <section className={`${s.card} ${s.departmentBoardMembersCard}`}>
-      <div className={s.planActivityFilterHeading}><h2>Thành viên Ban bộ môn</h2><button type="button" className={s.secondaryButton} aria-expanded={showBoardMembers} onClick={() => setShowBoardMembers((visible) => !visible)}>{showBoardMembers ? "Ẩn" : "Xem"}</button></div>
-      {showBoardMembers && <><div className={s.planActivityTableWrap}><table className={s.departmentMembersTable}><thead><tr><th>Họ và tên</th><th>Email</th><th>Học hàm / học vị</th><th>Bộ môn</th><th>Vai trò</th></tr></thead><tbody>{members.map((member, index) => <tr key={`${member.HoTen}-${index}`}><td>{member.HoTen}</td><td>{member.Email || "—"}</td><td>{member.HocVi || "—"}</td><td>{member.TenBM}</td><td>{["Trưởng bộ môn", "Phụ trách bộ môn"].includes(member.VaiTro) ? "Phụ trách bộ môn" : "Ban bộ môn"}</td></tr>)}</tbody></table></div><p className={s.studentProfilesHint}>Giảng viên gửi hoạt động học thuật từ trang Hoạt động học thuật. Phụ trách bộ môn xem xét rồi chuyển đề xuất lên Trưởng ban học thuật tổng hợp.</p></>}
-    </section>}
+    {mode === "lecturer" && <DepartmentAssignmentPanel departments={departments} members={members} />}
     <section className={`${s.card} ${s.departmentBoardProposalsCard}`}>
       <div className={s.planActivityFilterHeading}>
         <h2>{mode === "lecturer" ? "Đề xuất của bộ môn" : "Đề xuất chờ Trưởng ban học thuật tổng hợp"}</h2>

@@ -1,6 +1,7 @@
 "use client";
 
 import { useId, useMemo, useState } from "react";
+import { createPortal } from "react-dom";
 import s from "./dashboard.module.css";
 
 export type Assignment = {
@@ -25,6 +26,8 @@ export type WorkItem = {
   stt: number;
   noiDung: string;
   thoiGian: string;
+  thoiGianKetThuc?: string;
+  dateText?: string;
   maTK: number;
   hoTen?: string;
 };
@@ -227,6 +230,9 @@ type WorkItemRow = {
   stt: number;
   noiDung: string;
   thoiGian: string;
+  thoiGianKetThuc: string;
+  dateText: string;
+  manualAssignee: boolean;
   maTK: number;
   hoTen: string;
 };
@@ -434,6 +440,9 @@ export function PlanCommitteesEditor({
           stt: w.stt ?? i + 1,
           noiDung: w.noiDung || "",
           thoiGian: w.thoiGian ? w.thoiGian.slice(0, 10) : "",
+          thoiGianKetThuc: w.thoiGianKetThuc ? w.thoiGianKetThuc.slice(0, 10) : "",
+          dateText: w.dateText || (w.thoiGian ? `${new Date(w.thoiGian).toLocaleDateString("vi-VN")}${w.thoiGianKetThuc ? ` đến ${new Date(w.thoiGianKetThuc).toLocaleDateString("vi-VN")}` : ""}` : ""),
+          manualAssignee: Boolean(w.hoTen && !staff.some((person) => normalizeName(w.hoTen!) === normalizeName(formatTeacherName(person.HoTen, person.HocVi)))),
           maTK: w.maTK || 0,
           hoTen: formatTeacherName(rawName, person?.HocVi),
         };
@@ -445,11 +454,25 @@ export function PlanCommitteesEditor({
         stt: 1,
         noiDung: "",
         thoiGian: "",
+        thoiGianKetThuc: "",
+        dateText: "",
+        manualAssignee: false,
         maTK: 0,
         hoTen: "",
       },
     ];
   });
+  const [openStaffRow, setOpenStaffRow] = useState<number | null>(null);
+  const [staffSearchByRow, setStaffSearchByRow] = useState<Record<number, string>>({});
+  const [staffMenuPosition, setStaffMenuPosition] = useState<{ top: number; left: number; width: number; maxHeight: number } | null>(null);
+
+  function openStaffMenu(row: number, anchor: HTMLElement) {
+    const rect = anchor.getBoundingClientRect();
+    const maxHeight = Math.min(300, window.innerHeight - 24);
+    const top = rect.bottom + maxHeight + 8 <= window.innerHeight ? rect.bottom + 4 : Math.max(8, rect.top - maxHeight - 4);
+    setStaffMenuPosition({ top, left: rect.left, width: rect.width, maxHeight });
+    setOpenStaffRow(row);
+  }
 
   const facultyLeaders = getFacultyLeaders(staff);
   const departmentStaff = getDepartmentStaff(staff, departmentId);
@@ -459,6 +482,7 @@ export function PlanCommitteesEditor({
     notifyChange();
     const item = workItems[itemIndex];
     if (!item) return;
+    if (item.manualAssignee && !item.hoTen.split(";").some((name) => normalizeName(name) === normalizeName(formatTeacherName(person.HoTen, person.HocVi)))) return;
 
     const currentlySelected = staff.filter((p) => isLecturerSelected(item, p));
     const isAlready = currentlySelected.some((p) => p.MaTK === person.MaTK);
@@ -476,6 +500,7 @@ export function PlanCommitteesEditor({
     updateWorkItemRow(itemIndex, {
       hoTen: nextHoTen,
       maTK: nextMaTK,
+      manualAssignee: false,
     });
   }
 
@@ -631,6 +656,9 @@ export function PlanCommitteesEditor({
         stt: prev.length + 1,
         noiDung: "",
         thoiGian: "",
+        thoiGianKetThuc: "",
+        dateText: "",
+        manualAssignee: false,
         maTK: 0,
         hoTen: "",
       },
@@ -696,6 +724,8 @@ export function PlanCommitteesEditor({
         stt: idx + 1,
         noiDung: w.noiDung.trim(),
         thoiGian: w.thoiGian || undefined,
+        thoiGianKetThuc: w.thoiGianKetThuc || undefined,
+        dateText: w.dateText || undefined,
         maTK: w.maTK || undefined,
         hoTen: (w.hoTen && w.hoTen.trim()) || (person ? formatTeacherName(person.HoTen, person.HocVi) : undefined),
       };
@@ -987,79 +1017,40 @@ export function PlanCommitteesEditor({
 
                   {/* Thời gian hoàn thành */}
                   <td style={{ padding: "8px 10px", border: "1px solid #e2e8f0", verticalAlign: "middle", boxSizing: "border-box" }}>
-                    <input
-                      type="date"
-                      className={s.businessInput}
-                      style={{ padding: "6px 8px", fontSize: "13px", width: "100%", boxSizing: "border-box", border: "1px solid #cbd5e1", borderRadius: "5px" }}
-                      value={item.thoiGian}
-                      onChange={(e) => updateWorkItemRow(index, { thoiGian: e.target.value })}
-                    />
+                    <input type="text" className={s.businessInput} style={{ padding: "6px 8px", fontSize: "13px", width: "100%", boxSizing: "border-box", border: "1px solid #cbd5e1", borderRadius: "5px" }} placeholder="dd/mm/yyyy đến dd/mm/yyyy" value={item.dateText} onChange={(e) => updateWorkItemRow(index, { dateText: e.target.value, thoiGian: "", thoiGianKetThuc: "" })} />
+                    <datalist id={`work-dates-${baseId}-${index}`}>
+                      <option value="Ngày bắt đầu và ngày kết thúc (chọn bằng lịch bên dưới)" />
+                      {item.thoiGian && <option value={`${new Date(item.thoiGian).toLocaleDateString("vi-VN")} đến ${item.thoiGianKetThuc ? new Date(item.thoiGianKetThuc).toLocaleDateString("vi-VN") : ""}`} />}
+                    </datalist>
+                    <details style={{ marginTop: "6px" }}><summary style={{ cursor: "pointer", color: "#475569", fontSize: "12px" }}>Chọn khoảng ngày bằng lịch</summary><div style={{ display: "flex", gap: "5px", marginTop: "6px" }}><input aria-label={`Ngày bắt đầu công việc dòng ${index + 1}`} type="date" className={s.businessInput} style={{ minWidth: 0, width: "50%", padding: "5px", fontSize: "12px" }} value={item.thoiGian} onChange={(e) => { const start = e.target.value; const range = start && item.thoiGianKetThuc ? `${new Date(`${start}T00:00:00`).toLocaleDateString("vi-VN")} đến ${new Date(`${item.thoiGianKetThuc}T00:00:00`).toLocaleDateString("vi-VN")}` : start ? new Date(`${start}T00:00:00`).toLocaleDateString("vi-VN") : ""; updateWorkItemRow(index, { thoiGian: start, dateText: range }); }} /><input aria-label={`Ngày kết thúc công việc dòng ${index + 1}`} type="date" className={s.businessInput} style={{ minWidth: 0, width: "50%", padding: "5px", fontSize: "12px" }} value={item.thoiGianKetThuc} onChange={(e) => { const end = e.target.value; const range = item.thoiGian && end ? `${new Date(`${item.thoiGian}T00:00:00`).toLocaleDateString("vi-VN")} đến ${new Date(`${end}T00:00:00`).toLocaleDateString("vi-VN")}` : item.thoiGian ? new Date(`${item.thoiGian}T00:00:00`).toLocaleDateString("vi-VN") : ""; updateWorkItemRow(index, { thoiGianKetThuc: end, dateText: range }); }} /></div></details>
                   </td>
 
                   {/* Phân công thực hiện (dạng selection, chọn nhiều giảng viên ngăn cách bằng dấu ;) */}
                   <td style={{ padding: "8px 10px", border: "1px solid #e2e8f0", verticalAlign: "middle", boxSizing: "border-box" }}>
-                    <select
-                      className={s.businessInput}
-                      style={{
-                        padding: "6px 8px",
-                        fontSize: "13px",
-                        width: "100%",
-                        boxSizing: "border-box",
-                        border: "1px solid #cbd5e1",
-                        borderRadius: "5px",
-                      }}
-                      value={item.hoTen ? "__CURRENT__" : ""}
-                      onChange={(e) => {
-                        const val = e.target.value;
-                        if (val === "__CLEAR__") {
-                          notifyChange();
-                          updateWorkItemRow(index, { hoTen: "", maTK: 0 });
-                          return;
-                        }
-                        if (val.startsWith("TOGGLE_")) {
-                          const maTK = Number(val.replace("TOGGLE_", ""));
-                          const person = staff.find((p) => p.MaTK === maTK);
-                          if (person) {
-                            toggleWorkItemLecturer(index, person);
-                          }
-                        }
-                      }}
-                    >
-                      {item.hoTen ? (
-                        <>
-                          <option value="__CURRENT__">{item.hoTen}</option>
-                          <option value="" disabled>
-                            ── Chọn thêm / bỏ chọn (ngăn cách bằng &quot;;&quot;) ──
-                          </option>
-                        </>
-                      ) : (
-                        <option value="">Chọn giảng viên thực hiện…</option>
-                      )}
-                      {groupedStaff.map((group) => (
-                        <optgroup
-                          key={group.departmentName}
-                          label={group.departmentName + (group.isCurrentDept ? " (Bộ môn phụ trách)" : "")}
-                        >
-                          {group.lecturers.map((person) => {
-                            const formattedName = formatTeacherName(person.HoTen, person.HocVi);
-                            const isSelected = isLecturerSelected(item, person);
-                            return (
-                              <option key={person.MaTK} value={`TOGGLE_${person.MaTK}`}>
-                                {isSelected ? `✓ ${formattedName} (Bỏ chọn)` : item.hoTen ? `+ ${formattedName}` : formattedName}
-                              </option>
-                            );
-                          })}
-                        </optgroup>
-                      ))}
-                      {item.hoTen && (
-                        <>
-                          <option value="" disabled>
-                            ──────────────────────────────
-                          </option>
-                          <option value="__CLEAR__">✕ Xóa tất cả (chọn lại từ đầu)</option>
-                        </>
-                      )}
-                    </select>
+                    <div style={{ position: "relative" }}>
+                      <div style={{ position: "relative" }}>
+                        <input type="text" className={s.businessInput} style={{ padding: "6px 36px 6px 8px", fontSize: "13px", width: "100%", boxSizing: "border-box", border: "1px solid #cbd5e1", borderRadius: "5px" }} placeholder="Nhập tên hoặc chọn giảng viên..." aria-label={`Phân công thực hiện, dòng ${index + 1}`} value={item.hoTen} onChange={(e) => {
+                          const value = e.target.value;
+                          const person = staff.find((p) => formatTeacherName(p.HoTen, p.HocVi) === value);
+                          updateWorkItemRow(index, { hoTen: value, maTK: person?.MaTK || 0, manualAssignee: !person });
+                          if (person) setOpenStaffRow(null);
+                        }} onFocus={(e) => openStaffMenu(index, e.currentTarget)} />
+                        <button type="button" aria-label={`Mở danh sách giảng viên dòng ${index + 1}`} aria-expanded={openStaffRow === index} onClick={(e) => openStaffRow === index ? setOpenStaffRow(null) : openStaffMenu(index, e.currentTarget.parentElement!)} style={{ position: "absolute", top: 0, right: 0, height: "100%", width: 34, border: 0, background: "transparent", borderRadius: "0 5px 5px 0", color: "#475569", cursor: "pointer" }}>⌄</button>
+                      </div>
+                      {openStaffRow === index && staffMenuPosition && createPortal(<div style={{ position: "fixed", zIndex: 10000, top: staffMenuPosition.top, left: staffMenuPosition.left, width: staffMenuPosition.width, maxHeight: staffMenuPosition.maxHeight, overflowY: "auto", border: "1px solid #cbd5e1", borderRadius: 7, background: "white", boxShadow: "0 8px 24px #0f172a24"}}>
+                        <input type="search" aria-label={`Tìm giảng viên dòng ${index + 1}`} placeholder="Tìm trong các bộ môn..." value={staffSearchByRow[index] || ""} onChange={(e) => setStaffSearchByRow((current) => ({ ...current, [index]: e.target.value }))} style={{ position: "sticky", top: 0, zIndex: 1, width: "100%", boxSizing: "border-box", padding: "8px 10px", border: 0, borderBottom: "1px solid #e2e8f0", background: "white" }} />
+                        {groupedStaff.map((group) => {
+                          const lecturers = group.lecturers.filter((person) => formatTeacherName(person.HoTen, person.HocVi).toLocaleLowerCase("vi").includes((staffSearchByRow[index] || "").toLocaleLowerCase("vi")));
+                          if (!lecturers.length) return null;
+                          return <div key={group.departmentName}><div style={{ padding: "7px 10px", background: "#f1f5f9", color: group.isCurrentDept ? "#1d4ed8" : "#475569", fontWeight: 700, fontSize: 12, position: "sticky", top: 37 }}>{group.departmentName}{group.isCurrentDept ? " · Bộ môn phụ trách" : ""}</div>{lecturers.map((person) => {
+                            const name = formatTeacherName(person.HoTen, person.HocVi);
+                            const selected = isLecturerSelected(item, person);
+                            return <button key={person.MaTK} type="button" onClick={() => { const selectedPeople = staff.filter((candidate) => isLecturerSelected(item, candidate)); const next = selected ? selectedPeople.filter((candidate) => candidate.MaTK !== person.MaTK) : [...selectedPeople, person]; updateWorkItemRow(index, { hoTen: next.map((candidate) => formatTeacherName(candidate.HoTen, candidate.HocVi)).join("; "), maTK: next[0]?.MaTK || 0, manualAssignee: false }); }} style={{ display: "block", width: "100%", padding: "8px 12px", border: 0, textAlign: "left", background: selected ? "#eff6ff" : "white", color: "#18345b", cursor: "pointer" }}>{selected ? "✓ " : ""}{name}</button>;
+                          })}</div>;
+                        })}
+                        {!groupedStaff.some((group) => group.lecturers.some((person) => formatTeacherName(person.HoTen, person.HocVi).toLocaleLowerCase("vi").includes((staffSearchByRow[index] || "").toLocaleLowerCase("vi")))) && <div style={{padding:12,color:"#64748b",fontSize:13}}>Không tìm thấy giảng viên.</div>}
+                      </div>, document.body)}
+                    </div>
                   </td>
 
                   {/* Nút xóa */}

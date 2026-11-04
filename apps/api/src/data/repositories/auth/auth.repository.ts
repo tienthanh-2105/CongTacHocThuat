@@ -14,6 +14,7 @@ type AccountRow = {
   role: string;
   department: string | null;
   position: string | null;
+  className: string | null;
 };
 
 const accountSelect = `SELECT 
@@ -34,16 +35,19 @@ const accountSelect = `SELECT
      WHERE gb2.MaGV = gv.MaGV),
     bm.TenBM,
     k.TenKhoa,
-    N'Khoa CNTT'
+    CASE WHEN sv.MaSV IS NOT NULL THEN NULL ELSE N'Khoa CNTT' END
   ) AS department
   ,cb.ChucVu AS position
+  ,l.TenLop AS className
 FROM TAIKHOAN a 
 JOIN VAITRO r ON r.MaVaiTro = a.MaVaiTro
 LEFT JOIN NGUOIDUNG n ON n.MaNgDung = a.MaNgDung
 LEFT JOIN GIANGVIEN gv ON gv.MaNgDung = n.MaNgDung
 LEFT JOIN BOMON bm ON bm.MaBM = gv.MaBM
 LEFT JOIN CANBOKHOA cb ON cb.MaNgDung = n.MaNgDung
-LEFT JOIN KHOA k ON k.MaKhoa = cb.MaKhoa`;
+LEFT JOIN KHOA k ON k.MaKhoa = cb.MaKhoa
+LEFT JOIN SINHVIEN sv ON (sv.MaNgDung = n.MaNgDung OR sv.MSSV = a.TenDangNhap)
+LEFT JOIN LOP l ON l.MaLop = sv.MaLop`;
 
 function account(row: AccountRow) {
   const roleCodes: Record<string, string> = {
@@ -57,7 +61,12 @@ function account(row: AccountRow) {
     'PHONGCTSV': 'PHONGCTSV',
   };
   const normalized = row.role.normalize('NFD').replace(/[\u0300-\u036f]/g, '').toUpperCase().replace(/[^A-Z0-9]/g, '');
-  return { ...row, department: row.department ?? undefined, roles: [{ role: { code: roleCodes[normalized] ?? normalized } }] };
+  const baseCode = roleCodes[normalized] ?? normalized;
+  const rolesSet = new Set<string>([baseCode]);
+  if (row.position && /Trưởng khoa/i.test(row.position)) {
+    rolesSet.add('TRUONGKHOA');
+  }
+  return { ...row, department: row.department ?? undefined, className: row.className ?? undefined, roles: Array.from(rolesSet).map(code => ({ role: { code } })) };
 }
 
 @Injectable()

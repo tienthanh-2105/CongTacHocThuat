@@ -188,6 +188,7 @@ export default function StudentProfilesPanel() {
 
   // Open Create Modal
   function openCreateModal() {
+    setError("");
     setNewHoTen("");
     setNewMssv("");
     setNewMaLop(classes.length > 0 ? Number(value(classes[0], "MaLop")) : "");
@@ -211,6 +212,15 @@ export default function StudentProfilesPanel() {
     }
     if (!newMssv.trim()) {
       setError("Vui lòng nhập MSSV.");
+      return;
+    }
+    const cleanNewMssv = newMssv.trim();
+    const duplicateNew = students.find((st) => {
+      const sMssv = String(value(st, "MSSV") ?? "").trim().toUpperCase();
+      return sMssv && sMssv === cleanNewMssv.toUpperCase();
+    });
+    if (duplicateNew) {
+      setError(`Mã sinh viên "${cleanNewMssv}" đã tồn tại trong hệ thống (thuộc về sinh viên: ${text(duplicateNew, "HoTen")}). Vui lòng nhập mã sinh viên khác.`);
       return;
     }
     if (!newMaLop) {
@@ -268,6 +278,7 @@ export default function StudentProfilesPanel() {
 
   // Open Edit Modal
   function openEditModal(st: Row) {
+    setError("");
     setEditingStudent(st);
     setEditHoTen(text(st, "HoTen") !== "—" ? text(st, "HoTen") : "");
     setEditMssv(text(st, "MSSV") !== "—" ? text(st, "MSSV") : "");
@@ -292,6 +303,16 @@ export default function StudentProfilesPanel() {
     }
     if (!editMssv.trim()) {
       setError("Vui lòng nhập MSSV.");
+      return;
+    }
+    const cleanEditMssv = editMssv.trim();
+    const duplicateEdit = students.find((st) => {
+      const sId = Number(value(st, "MaSV"));
+      const sMssv = String(value(st, "MSSV") ?? "").trim().toUpperCase();
+      return sId !== maSV && sMssv && sMssv === cleanEditMssv.toUpperCase();
+    });
+    if (duplicateEdit) {
+      setError(`Mã sinh viên "${cleanEditMssv}" đã tồn tại trong hệ thống (thuộc về sinh viên: ${text(duplicateEdit, "HoTen")}). Vui lòng nhập mã sinh viên khác.`);
       return;
     }
     if (!editMaLop) {
@@ -894,6 +915,26 @@ export default function StudentProfilesPanel() {
               </button>
             </div>
             <div className={s.modalForm} style={{ padding: "26px 30px" }}>
+              {error && (
+                <div
+                  style={{
+                    padding: "11px 16px",
+                    background: "#fff1f1",
+                    border: "1px solid #fecaca",
+                    borderRadius: "10px",
+                    color: "#b91c1c",
+                    fontSize: "14px",
+                    fontWeight: 500,
+                    marginBottom: "18px",
+                    display: "flex",
+                    alignItems: "center",
+                    gap: "10px",
+                  }}
+                >
+                  <span style={{ fontSize: "16px" }}>⚠</span>
+                  <span>{error}</span>
+                </div>
+              )}
               <div
                 style={{
                   display: "grid",
@@ -1262,6 +1303,26 @@ export default function StudentProfilesPanel() {
               </button>
             </div>
             <div className={s.modalForm} style={{ padding: "26px 30px" }}>
+              {error && (
+                <div
+                  style={{
+                    padding: "11px 16px",
+                    background: "#fff1f1",
+                    border: "1px solid #fecaca",
+                    borderRadius: "10px",
+                    color: "#b91c1c",
+                    fontSize: "14px",
+                    fontWeight: 500,
+                    marginBottom: "18px",
+                    display: "flex",
+                    alignItems: "center",
+                    gap: "10px",
+                  }}
+                >
+                  <span style={{ fontSize: "16px" }}>⚠</span>
+                  <span>{error}</span>
+                </div>
+              )}
               <div
                 style={{
                   display: "grid",

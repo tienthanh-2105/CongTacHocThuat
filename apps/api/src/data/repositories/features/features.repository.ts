@@ -67,8 +67,9 @@ export class FeaturesRepository {
 
   async listSeminars() {
     return this.db.query(
-      `SELECT TOP (100) s.MaSeminar, s.MaHD, s.ChuDe, s.NoiDung, s.DoiTuongTG, s.ThoiLuong,s.ChuongTrinh,
-              s.DVChuTri, h.TenHoatDong, h.NoiDung AS MoTa, h.TgDuKien, h.DiaDiem, h.SLSVDuKien, h.TrangThai,d.ThoiGianBatDau,d.ThoiGianKetThuc,d.HanDangKy,
+      `SELECT TOP (100) s.MaSeminar, s.MaHD, s.ChuDe, s.MucDich, s.NoiDung, s.DoiTuongTG, s.ThoiLuong,s.ChuongTrinh,
+              s.DVChuTri, s.ThoiGian AS ThoiGianSeminar, COALESCE(d.DiaDiem, s.DiaDiem, h.DiaDiem) AS DiaDiem,
+              h.TenHoatDong, h.NoiDung AS MoTa, h.TgDuKien, h.SLSVDuKien, h.TrangThai, d.ThoiGianBatDau, d.ThoiGianKetThuc, d.HanDangKy,
               (SELECT c.DienGia as hoTen, c.TenChuDe as chuDeTrinhBay FROM CHUDE c WHERE c.MaSeminar=s.MaSeminar FOR JSON PATH) AS DienGia,
               (SELECT t.MaTep,t.TenTep,t.UrlTep,t.LoaiTep FROM TEPSEMINAR t WHERE t.MaSeminar=s.MaSeminar FOR JSON PATH) AS TaiLieu
        FROM SEMINAR s JOIN HOATDONGHOCTHUAT h ON h.MaHD = s.MaHD LEFT JOIN KEHOACHTOCHUC d ON d.MaHD=h.MaHD
@@ -78,9 +79,10 @@ export class FeaturesRepository {
   async listActivities() {
     return this.db.query(
       `SELECT TOP (100) h.MaHD, h.TenHoatDong, h.NoiDung, h.TgDuKien,
-              h.DiaDiem, h.SLSVDuKien, h.TrangThai,
-              c.MaCThi, c.TenCuocThi, c.HinhThucThi, c.TheLe,d.ThoiGianBatDau,d.ThoiGianKetThuc,d.HanDangKy,
-              s.MaSeminar, s.ChuDe
+              COALESCE(d.DiaDiem, s.DiaDiem, h.DiaDiem) AS DiaDiem, h.SLSVDuKien, h.TrangThai,
+              d.MaKeHoach, d.TrangThai AS TrangThaiKeHoach, d.CongBoLuc, d.NguoiKyKhoa, d.NguoiKyCTSV,
+              c.MaCThi, c.TenCuocThi, c.HinhThucThi, c.TheLe, d.ThoiGianBatDau, d.ThoiGianKetThuc, d.HanDangKy,
+              s.MaSeminar, s.ChuDe, s.ThoiGian AS ThoiGianSeminar
        FROM HOATDONGHOCTHUAT h
        LEFT JOIN CUOCTHI c ON c.MaHD = h.MaHD
        LEFT JOIN SEMINAR s ON s.MaHD = h.MaHD
@@ -92,7 +94,7 @@ export class FeaturesRepository {
 
   async findSeminar(id: number) {
     const rows = await this.db.query(
-      `SELECT s.MaSeminar, s.MaHD, s.ChuDe, s.NoiDung, s.DoiTuongTG, s.ThoiLuong,s.ChuongTrinh,
+      `SELECT s.MaSeminar, s.MaHD, s.ChuDe, s.MucDich, s.NoiDung, s.DoiTuongTG, s.ThoiLuong,s.ChuongTrinh,
               s.DVChuTri, h.TenHoatDong, h.NoiDung AS MoTa, h.TgBatDau, h.TgKetThuc,
               h.HanDangKy, h.DiaDiem, h.SLToiDa, h.TrangThai,
               (SELECT c.DienGia as hoTen, c.TenChuDe as chuDeTrinhBay FROM CHUDE c WHERE c.MaSeminar=s.MaSeminar FOR JSON PATH) AS DienGia,
@@ -108,13 +110,12 @@ export class FeaturesRepository {
   }
   async updateSeminarDetails(accountId: string, admin: boolean, id: number, dto: UpdateSeminarDetailsDto) {
     return (await this.db.query(`UPDATE s SET DVChuTri=COALESCE(@p4,s.DVChuTri),
-      ThoiLuong=COALESCE(@p5,s.ThoiLuong),ChuongTrinh=COALESCE(@p6,s.ChuongTrinh) OUTPUT INSERTED.*
+      ThoiLuong=COALESCE(@p5,s.ThoiLuong),ChuongTrinh=COALESCE(@p6,s.ChuongTrinh),NoiDung=COALESCE(@p7,s.NoiDung),MucDich=COALESCE(@p8,s.MucDich) OUTPUT INSERTED.*
       FROM SEMINAR s WHERE s.MaSeminar=@p1 AND (@p3=1
         OR EXISTS(SELECT 1 FROM BANTOCHUC b JOIN TAIKHOAN t ON t.MaNgDung=b.MaNgDung WHERE b.MaHD=s.MaHD AND t.MaTK=@p2)
         OR EXISTS(SELECT 1 FROM KEHOACHTOCHUC d CROSS APPLY OPENJSON(d.CacBan) WITH(loaiBan VARCHAR(30),thanhVien NVARCHAR(MAX) AS JSON) b
           CROSS APPLY OPENJSON(b.thanhVien) WITH(maTK BIGINT) m WHERE d.MaHD=s.MaHD AND b.loaiBan='TO_CHUC' AND m.maTK=@p2))`,
-      [id,accountId,admin ? 1 : 0,dto.dvChuTri?.trim() ?? null,dto.thoiLuong ?? null,
-        dto.chuongTrinh ? JSON.stringify(dto.chuongTrinh) : null]))[0] ?? null;
+      [id,accountId,admin ? 1 : 0,dto.dvChuTri?.trim() ?? null,dto.thoiLuong ?? null,dto.chuongTrinh ? JSON.stringify(dto.chuongTrinh) : null,dto.noiDung?.trim() ?? null,dto.mucDich?.trim() ?? null]))[0] ?? null;
   }
 
   async activityExists(id: number): Promise<boolean> {
@@ -128,37 +129,67 @@ export class FeaturesRepository {
     try {
       const activityRequest = new sql.Request(transaction);
       activityRequest.input('name', sql.NVarChar(250), dto.tenHoatDong);
-      activityRequest.input('description', sql.NVarChar(sql.MAX), dto.moTa ?? null);
+      activityRequest.input('description', sql.NVarChar(sql.MAX), dto.moTa ?? dto.noiDung ?? null);
       activityRequest.input('startsAt', sql.DateTime2, new Date(dto.tgBatDau));
       activityRequest.input('endsAt', sql.DateTime2, new Date(dto.tgKetThuc));
       activityRequest.input('registrationDeadline', sql.DateTime2, dto.hanDangKy ? new Date(dto.hanDangKy) : null);
       activityRequest.input('location', sql.NVarChar(255), dto.diaDiem ?? null);
-      activityRequest.input('capacity', sql.Int, dto.slToiDa ?? null);
+      activityRequest.input('capacity', sql.Int, dto.slToiDa ?? 150);
       const activity = await activityRequest.query<{ MaHD: number }>(
-        `INSERT INTO HOATDONGHOCTHUAT(TenHoatDong, MoTa, TgBatDau, TgKetThuc, HanDangKy, DiaDiem, SLToiDa, TrangThai)
-         OUTPUT INSERTED.MaHD VALUES(@name, @description, @startsAt, @endsAt, @registrationDeadline, @location, @capacity, N'Đã công bố')`);
+        `INSERT INTO HOATDONGHOCTHUAT(TenHoatDong, MoTa, NoiDung, TgBatDau, TgKetThuc, HanDangKy, DiaDiem, SLToiDa, SLSVDuKien, TrangThai, LoaiHoatDong)
+         OUTPUT INSERTED.MaHD VALUES(@name, @description, @description, @startsAt, @endsAt, @registrationDeadline, @location, @capacity, @capacity, N'Đã công bố', N'Seminar')`);
       const maHD = activity.recordset[0].MaHD;
+
+      const keHoachRequest = new sql.Request(transaction);
+      keHoachRequest.input('activityId', sql.BigInt, maHD);
+      keHoachRequest.input('name', sql.NVarChar(250), dto.tenHoatDong);
+      keHoachRequest.input('startsAt', sql.DateTime2, new Date(dto.tgBatDau));
+      keHoachRequest.input('endsAt', sql.DateTime2, new Date(dto.tgKetThuc));
+      keHoachRequest.input('registrationDeadline', sql.DateTime2, dto.hanDangKy ? new Date(dto.hanDangKy) : null);
+      keHoachRequest.input('location', sql.NVarChar(255), dto.diaDiem ?? null);
+      await keHoachRequest.query(
+        `INSERT INTO KEHOACHTOCHUC(MaHD, TenKeHoach, ThoiGianBatDau, ThoiGianKetThuc, HanDangKy, DiaDiem, TrangThai, CongBoLuc)
+         VALUES(@activityId, @name, @startsAt, @endsAt, @registrationDeadline, @location, N'Đã duyệt', SYSDATETIMEOFFSET())`);
+
       const seminarRequest = new sql.Request(transaction);
       seminarRequest.input('activityId', sql.BigInt, maHD);
-      seminarRequest.input('topic', sql.NVarChar(250), dto.chuDe);
+      seminarRequest.input('topic', sql.NVarChar(250), dto.chuDe || dto.tenHoatDong);
       seminarRequest.input('content', sql.NVarChar(sql.MAX), dto.noiDung ?? null);
-      seminarRequest.input('audience', sql.NVarChar(sql.MAX), dto.doiTuongTG ?? null);
-      seminarRequest.input('duration', sql.Int, dto.thoiLuong ?? null);
-      seminarRequest.input('hostUnit', sql.NVarChar(200), dto.dvChuTri ?? null);
+      seminarRequest.input('audience', sql.NVarChar(sql.MAX), dto.doiTuongTG ?? 'Sinh viên Khoa CNTT');
+      seminarRequest.input('duration', sql.Int, dto.thoiLuong ?? 240);
+      seminarRequest.input('hostUnit', sql.NVarChar(200), dto.dvChuTri ?? 'Khoa Công nghệ Thông tin');
+      seminarRequest.input('location', sql.NVarChar(255), dto.diaDiem ?? null);
+      seminarRequest.input('capacity', sql.Int, dto.slToiDa ?? 150);
       seminarRequest.input('agenda', sql.NVarChar(sql.MAX), JSON.stringify(dto.chuongTrinh ?? []));
       const seminar = await seminarRequest.query<{ MaSeminar: number }>(
-        `INSERT INTO SEMINAR(MaHD, ChuDe, NoiDung, DoiTuongTG, ThoiLuong, DVChuTri, ChuongTrinh)
+        `INSERT INTO SEMINAR(MaHD, ChuDe, NoiDung, DoiTuongTG, ThoiLuong, DVChuTri, DiaDiem, SLSVDuKien, ChuongTrinh)
          OUTPUT INSERTED.MaSeminar
-         VALUES(@activityId, @topic, @content, @audience, @duration, @hostUnit, @agenda)`);
+         VALUES(@activityId, @topic, @content, @audience, @duration, @hostUnit, @location, @capacity, @agenda)`);
+      const maSeminar = seminar.recordset[0].MaSeminar;
+
+      if (Array.isArray(dto.dienGia) && dto.dienGia.length > 0) {
+        for (let i = 0; i < dto.dienGia.length; i++) {
+          const sp = dto.dienGia[i];
+          if (!sp.hoTen) continue;
+          const speakerRequest = new sql.Request(transaction);
+          speakerRequest.input('seminarId', sql.BigInt, maSeminar);
+          speakerRequest.input('stt', sql.Int, i + 1);
+          speakerRequest.input('topic', sql.NVarChar(255), sp.chuDeTrinhBay ?? `Báo cáo chuyên đề ${i + 1}`);
+          speakerRequest.input('speaker', sql.NVarChar(255), sp.donVi ? `${sp.hoTen} – ${sp.donVi}` : sp.hoTen);
+          await speakerRequest.query(
+            `INSERT INTO CHUDE(MaSeminar, STT, TenChuDe, DienGia) VALUES(@seminarId, @stt, @topic, @speaker)`);
+        }
+      }
+
       const notificationRequest = new sql.Request(transaction);
       notificationRequest.input('activityId', sql.BigInt, maHD);
       notificationRequest.input('title', sql.NVarChar(250), dto.tenHoatDong);
       await notificationRequest.query(`INSERT INTO THONGBAO(MaTK,MaHD,Loai,TieuDe,NoiDung)
         SELECT DISTINCT tk.MaTK,@activityId,N'Hoạt động mới',@title,
-          CONCAT(N'Hoạt động mới đã được công bố. Thời gian: ',CONVERT(nvarchar(30),h.TgBatDau,126),N'; địa điểm: ',COALESCE(h.DiaDiem,N'Chưa cập nhật'))
+          CONCAT(N'Seminar học thuật mới đã được công bố. Thời gian: ',CONVERT(nvarchar(30),h.TgBatDau,126),N'; địa điểm: ',COALESCE(h.DiaDiem,N'Chưa cập nhật'))
         FROM TAIKHOAN tk JOIN SINHVIEN sv ON sv.MaNgDung=tk.MaNgDung JOIN HOATDONGHOCTHUAT h ON h.MaHD=@activityId`);
       await transaction.commit();
-      return this.findSeminar(seminar.recordset[0].MaSeminar);
+      return this.findSeminar(maSeminar);
     } catch (error) {
       await transaction.rollback();
       throw error;

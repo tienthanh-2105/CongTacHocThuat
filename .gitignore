@@ -12,4 +12,7 @@ backups/
 *.tsbuildinfo
 web-build/
 dist-check/
-artifacts/test-video/
+
+tmp/
+
+artifacts/

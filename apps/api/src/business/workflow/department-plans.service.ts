@@ -1,8 +1,20 @@
 import { BadRequestException, ForbiddenException, Inject, Injectable, NotFoundException } from '@nestjs/common';
 import { DatabaseService } from '../../data/database.service';
 import type { SessionContext } from '../auth/auth.types';
+import sql from 'mssql';
 
 type ProposalInput = { maBM: number; namHoc: string; tenCuocThi: string; noiDung: string; duTruKinhPhi: number };
+type AssignmentInput = {
+  maBM: number;
+  tenHoatDong?: string;
+  loaiHoatDong?: string;
+  namHoc?: string;
+  noiDung: string;
+  hanHoanThanh?: string | null;
+  maTKs: number[];
+  nguoiChuTri: number;
+  chiTietPhanCong?: Record<number, string>;
+};
 const normalizedRole = (value: string) => value.normalize('NFD').replace(/[\u0300-\u036f]/g, '').toUpperCase().replace(/[^A-Z0-9]/g, '');
 
 @Injectable()
@@ -37,10 +49,104 @@ export class DepartmentPlansService {
   async boardMembers(context: SessionContext) {
     const memberships = await this.memberships(context); const ids = memberships.map((item) => item.MaBM);
     if (!ids.length) return [];
-    return this.db.query(`SELECT DISTINCT gv.MaGV,n.HoTen,n.Email,gv.HocVi,COALESCE(link.VaiTro,N'Ban bộ môn') AS VaiTro,bm.TenBM FROM GIANGVIEN gv
+    return this.db.query(`SELECT DISTINCT gv.MaGV,t.MaTK,bm.MaBM,n.HoTen,n.Email,gv.HocVi,
+      CASE WHEN cb.ChucVu IN(N'Trưởng bộ môn',N'Phụ trách bộ môn') AND gv.MaBM=bm.MaBM THEN N'Phụ trách bộ môn' ELSE COALESCE(link.VaiTro,N'Giảng viên') END AS VaiTro,bm.TenBM FROM GIANGVIEN gv
       JOIN NGUOIDUNG n ON n.MaNgDung=gv.MaNgDung JOIN BOMON bm ON bm.MaBM IN(${ids.map((_, i) => `@p${i + 1}`).join(',')})
+      LEFT JOIN TAIKHOAN t ON t.MaNgDung=gv.MaNgDung AND t.TrangThai=N'Hoạt động' AND n.TrangThai=N'Hoạt động'
+      LEFT JOIN CANBOKHOA cb ON cb.MaNgDung=gv.MaNgDung
       LEFT JOIN GIANGVIEN_BOMON link ON link.MaGV=gv.MaGV AND link.MaBM=bm.MaBM
       WHERE gv.MaBM=bm.MaBM OR link.MaBM IS NOT NULL ORDER BY bm.TenBM,n.HoTen`, ids);
+  }
+  async assignments(context: SessionContext) {
+    return this.db.query(`SELECT a.*,bm.TenBM,n.HoTen AS TenNguoiGiao,lead.HoTen AS TenChuTri,
+      (SELECT COUNT(*) FROM NGUOITHUCHIENDEXUAT x WHERE x.MaPhanCongDeXuat=a.MaPhanCongDeXuat) AS SoNguoi
+      FROM PHANCONGDEXUATBOMON a JOIN BOMON bm ON bm.MaBM=a.MaBM
+      JOIN TAIKHOAN t ON t.MaTK=a.NguoiGiao LEFT JOIN NGUOIDUNG n ON n.MaNgDung=t.MaNgDung
+      JOIN TAIKHOAN lt ON lt.MaTK=a.NguoiChuTri LEFT JOIN NGUOIDUNG lead ON lead.MaNgDung=lt.MaNgDung
+      WHERE a.NguoiGiao=@p1 OR EXISTS(SELECT 1 FROM NGUOITHUCHIENDEXUAT x WHERE x.MaPhanCongDeXuat=a.MaPhanCongDeXuat AND x.MaTK=@p1)
+      ORDER BY a.NgayGiao DESC,a.MaPhanCongDeXuat DESC`,[context.userId]);
+  }
+  async assignment(context: SessionContext, id: number) {
+    const row = (await this.db.query(`SELECT a.*,bm.TenBM,n.HoTen AS TenNguoiGiao
+      FROM PHANCONGDEXUATBOMON a JOIN BOMON bm ON bm.MaBM=a.MaBM
+      JOIN TAIKHOAN t ON t.MaTK=a.NguoiGiao LEFT JOIN NGUOIDUNG n ON n.MaNgDung=t.MaNgDung
+      WHERE a.MaPhanCongDeXuat=@p1 AND (a.NguoiGiao=@p2 OR EXISTS(
+        SELECT 1 FROM NGUOITHUCHIENDEXUAT x WHERE x.MaPhanCongDeXuat=a.MaPhanCongDeXuat AND x.MaTK=@p2))`,[id,context.userId]))[0];
+    if (!row) throw new NotFoundException('Không tìm thấy phân công hoặc bạn không được giao nhiệm vụ này');
+    const members = await this.db.query(`SELECT x.MaTK,n.HoTen,x.NoiDung FROM NGUOITHUCHIENDEXUAT x
+      JOIN TAIKHOAN t ON t.MaTK=x.MaTK LEFT JOIN NGUOIDUNG n ON n.MaNgDung=t.MaNgDung
+      WHERE x.MaPhanCongDeXuat=@p1 ORDER BY n.HoTen`,[id]);
+    return { ...row, members };
+  }
+  async assign(context: SessionContext, input: AssignmentInput) {
+    const membership = (await this.memberships(context)).find(row => row.MaBM === input.maBM);
+    if (!membership || !['Trưởng bộ môn','Phụ trách bộ môn'].includes(membership.VaiTro)) throw new ForbiddenException('Chỉ Phụ trách bộ môn được phân công giảng viên của bộ môn mình');
+    const ids = input.maTKs;
+    if (!Array.isArray(ids) || !ids.length || ids.length > 100 || new Set(ids).size !== ids.length || ids.some(id => !Number.isSafeInteger(id) || id < 1)) throw new BadRequestException('Hãy chọn từ 1 đến 100 giảng viên, không trùng nhau');
+    if (!ids.includes(input.nguoiChuTri)) throw new BadRequestException('Người chủ trì phải thuộc danh sách được phân công');
+    let due: Date | null = null;
+    const today = new Intl.DateTimeFormat('en-CA',{ timeZone:'Asia/Ho_Chi_Minh',year:'numeric',month:'2-digit',day:'2-digit' }).format(new Date());
+    if (input.hanHoanThanh?.trim()) {
+      const dueParsed = new Date(`${input.hanHoanThanh.trim()}T00:00:00Z`);
+      if (!/^\d{4}-\d{2}-\d{2}$/.test(input.hanHoanThanh.trim()) || Number.isNaN(dueParsed.getTime()) || dueParsed.toISOString().slice(0,10) !== input.hanHoanThanh.trim() || input.hanHoanThanh.trim() < today) {
+        throw new BadRequestException('Hạn hoàn thành phải là ngày hợp lệ từ hôm nay trở đi');
+      }
+      due = dueParsed;
+    }
+    const currentYear = new Date().getFullYear();
+    const startYear = new Date().getMonth() >= 7 ? currentYear : currentYear - 1;
+    const defaultYear = `${startYear}-${startYear + 1}`;
+
+    const generalContent = input.noiDung?.trim() || '';
+    const hasMemberTasks = Boolean(input.chiTietPhanCong && Object.values(input.chiTietPhanCong).some(t => t?.trim()));
+    if (!generalContent && !hasMemberTasks) {
+      throw new BadRequestException('Vui lòng nhập nội dung thực hiện');
+    }
+    const finalContent = generalContent || Object.entries(input.chiTietPhanCong || {})
+      .map(([id, t]) => t?.trim())
+      .filter(Boolean)
+      .join('; ');
+
+    const title = (input.tenHoatDong?.trim()) || (finalContent.length > 80 ? finalContent.slice(0, 77) + '...' : finalContent) || 'Công việc bộ môn';
+    const type = input.loaiHoatDong?.trim() || 'Công việc bộ môn';
+    const year = input.namHoc?.trim() || defaultYear;
+
+    const transaction = new sql.Transaction(this.db.pool);
+    await transaction.begin();
+    try {
+      const request = new sql.Request(transaction).input('department',input.maBM);
+      ids.forEach((id,index) => request.input(`member${index}`,id));
+      const eligible = await request.query(`SELECT DISTINCT t.MaTK FROM TAIKHOAN t JOIN GIANGVIEN gv ON gv.MaNgDung=t.MaNgDung
+        JOIN NGUOIDUNG n ON n.MaNgDung=t.MaNgDung
+        WHERE t.TrangThai=N'Hoạt động' AND n.TrangThai=N'Hoạt động' AND t.MaTK IN(${ids.map((_,i) => `@member${i}`).join(',')})
+          AND (gv.MaBM=@department OR EXISTS(SELECT 1 FROM GIANGVIEN_BOMON gb WHERE gb.MaGV=gv.MaGV AND gb.MaBM=@department))`);
+      if (eligible.recordset.length !== ids.length) throw new BadRequestException('Danh sách có giảng viên ngoài bộ môn hoặc chưa có tài khoản đang hoạt động');
+      const result = await new sql.Request(transaction).input('department',input.maBM).input('sender',Number(context.userId))
+        .input('lead',input.nguoiChuTri).input('title',sql.NVarChar(200),title).input('type',type)
+        .input('year',year).input('content',sql.NVarChar(sql.MAX),finalContent).input('due',sql.Date,due)
+        .query(`INSERT INTO PHANCONGDEXUATBOMON(MaBM,NguoiGiao,NguoiChuTri,TenHoatDong,LoaiHoatDong,NamHoc,NoiDung,HanHoanThanh)
+          OUTPUT INSERTED.MaPhanCongDeXuat VALUES(@department,@sender,@lead,@title,@type,@year,@content,@due)`);
+      const id = result.recordset[0].MaPhanCongDeXuat as number;
+      for (const memberId of ids) {
+        const memberTask = input.chiTietPhanCong?.[memberId]?.trim() || '';
+        const dueText = input.hanHoanThanh?.trim() ? ` Hạn hoàn thành: ${input.hanHoanThanh.trim()}.` : '';
+        const combinedNotification = memberTask
+          ? `${context.user.name} phân công công việc bộ môn.${dueText}\nNội dung thực hiện: ${memberTask}${generalContent ? `\n\nYêu cầu chung:\n${generalContent}` : ''}`
+          : `${context.user.name} phân công công việc bộ môn.${dueText}\nNội dung thực hiện: ${finalContent}`;
+
+        await new sql.Request(transaction).input('id',id).input('member',memberId)
+          .input('title',sql.NVarChar(250),`Phân công công việc: ${title}`)
+          .input('content',sql.NVarChar(sql.MAX),combinedNotification)
+          .input('task',sql.NVarChar(sql.MAX),memberTask || null)
+          .query(`INSERT INTO NGUOITHUCHIENDEXUAT(MaPhanCongDeXuat,MaTK,NoiDung) VALUES(@id,@member,@task);
+            INSERT INTO THONGBAO(MaTK,Loai,TieuDe,NoiDung,MaPhanCongDeXuat) VALUES(@member,N'Phân công đề xuất',@title,@content,@id);`);
+      }
+      await transaction.commit();
+      return { MaPhanCongDeXuat:id, soNguoi:ids.length };
+    } catch (error) {
+      try { await transaction.rollback(); } catch { /* Preserve the error that caused the rollback. */ }
+      throw error;
+    }
   }
   async list(context: SessionContext) {
     const memberships = await this.memberships(context);

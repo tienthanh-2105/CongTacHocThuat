@@ -1,8 +1,9 @@
 "use client";
 
-import { useEffect, useState, useRef, type FormEvent } from "react";
+import { useEffect, useState, useRef, useMemo, type FormEvent } from "react";
 import Link from "next/link";
 import { workflowRequest } from "@/services/workflow";
+import type { AuthUser } from "@/services/auth";
 import NoticeDialog from "./NoticeDialog";
 import s from "./dashboard.module.css";
 
@@ -53,13 +54,23 @@ const readNews = () =>
     workflowRequest<Row[]>("/news/activities").catch(() => []),
     workflowRequest<Row[]>("/notifications/mine").catch(() => []),
     workflowRequest<Row[]>("/activities").catch(() => []),
+    workflowRequest<Row[]>("/registrations/my-registrations").catch(() => []),
   ]);
 
-export default function NewsPanel() {
+export interface NewsPanelProps {
+  manage?: boolean;
+  user?: AuthUser;
+  onNavigate?: (section: string, query?: string) => void;
+}
+
+export default function NewsPanel({ manage = false, user, onNavigate }: NewsPanelProps) {
+  const isStudent = user?.roles?.includes("SINHVIEN");
   const [apiNews, setApiNews] = useState<Row[]>([]);
   const [activities, setActivities] = useState<Row[]>([]);
   const [inbox, setInbox] = useState<Row[]>([]);
   const [allActivities, setAllActivities] = useState<Row[]>([]);
+  const [myRegistrations, setMyRegistrations] = useState<Row[]>([]);
+  const [registerBusy, setRegisterBusy] = useState(false);
 
   const [editor, setEditor] = useState<Row | null>(null);
   const [isEditorOpen, setIsEditorOpen] = useState(false);
@@ -68,6 +79,7 @@ export default function NewsPanel() {
 
   const [query, setQuery] = useState("");
   const [kind, setKind] = useState("Tất cả");
+  const [statusFilter, setStatusFilter] = useState("Tất cả");
   const [error, setError] = useState("");
   const [notice, setNotice] = useState("");
   const [loading, setLoading] = useState(true);
@@ -152,22 +164,24 @@ export default function NewsPanel() {
   }
 
   async function load() {
-    const [articles, choices, messages, acts] = await readNews();
+    const [articles, choices, messages, acts, mine] = await readNews();
     setApiNews(articles);
     setActivities(choices);
     setInbox(messages);
     setAllActivities(acts);
+    setMyRegistrations(mine);
   }
 
   useEffect(() => {
     let active = true;
     void readNews()
-      .then(([articles, choices, messages, acts]) => {
+      .then(([articles, choices, messages, acts, mine]) => {
         if (active) {
           setApiNews(articles);
           setActivities(choices);
           setInbox(messages);
           setAllActivities(acts);
+          setMyRegistrations(mine);
         }
       })
       .catch((cause) => {
@@ -181,6 +195,26 @@ export default function NewsPanel() {
     };
   }, []);
 
+  async function handleQuickRegister(maHD: number) {
+    if (!maHD) return;
+    setRegisterBusy(true);
+    setError("");
+    setNotice("");
+    try {
+      const res = await workflowRequest<{ message?: string }>("/registrations/individual", {
+        method: "POST",
+        body: { maHD, hinhThuc: "Tham gia" },
+      });
+      setNotice(res?.message || "Đăng ký tham dự seminar thành công! Vé tham dự và mã QR điểm danh của bạn đã sẵn sàng.");
+      const mine = await workflowRequest<Row[]>("/registrations/my-registrations").catch(() => []);
+      setMyRegistrations(mine);
+    } catch (cause) {
+      setError(cause instanceof Error ? cause.message : "Đăng ký không thành công");
+    } finally {
+      setRegisterBusy(false);
+    }
+  }
+
   // Filter articles based on real database records
   const visible = apiNews.filter((article) => {
     const loai = text(article, "LoaiHoatDong").toLowerCase();
@@ -192,14 +226,52 @@ export default function NewsPanel() {
     const searchTarget = `${text(article, "TieuDe")} ${text(article, "TenHoatDong")} ${parseArticleContent(text(article, "NoiDung")).text}`.toLowerCase();
     const matchesQuery = searchTarget.includes(query.trim().toLowerCase());
 
-    return matchesKind && matchesQuery;
+    const matchesStatus = manage
+      ? (statusFilter === "Tất cả" || article.TrangThai === statusFilter)
+      : (article.TrangThai === "Đã công bố");
+
+    return matchesKind && matchesQuery && matchesStatus;
   });
 
-  const displayNotifs = showAllNotifs ? inbox : inbox.slice(0, 5);
+  // Announcements to display in the right column "THÔNG BÁO"
+  // Combine inbox notifications with published news so announcements are always available
+  const mergedNotifs = useMemo(() => {
+    const list: Row[] = [...inbox];
+    const seenTitles = new Set(list.map((item) => text(item, "TieuDe").trim().toLowerCase()));
 
-  // Extract upcoming events from real database activities that have schedule/date
+    // Also include published news/announcements if not already in list
+    for (const art of apiNews) {
+      if (art.TrangThai === "Đã công bố") {
+        const titleLower = text(art, "TieuDe").trim().toLowerCase();
+        if (!seenTitles.has(titleLower)) {
+          seenTitles.add(titleLower);
+          list.push({
+            MaThongBao: art.MaTin,
+            TieuDe: art.TieuDe,
+            NoiDung: art.NoiDung,
+            GuiLuc: art.CongBoLuc || art.NgayTao,
+            Loai: art.LoaiHoatDong || "Thông báo",
+            MaHD: art.MaHD,
+          });
+        }
+      }
+    }
+    return list;
+  }, [inbox, apiNews]);
+
+  const displayNotifs = showAllNotifs ? mergedNotifs : mergedNotifs.slice(0, 5);
+
+  // Extract upcoming events from real database activities that have schedule/date and approved detailed plan
   const realEvents = allActivities
-    .filter((a) => Boolean(a.ThoiGianBatDau || a.TgDuKien))
+    .filter(
+      (a) =>
+        Boolean(a.ThoiGianBatDau || a.TgDuKien) &&
+        Boolean(a.MaKeHoach) &&
+        (a.TrangThaiKeHoach === "Đã duyệt" ||
+          a.TrangThaiKeHoach === "Đã công bố" ||
+          Boolean(a.CongBoLuc) ||
+          a.TrangThai === "Đã công bố")
+    )
     .slice(0, 4)
     .map((a) => {
       const d = new Date(String(a.ThoiGianBatDau || a.TgDuKien));
@@ -352,7 +424,33 @@ export default function NewsPanel() {
         }}
       >
         {/* Category Filter Pills */}
-        <div style={{ display: "flex", gap: "8px", flexWrap: "wrap" }}>
+        <div style={{ display: "flex", gap: "8px", flexWrap: "wrap", alignItems: "center" }}>
+          {manage && (
+            <div style={{ display: "inline-flex", gap: "5px", marginRight: "12px", paddingRight: "12px", borderRight: "1px solid #e2e8f0" }}>
+              {["Tất cả", "Đã công bố", "Dự thảo", "Đã ẩn"].map((st) => {
+                const active = statusFilter === st;
+                return (
+                  <button
+                    key={st}
+                    type="button"
+                    onClick={() => setStatusFilter(st)}
+                    style={{
+                      padding: "5px 12px",
+                      borderRadius: "16px",
+                      border: active ? "1.5px solid #2563eb" : "1px solid #e2e8f0",
+                      background: active ? "#eff6ff" : "#ffffff",
+                      color: active ? "#1d4ed8" : "#64748b",
+                      fontWeight: active ? 700 : 500,
+                      fontSize: "12.5px",
+                      cursor: "pointer",
+                    }}
+                  >
+                    {st}
+                  </button>
+                );
+              })}
+            </div>
+          )}
           {["Tất cả", "Seminar", "Cuộc thi"].map((tab) => {
             const active = kind === tab;
             return (
@@ -420,7 +518,8 @@ export default function NewsPanel() {
             )}
           </div>
 
-          <button
+          {manage && (
+            <button
               type="button"
               disabled={busy}
               onClick={() => openEditor()}
@@ -442,14 +541,15 @@ export default function NewsPanel() {
               <span>✍️</span>
               <span>Soạn bản tin</span>
             </button>
+          )}
         </div>
       </div>
 
-      {/* Main 2-Column Portal Layout */}
+      {/* Main Layout: 1 cột cho QL Tin tức & thông báo, 2 cột cho Tin tức công cộng */}
       <div
         style={{
           display: "grid",
-          gridTemplateColumns: "minmax(0, 1fr) 360px",
+          gridTemplateColumns: manage ? "1fr" : "minmax(0, 1fr) 360px",
           gap: "28px",
           alignItems: "start",
           width: "100%",
@@ -492,7 +592,7 @@ export default function NewsPanel() {
                   <span>Quay lại danh sách tin tức</span>
                 </button>
 
-                {Boolean(selectedArticle.CanManage) && (
+                {manage && (
                   <button
                     type="button"
                     onClick={() => openEditor(selectedArticle)}
@@ -575,6 +675,190 @@ export default function NewsPanel() {
                   </span>
                 )}
               </div>
+
+              {/* ACTION BANNER: Đăng ký tham gia Seminar / Hoạt động */}
+              {(() => {
+                const maHD = Number(selectedArticle.MaHD);
+                if (!maHD) return null;
+                const linkedAct = allActivities.find((a) => Number(a.MaHD) === maHD);
+                if (!linkedAct) return null;
+                const isApprovedPlan = Boolean(
+                  linkedAct.MaKeHoach &&
+                    (linkedAct.TrangThaiKeHoach === "Đã duyệt" ||
+                      linkedAct.TrangThaiKeHoach === "Đã công bố" ||
+                      Boolean(linkedAct.CongBoLuc) ||
+                      linkedAct.TrangThai === "Đã công bố")
+                );
+                if (!isApprovedPlan) return null;
+
+                const isRegistered = myRegistrations.some((r) => Number(r.MaHD) === maHD);
+                const isCompetition = text(linkedAct, "LoaiHoatDong") === "Cuộc thi";
+
+                return (
+                  <div
+                    style={{
+                      background: isRegistered ? "#f0fdf4" : "#eff6ff",
+                      border: isRegistered ? "1.5px solid #86efac" : "1.5px solid #bfdbfe",
+                      borderRadius: "12px",
+                      padding: "18px 22px",
+                      marginBottom: "24px",
+                      display: "flex",
+                      justifyContent: "space-between",
+                      alignItems: "center",
+                      flexWrap: "wrap",
+                      gap: "16px",
+                      boxShadow: "0 2px 8px rgba(0,0,0,0.03)",
+                    }}
+                  >
+                    <div style={{ flex: 1, minWidth: "260px" }}>
+                      <div style={{ display: "flex", alignItems: "center", gap: "8px", marginBottom: "6px" }}>
+                        <span
+                          style={{
+                            fontSize: "12px",
+                            fontWeight: 700,
+                            padding: "3px 8px",
+                            borderRadius: "4px",
+                            background: isRegistered ? "#dcfce7" : "#dbeafe",
+                            color: isRegistered ? "#15803d" : "#1d4ed8",
+                          }}
+                        >
+                          {isCompetition ? "🏆 CUỘC THI HỌC THUẬT" : "🎤 SEMINAR HỌC THUẬT"}
+                        </span>
+                        <span
+                          style={{
+                            fontSize: "12px",
+                            fontWeight: 700,
+                            padding: "3px 8px",
+                            borderRadius: "4px",
+                            background: "#fffbeb",
+                            color: "#b45309",
+                            border: "1px solid #fde68a",
+                          }}
+                        >
+                          ⭐ {isCompetition ? "+5 Điểm rèn luyện" : "+3 Điểm rèn luyện"}
+                        </span>
+                      </div>
+
+                      <div style={{ fontSize: "16px", fontWeight: 700, color: "#0f172a", marginBottom: "6px" }}>
+                        {text(linkedAct, "TenHoatDong")}
+                      </div>
+
+                      <div style={{ display: "flex", flexWrap: "wrap", gap: "14px", fontSize: "12.5px", color: "#475569" }}>
+                        <span>
+                          📅 <strong>Thời gian:</strong> {text(linkedAct, "ThoiGianSeminar") || formatDateVn(linkedAct.ThoiGianBatDau || linkedAct.TgDuKien)}
+                        </span>
+                        <span>
+                          📍 <strong>Địa điểm:</strong> {text(linkedAct, "DiaDiem") || "Trung tâm thư viện F401, trường Đại học Công Thương Thành phố Hồ Chí Minh"}
+                        </span>
+                      </div>
+                    </div>
+
+                    <div>
+                      {isStudent ? (
+                        isRegistered ? (
+                          <div style={{ display: "flex", alignItems: "center", gap: "10px", flexWrap: "wrap" }}>
+                            <span
+                              style={{
+                                display: "inline-flex",
+                                alignItems: "center",
+                                gap: "5px",
+                                fontSize: "13px",
+                                fontWeight: 700,
+                                color: "#15803d",
+                                background: "#dcfce7",
+                                padding: "8px 14px",
+                                borderRadius: "8px",
+                              }}
+                            >
+                              ✓ Bạn đã đăng ký tham gia
+                            </span>
+                            {onNavigate && (
+                              <button
+                                type="button"
+                                onClick={() => onNavigate("registrations")}
+                                style={{
+                                  padding: "8px 16px",
+                                  borderRadius: "8px",
+                                  background: "#ffffff",
+                                  color: "#15803d",
+                                  border: "1.5px solid #86efac",
+                                  fontWeight: 700,
+                                  fontSize: "13px",
+                                  cursor: "pointer",
+                                }}
+                              >
+                                🎫 Xem vé & QR điểm danh
+                              </button>
+                            )}
+                          </div>
+                        ) : (
+                          <div style={{ display: "flex", alignItems: "center", gap: "10px", flexWrap: "wrap" }}>
+                            <button
+                              type="button"
+                              disabled={registerBusy}
+                              onClick={() => void handleQuickRegister(maHD)}
+                              style={{
+                                padding: "10px 20px",
+                                borderRadius: "8px",
+                                background: "#2563eb",
+                                color: "#ffffff",
+                                border: "none",
+                                fontWeight: 700,
+                                fontSize: "14px",
+                                cursor: "pointer",
+                                boxShadow: "0 4px 12px rgba(37,99,235,0.25)",
+                                display: "inline-flex",
+                                alignItems: "center",
+                                gap: "8px",
+                              }}
+                            >
+                              <span>👉</span>
+                              <span>{registerBusy ? "Đang xử lý…" : "Đăng ký tham dự ngay"}</span>
+                            </button>
+                            {onNavigate && (
+                              <button
+                                type="button"
+                                onClick={() => onNavigate("registrations")}
+                                style={{
+                                  padding: "9px 14px",
+                                  borderRadius: "8px",
+                                  background: "#ffffff",
+                                  color: "#475569",
+                                  border: "1px solid #cbd5e1",
+                                  fontWeight: 600,
+                                  fontSize: "13px",
+                                  cursor: "pointer",
+                                }}
+                              >
+                                Cổng đăng ký ➔
+                              </button>
+                            )}
+                          </div>
+                        )
+                      ) : (
+                        onNavigate && (
+                          <button
+                            type="button"
+                            onClick={() => onNavigate("attendance")}
+                            style={{
+                              padding: "9px 16px",
+                              borderRadius: "8px",
+                              background: "#ffffff",
+                              color: "#2563eb",
+                              border: "1.5px solid #bfdbfe",
+                              fontWeight: 700,
+                              fontSize: "13px",
+                              cursor: "pointer",
+                            }}
+                          >
+                            📋 Quản lý điểm danh hoạt động
+                          </button>
+                        )
+                      )}
+                    </div>
+                  </div>
+                );
+              })()}
 
               {/* 3. Bản PDF / Nội dung */}
               {(() => {
@@ -715,41 +999,43 @@ export default function NewsPanel() {
             </div>
           ) : (
             <>
-              {/* Header with Red Underline Accent */}
-              <div
-                style={{
-                  position: "relative",
-                  paddingBottom: "12px",
-                  borderBottom: "2px solid #e2e8f0",
-                  marginBottom: "16px",
-                }}
-              >
-                <h2
-                  style={{
-                    margin: 0,
-                    fontSize: "20px",
-                    fontWeight: 800,
-                    color: "#1e293b",
-                    textTransform: "uppercase",
-                    letterSpacing: "0.5px",
-                    display: "inline-block",
-                  }}
-                >
-                  TIN TỨC HỌC THUẬT
-                </h2>
-                {/* Red Underline Active Bar */}
+              {/* Header with Red Underline Accent (chỉ hiển thị ở Tin tức & thông báo) */}
+              {!manage && (
                 <div
                   style={{
-                    position: "absolute",
-                    bottom: "-2px",
-                    left: 0,
-                    width: "90px",
-                    height: "3px",
-                    background: "#dc2626",
-                    borderRadius: "2px",
+                    position: "relative",
+                    paddingBottom: "12px",
+                    borderBottom: "2px solid #e2e8f0",
+                    marginBottom: "16px",
                   }}
-                />
-              </div>
+                >
+                  <h2
+                    style={{
+                      margin: 0,
+                      fontSize: "20px",
+                      fontWeight: 800,
+                      color: "#1e293b",
+                      textTransform: "uppercase",
+                      letterSpacing: "0.5px",
+                      display: "inline-block",
+                    }}
+                  >
+                    TIN TỨC HỌC THUẬT
+                  </h2>
+                  {/* Red Underline Active Bar */}
+                  <div
+                    style={{
+                      position: "absolute",
+                      bottom: "-2px",
+                      left: 0,
+                      width: "90px",
+                      height: "3px",
+                      background: "#dc2626",
+                      borderRadius: "2px",
+                    }}
+                  />
+                </div>
+              )}
 
               {/* News List */}
               {loading ? (
@@ -776,7 +1062,7 @@ export default function NewsPanel() {
                       ? "Hãy thử tìm kiếm với từ khóa khác hoặc chuyển sang danh mục Tất cả."
                       : "Các bản tin thông báo về seminar và cuộc thi học thuật sẽ được hiển thị tại đây sau khi Ban tổ chức công bố."}
                   </p>
-                  {activities.length > 0 && (
+                  {manage && activities.length > 0 && (
                     <button
                       type="button"
                       onClick={() => openEditor()}
@@ -799,16 +1085,31 @@ export default function NewsPanel() {
                 <div style={{ display: "flex", flexDirection: "column" }}>
                   {visible.map((article, idx) => {
                     const imgUrl = getArticleImage(article, idx);
-                    const isManaged = Boolean(article.CanManage);
+                    const isManaged = manage || Boolean(article.CanManage);
                     return (
                       <article
                         key={text(article, "MaTin") || idx}
+                        onClick={() => setSelectedArticle(article)}
                         style={{
                           display: "flex",
                           gap: "20px",
-                          padding: "20px 0",
-                          borderBottom: idx === visible.length - 1 ? "none" : "1px solid #f1f5f9",
+                          padding: "16px 14px",
+                          borderRadius: "10px",
+                          border: "1px solid #f1f5f9",
+                          marginBottom: "12px",
                           alignItems: "flex-start",
+                          cursor: "pointer",
+                          background: "#ffffff",
+                          transition: "all 0.2s ease",
+                          boxShadow: "0 1px 3px rgba(0,0,0,0.02)",
+                        }}
+                        onMouseEnter={(e) => {
+                          e.currentTarget.style.boxShadow = "0 4px 14px rgba(0,0,0,0.06)";
+                          e.currentTarget.style.borderColor = "#cbd5e1";
+                        }}
+                        onMouseLeave={(e) => {
+                          e.currentTarget.style.boxShadow = "0 1px 3px rgba(0,0,0,0.02)";
+                          e.currentTarget.style.borderColor = "#f1f5f9";
                         }}
                       >
                         {/* Left: Thumbnail Image */}
@@ -937,95 +1238,109 @@ export default function NewsPanel() {
                             );
                           })()}
 
-                          {/* Action Buttons */}
-                          <div style={{ display: "flex", gap: "8px", marginTop: "10px", alignItems: "center" }}>
-                            <button
-                              type="button"
-                              onClick={() => setSelectedArticle(article)}
-                              style={{
-                                padding: "4px 12px",
-                                borderRadius: "4px",
-                                border: "1px solid #cbd5e1",
-                                background: "#f8fafc",
-                                color: "#1e293b",
-                                fontSize: "12px",
-                                fontWeight: 700,
-                                cursor: "pointer",
-                                transition: "all 0.15s ease",
-                              }}
-                              onMouseEnter={(e) => {
-                                e.currentTarget.style.background = "#dc2626";
-                                e.currentTarget.style.color = "#ffffff";
-                                e.currentTarget.style.borderColor = "#dc2626";
-                              }}
-                              onMouseLeave={(e) => {
-                                e.currentTarget.style.background = "#f8fafc";
-                                e.currentTarget.style.color = "#1e293b";
-                                e.currentTarget.style.borderColor = "#cbd5e1";
-                              }}
-                            >
-                              Xem
-                            </button>
+                          {/* Action Buttons: chỉ hiển thị trong QL Tin tức & thông báo */}
+                          {manage ? (
+                            <div style={{ display: "flex", gap: "8px", marginTop: "10px", alignItems: "center" }}>
+                              <button
+                                type="button"
+                                onClick={(e) => {
+                                  e.stopPropagation();
+                                  setSelectedArticle(article);
+                                }}
+                                style={{
+                                  padding: "4px 12px",
+                                  borderRadius: "4px",
+                                  border: "1px solid #cbd5e1",
+                                  background: "#f8fafc",
+                                  color: "#1e293b",
+                                  fontSize: "12px",
+                                  fontWeight: 700,
+                                  cursor: "pointer",
+                                  transition: "all 0.15s ease",
+                                }}
+                                onMouseEnter={(e) => {
+                                  e.currentTarget.style.background = "#dc2626";
+                                  e.currentTarget.style.color = "#ffffff";
+                                  e.currentTarget.style.borderColor = "#dc2626";
+                                }}
+                                onMouseLeave={(e) => {
+                                  e.currentTarget.style.background = "#f8fafc";
+                                  e.currentTarget.style.color = "#1e293b";
+                                  e.currentTarget.style.borderColor = "#cbd5e1";
+                                }}
+                              >
+                                Xem
+                              </button>
 
-                            {isManaged && (
-                              <>
-                                <button
-                                  type="button"
-                                  disabled={busy}
-                                  onClick={() => openEditor(article)}
-                                  style={{
-                                    padding: "4px 10px",
-                                    borderRadius: "4px",
-                                    border: "1px solid #cbd5e1",
-                                    background: "#ffffff",
-                                    color: "#334155",
-                                    fontSize: "12px",
-                                    fontWeight: 600,
-                                    cursor: "pointer",
-                                  }}
-                                >
-                                  Sửa tin
-                                </button>
-                                {article.TrangThai !== "Đã công bố" ? (
+                              {isManaged && (
+                                <>
                                   <button
                                     type="button"
                                     disabled={busy}
-                                    onClick={() => void status(article, "Đã công bố")}
+                                    onClick={(e) => {
+                                      e.stopPropagation();
+                                      openEditor(article);
+                                    }}
                                     style={{
                                       padding: "4px 10px",
                                       borderRadius: "4px",
-                                      border: "1px solid #86efac",
-                                      background: "#f0fdf4",
-                                      color: "#15803d",
+                                      border: "1px solid #cbd5e1",
+                                      background: "#ffffff",
+                                      color: "#334155",
                                       fontSize: "12px",
                                       fontWeight: 600,
                                       cursor: "pointer",
                                     }}
                                   >
-                                    Đăng tin
+                                    Sửa tin
                                   </button>
-                                ) : (
-                                  <button
-                                    type="button"
-                                    disabled={busy}
-                                    onClick={() => void status(article, "Đã ẩn")}
-                                    style={{
-                                      padding: "4px 10px",
-                                      borderRadius: "4px",
-                                      border: "1px solid #fed7aa",
-                                      background: "#fff7ed",
-                                      color: "#c2410c",
-                                      fontSize: "12px",
-                                      fontWeight: 600,
-                                      cursor: "pointer",
-                                    }}
-                                  >
-                                    Ẩn tin
-                                  </button>
-                                )}
-                              </>
-                            )}
-                          </div>
+                                  {article.TrangThai !== "Đã công bố" ? (
+                                    <button
+                                      type="button"
+                                      disabled={busy}
+                                      onClick={(e) => {
+                                        e.stopPropagation();
+                                        void status(article, "Đã công bố");
+                                      }}
+                                      style={{
+                                        padding: "4px 10px",
+                                        borderRadius: "4px",
+                                        border: "1px solid #86efac",
+                                        background: "#f0fdf4",
+                                        color: "#15803d",
+                                        fontSize: "12px",
+                                        fontWeight: 600,
+                                        cursor: "pointer",
+                                      }}
+                                    >
+                                      Đăng tin
+                                    </button>
+                                  ) : (
+                                    <button
+                                      type="button"
+                                      disabled={busy}
+                                      onClick={(e) => {
+                                        e.stopPropagation();
+                                        void status(article, "Đã ẩn");
+                                      }}
+                                      style={{
+                                        padding: "4px 10px",
+                                        borderRadius: "4px",
+                                        border: "1px solid #fed7aa",
+                                        background: "#fff7ed",
+                                        color: "#c2410c",
+                                        fontSize: "12px",
+                                        fontWeight: 600,
+                                        cursor: "pointer",
+                                      }}
+                                    >
+                                      Ẩn tin
+                                    </button>
+                                  )}
+                                </>
+                              )}
+                            </div>
+                          ) : null}
                         </div>
                       </article>
                     );
@@ -1036,8 +1351,9 @@ export default function NewsPanel() {
           )}
         </div>
 
-        {/* RIGHT COLUMN: THÔNG BÁO & SỰ KIỆN */}
-        <div style={{ display: "flex", flexDirection: "column", gap: "24px" }}>
+        {/* RIGHT COLUMN: THÔNG BÁO & SỰ KIỆN (chỉ hiển thị ở Tin tức & thông báo) */}
+        {!manage && (
+          <div style={{ display: "flex", flexDirection: "column", gap: "24px" }}>
           {/* Card: THÔNG BÁO */}
           <div
             style={{
@@ -1082,7 +1398,7 @@ export default function NewsPanel() {
             </div>
 
             {/* Notification Bullet List */}
-            {!inbox.length ? (
+            {!mergedNotifs.length ? (
               <div
                 style={{
                   padding: "24px 12px",
@@ -1177,7 +1493,7 @@ export default function NewsPanel() {
             )}
 
             {/* Bottom Xem thêm Link if more than 5 */}
-            {inbox.length > 5 && (
+            {mergedNotifs.length > 5 && (
               <div
                 style={{
                   textAlign: "right",
@@ -1337,7 +1653,8 @@ export default function NewsPanel() {
             </div>
           </div>
         </div>
-      </div>
+      )}
+    </div>
 
 
       {/* ARTICLE COMPOSE / EDIT MODAL */}

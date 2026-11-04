@@ -673,6 +673,30 @@ export class DetailedPlansService {
         LichSuDuyet=JSON_MODIFY(LichSuDuyet,'append $',JSON_QUERY(@p2)) OUTPUT INSERTED.MaHD
         WHERE MaHD=@p1 AND TrangThai IN(N'Dự thảo',N'Cần lập ban đề thi',N'Cần bổ sung',N'Từ chối') AND CongBoLuc IS NULL`, [activityId,event], transaction);
       if (!changed.length) throw new ConflictException('Kế hoạch vừa thay đổi, hãy tải lại');
+
+      await this.query(`
+        INSERT INTO THONGBAO(MaTK, MaHD, Loai, TieuDe, NoiDung, GuiLuc)
+        SELECT DISTINCT t.MaTK, @p1, N'Kế hoạch chi tiết',
+          CONCAT(N'Kế hoạch chi tiết chờ duyệt: ', @p2),
+          CONCAT(N'Kế hoạch chi tiết cho hoạt động "', @p2, N'" (', @p3, N') của bộ môn ', @p4, N' đang ở trạng thái Chờ khoa xét duyệt.'),
+          SYSDATETIMEOFFSET()
+        FROM TAIKHOAN t
+        JOIN VAITRO v ON v.MaVaiTro = t.MaVaiTro
+        LEFT JOIN NGUOIDUNG nd ON nd.MaNgDung = t.MaNgDung
+        LEFT JOIN CANBOKHOA cb ON cb.MaNgDung = nd.MaNgDung
+        WHERE t.TrangThai = N'Hoạt động'
+          AND (
+            v.TenVaiTro IN (N'Trưởng khoa', N'ADMIN', N'Quản trị viên')
+            OR cb.ChucVu LIKE N'%Trưởng khoa%'
+          )
+          AND NOT EXISTS (
+            SELECT 1 FROM THONGBAO tb
+            WHERE tb.MaTK = t.MaTK
+              AND tb.MaHD = @p1
+              AND tb.Loai = N'Kế hoạch chi tiết'
+              AND tb.DocLuc IS NULL
+          )
+      `, [activityId, row.TenHoatDong, row.LoaiHoatDong || 'Cuộc thi', row.TenBM || 'Khoa CNTT'], transaction);
     });
     return this.get(context, activityId);
   }
@@ -702,6 +726,11 @@ export class DetailedPlansService {
         LichSuDuyet=JSON_MODIFY(LichSuDuyet,'append $',JSON_QUERY(@p4)) OUTPUT INSERTED.MaHD
         WHERE MaHD=@p1 AND TrangThai=@p7 AND CongBoLuc IS NULL`, [activityId,next.status,Number(context.userId),event,dto.action,next.stage,row.TrangThai], transaction);
       if (!changed.length) throw new ConflictException('Bước ký vừa thay đổi, hãy tải lại');
+
+      await this.query(`
+        UPDATE THONGBAO SET DocLuc = SYSDATETIMEOFFSET()
+        WHERE MaHD = @p1 AND Loai = N'Kế hoạch chi tiết' AND DocLuc IS NULL
+      `, [activityId], transaction);
     });
     return this.get(context, activityId);
   }

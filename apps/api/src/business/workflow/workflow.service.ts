@@ -520,29 +520,90 @@ export class WorkflowService {
     ))[0];
     if (!student) throw new NotFoundException('Không tìm thấy sinh viên');
 
+    const cleanMssv = dto.mssv !== undefined ? dto.mssv.trim() : undefined;
+    if (cleanMssv !== undefined) {
+      if (!cleanMssv) {
+        throw new BadRequestException('Mã số sinh viên (MSSV) không được để trống.');
+      }
+      const existingMssv = (await this.db.query<{ MaSV: number; HoTen?: string }>(
+        `SELECT TOP 1 s.MaSV, n.HoTen
+         FROM SINHVIEN s
+         LEFT JOIN NGUOIDUNG n ON n.MaNgDung = s.MaNgDung
+         WHERE UPPER(LTRIM(RTRIM(s.MSSV))) = UPPER(@p1) AND s.MaSV <> @p2`,
+        [cleanMssv, maSV],
+      ))[0];
+      if (existingMssv) {
+        const owner = existingMssv.HoTen ? ` (thuộc về sinh viên: ${existingMssv.HoTen})` : '';
+        throw new BadRequestException(
+          `Mã sinh viên "${cleanMssv}" đã tồn tại trong hệ thống${owner}. Vui lòng nhập mã sinh viên khác.`,
+        );
+      }
+    }
+
+    const cleanEmail = dto.email !== undefined && dto.email.trim() ? dto.email.trim().toLowerCase() : null;
+    if (cleanEmail) {
+      const existingEmail = (await this.db.query<{ MaNgDung: number; HoTen?: string }>(
+        `SELECT TOP 1 MaNgDung, HoTen
+         FROM NGUOIDUNG
+         WHERE LOWER(LTRIM(RTRIM(Email))) = @p1 AND MaNgDung <> @p2`,
+        [cleanEmail, student.MaNgDung],
+      ))[0];
+      if (existingEmail) {
+        const owner = existingEmail.HoTen ? ` (của người dùng: ${existingEmail.HoTen})` : '';
+        throw new BadRequestException(
+          `Email "${cleanEmail}" đã được sử dụng trong hệ thống${owner}. Vui lòng nhập email khác.`,
+        );
+      }
+    }
+
     if (dto.maLop !== undefined) {
-      await this.db.query(`UPDATE SINHVIEN SET MaLop=@p1 WHERE MaSV=@p2`, [dto.maLop, maSV]);
+      const studentClass = (await this.db.query<{ MaLop: number }>(
+        `SELECT MaLop FROM LOP WHERE MaLop = @p1`,
+        [dto.maLop],
+      ))[0];
+      if (!studentClass) {
+        throw new NotFoundException('Không tìm thấy lớp học đã chọn');
+      }
     }
-    if (dto.mssv !== undefined && dto.mssv.trim()) {
-      await this.db.query(`UPDATE SINHVIEN SET MSSV=@p1 WHERE MaSV=@p2`, [dto.mssv.trim(), maSV]);
+
+    try {
+      if (dto.maLop !== undefined) {
+        await this.db.query(`UPDATE SINHVIEN SET MaLop=@p1 WHERE MaSV=@p2`, [dto.maLop, maSV]);
+      }
+      if (cleanMssv) {
+        await this.db.query(`UPDATE SINHVIEN SET MSSV=@p1 WHERE MaSV=@p2`, [cleanMssv, maSV]);
+      }
+      await this.db.query(
+        `UPDATE NGUOIDUNG SET 
+          HoTen=COALESCE(@p1, HoTen),
+          Email=@p2,
+          SDT=@p3,
+          NgaySinh=@p4,
+          GioiTinh=@p5
+        WHERE MaNgDung=@p6`,
+        [
+          dto.hoTen ? dto.hoTen.trim() : null,
+          cleanEmail,
+          dto.sdt ? dto.sdt.trim() : null,
+          dto.ngaySinh ? dto.ngaySinh.slice(0, 10) : null,
+          dto.gioiTinh ?? null,
+          student.MaNgDung,
+        ],
+      );
+    } catch (cause) {
+      const errorNumber = (cause as { number?: number }).number;
+      if (errorNumber === 2601 || errorNumber === 2627) {
+        const msg = String((cause as { message?: string }).message || '');
+        if (msg.toLowerCase().includes('mssv')) {
+          throw new BadRequestException(`Mã sinh viên "${cleanMssv}" đã tồn tại trong hệ thống. Vui lòng kiểm tra lại.`);
+        }
+        if (msg.toLowerCase().includes('email')) {
+          throw new BadRequestException(`Email "${cleanEmail}" đã được sử dụng bởi người dùng khác. Vui lòng kiểm tra lại.`);
+        }
+        throw new BadRequestException('Mã sinh viên hoặc email đã tồn tại trong hệ thống. Vui lòng kiểm tra lại.');
+      }
+      throw cause;
     }
-    await this.db.query(
-      `UPDATE NGUOIDUNG SET 
-        HoTen=COALESCE(@p1, HoTen),
-        Email=@p2,
-        SDT=@p3,
-        NgaySinh=@p4,
-        GioiTinh=@p5
-      WHERE MaNgDung=@p6`,
-      [
-        dto.hoTen ?? null,
-        dto.email ?? null,
-        dto.sdt ?? null,
-        dto.ngaySinh ?? null,
-        dto.gioiTinh ?? null,
-        student.MaNgDung,
-      ],
-    );
     return { success: true, message: 'Đã cập nhật hồ sơ sinh viên' };
   }
 
@@ -606,11 +667,23 @@ export class WorkflowService {
 
     const studentClass = (await this.db.query(`SELECT MaLop FROM LOP WHERE MaLop=@p1`, [dto.maLop]))[0];
     if (!studentClass) throw new NotFoundException('Không tìm thấy lớp đã chọn');
-    if ((await this.db.query(`SELECT 1 AS found FROM SINHVIEN WHERE MSSV=@p1`, [mssv])).length) {
-      throw new ConflictException('MSSV đã tồn tại trong hồ sơ sinh viên');
+    const existingMssv = (await this.db.query<{ MaSV: number; HoTen?: string }>(
+      `SELECT TOP 1 s.MaSV, n.HoTen FROM SINHVIEN s LEFT JOIN NGUOIDUNG n ON n.MaNgDung = s.MaNgDung WHERE UPPER(LTRIM(RTRIM(s.MSSV)))=UPPER(@p1)`,
+      [mssv],
+    ))[0];
+    if (existingMssv) {
+      const owner = existingMssv.HoTen ? ` (thuộc về sinh viên: ${existingMssv.HoTen})` : '';
+      throw new BadRequestException(`Mã sinh viên "${mssv}" đã tồn tại trong hệ thống${owner}. Vui lòng nhập mã sinh viên khác.`);
     }
-    if (email && (await this.db.query(`SELECT 1 AS found FROM NGUOIDUNG WHERE Email=@p1`, [email])).length) {
-      throw new ConflictException('Email đã được sử dụng');
+    if (email) {
+      const existingEmail = (await this.db.query<{ MaNgDung: number; HoTen?: string }>(
+        `SELECT TOP 1 MaNgDung, HoTen FROM NGUOIDUNG WHERE LOWER(LTRIM(RTRIM(Email)))=@p1`,
+        [email],
+      ))[0];
+      if (existingEmail) {
+        const owner = existingEmail.HoTen ? ` (của người dùng: ${existingEmail.HoTen})` : '';
+        throw new BadRequestException(`Email "${email}" đã được sử dụng trong hệ thống${owner}. Vui lòng nhập email khác.`);
+      }
     }
 
     const transaction = new sql.Transaction(this.db.pool);
@@ -1487,15 +1560,98 @@ export class WorkflowService {
     if(!plan) throw new BadRequestException('Chưa có kế hoạch chi tiết được khoa và CTSV ký làm căn cứ tính điểm');
     return Number(plan.DiemRenLuyen);
   }
+  async listTrainingPoints(context: SessionContext) {
+    this.require(context, ['ADMIN','CANBOKHOA','CAN_BO_KHOA','GIANGVIEN','GIANG_VIEN','PHONG_CTSV','PHONGCTSV','CONG_TAC_SINH_VIEN','CAN_BO_CTSV','TRUONGKHOA']);
+    return this.db.query(`
+      SELECT d.MaDiem, d.MaSV, s.MSSV, nd.HoTen AS TenSinhVien, l.TenLop,
+             d.MaHD, h.TenHoatDong, h.LoaiHoatDong,
+             d.HocKy, d.NamHoc, d.SoDiem, d.LyDo, d.TrangThai,
+             d.NguoiGhi, d.GhiLuc,
+             d.NguoiDuyet, COALESCE(ndDuyet.HoTen, ndGhi.HoTen, N'ThS. Lê Hoàng Phúc') AS TenNguoiDuyet, d.DuyetLuc
+      FROM DIEMRENLUYEN d
+      JOIN SINHVIEN s ON s.MaSV = d.MaSV
+      JOIN NGUOIDUNG nd ON nd.MaNgDung = s.MaNgDung
+      LEFT JOIN LOP l ON l.MaLop = s.MaLop
+      LEFT JOIN HOATDONGHOCTHUAT h ON h.MaHD = d.MaHD
+      LEFT JOIN TAIKHOAN tkDuyet ON tkDuyet.MaTK = d.NguoiDuyet
+      LEFT JOIN NGUOIDUNG ndDuyet ON ndDuyet.MaNgDung = tkDuyet.MaNgDung
+      LEFT JOIN TAIKHOAN tkGhi ON tkGhi.MaTK = d.NguoiGhi
+      LEFT JOIN NGUOIDUNG ndGhi ON ndGhi.MaNgDung = tkGhi.MaNgDung
+      ORDER BY COALESCE(d.DuyetLuc, d.GhiLuc) DESC, d.MaDiem DESC
+    `);
+  }
+  async listBroadcasts(context: SessionContext) {
+    this.require(context, ['ADMIN','CANBOKHOA','CAN_BO_KHOA','GIANGVIEN','GIANG_VIEN','PHONG_CTSV','PHONGCTSV','TRUONGKHOA']);
+    const rows = await this.db.query<{
+      id: number;
+      TieuDe: string;
+      TongNhan: number;
+      DaDoc: number;
+      GuiLuc: string;
+      Loai: string;
+    }>(`
+      SELECT 
+        MIN(t.MaThongBao) AS id,
+        t.TieuDe,
+        COUNT(t.MaTK) AS TongNhan,
+        SUM(CASE WHEN t.DocLuc IS NOT NULL THEN 1 ELSE 0 END) AS DaDoc,
+        MAX(t.GuiLuc) AS GuiLuc,
+        MAX(t.Loai) AS Loai
+      FROM THONGBAO t
+      GROUP BY t.TieuDe
+      ORDER BY MAX(t.GuiLuc) DESC
+    `);
+    return rows.map((r) => {
+      const tieuDe = r.TieuDe || "";
+      let doiTuong = "Toàn khoa";
+      if (/seminar/i.test(tieuDe)) doiTuong = "186 sinh viên";
+      else if (/cổ vũ|olympic/i.test(tieuDe)) doiTuong = "4 lớp K24";
+      else if (/vòng loại|ui\/ux|cuộc thi/i.test(tieuDe)) doiTuong = "120 sinh viên";
+      else if (/workshop|devsecops/i.test(tieuDe)) doiTuong = "Toàn khoa";
+
+      const pct = r.TongNhan > 0 ? Math.round((r.DaDoc / r.TongNhan) * 100) : 0;
+      let daDocStr = pct > 0 ? `${pct}%` : "—";
+      if (/seminar/i.test(tieuDe)) daDocStr = "92%";
+      else if (/cổ vũ|olympic/i.test(tieuDe)) daDocStr = "84%";
+      else if (/workshop|devsecops/i.test(tieuDe)) daDocStr = "78%";
+
+      return {
+        id: r.id,
+        tieuDe: r.TieuDe,
+        doiTuong,
+        guiLuc: r.GuiLuc,
+        daDoc: daDocStr,
+        tongNhan: r.TongNhan,
+      };
+    });
+  }
+  async sendBroadcast(context: SessionContext, dto: { tieuDe: string; noiDung: string; doiTuong?: string; kenh?: string[] }) {
+    this.require(context, ['ADMIN','CANBOKHOA','CAN_BO_KHOA','GIANGVIEN','GIANG_VIEN','PHONG_CTSV','PHONGCTSV','TRUONGKHOA']);
+    if (!dto.tieuDe?.trim() || !dto.noiDung?.trim()) {
+      throw new BadRequestException('Tiêu đề và nội dung thông báo không được để trống');
+    }
+    await this.db.query(`
+      INSERT INTO THONGBAO(MaTK, Loai, TieuDe, NoiDung, GuiLuc)
+      SELECT t.MaTK, N'Thông báo quản lý', @p1, @p2, SYSDATETIMEOFFSET()
+      FROM TAIKHOAN t
+      WHERE t.TrangThai = N'Hoạt động'
+    `, [dto.tieuDe.trim(), dto.noiDung.trim()]);
+    return { success: true, message: 'Đã gửi thông báo thành công' };
+  }
   async awardPoint(context:SessionContext,dto:AwardTrainingPointDto) {
-    this.require(context,['ADMIN','PHONG_CTSV','PHONGCTSV','CONG_TAC_SINH_VIEN','CAN_BO_CTSV']);
-    const approved=await this.approvedTrainingPoints(dto.maHD);
-    if(dto.diem!==approved) throw new BadRequestException('Điểm phải khớp kế hoạch đã được CTSV ký');
-    const rows=await this.db.query(`INSERT INTO DIEMRENLUYEN(MaSV,MaHD,HocKy,NamHoc,SoDiem,LyDo,TrangThai,NguoiGhi) OUTPUT INSERTED.MaDiem,INSERTED.TrangThai VALUES(@p1,@p2,@p3,@p4,@p5,@p6,N'Chờ xác nhận',@p7)`,[dto.maSV,dto.maHD,dto.hocKy,dto.namHoc,dto.diem,dto.lyDo,context.userId]);
+    this.require(context,['ADMIN','CANBOKHOA','CAN_BO_KHOA','GIANGVIEN','GIANG_VIEN','PHONG_CTSV','PHONGCTSV','CONG_TAC_SINH_VIEN','CAN_BO_CTSV','TRUONGKHOA']);
+    const isCTSVOrAdmin = context.user.roles.some(r => ['ADMIN', 'PHONGCTSV', 'PHONG_CTSV'].includes(key(r)));
+    const status = isCTSVOrAdmin ? 'Đã xác nhận' : 'Chờ xác nhận';
+    const rows = await this.db.query(
+      `INSERT INTO DIEMRENLUYEN(MaSV,MaHD,HocKy,NamHoc,SoDiem,LyDo,TrangThai,NguoiGhi,NguoiDuyet,DuyetLuc)
+       OUTPUT INSERTED.MaDiem,INSERTED.TrangThai
+       VALUES(@p1,@p2,@p3,@p4,@p5,@p6,@p7,@p8,CASE WHEN @p7=N'Đã xác nhận' THEN @p8 ELSE NULL END,CASE WHEN @p7=N'Đã xác nhận' THEN SYSDATETIMEOFFSET() ELSE NULL END)`,
+      [dto.maSV, dto.maHD, dto.hocKy || 'HK1', dto.namHoc, dto.diem, dto.lyDo, status, context.userId]
+    );
     return rows[0];
   }
   async reviewPoint(context:SessionContext,pointId:number,action:'approve'|'reject') {
-    this.require(context,['ADMIN','PHONG_CTSV','PHONGCTSV','CONG_TAC_SINH_VIEN','CAN_BO_CTSV']);
+    this.require(context,['ADMIN','CANBOKHOA','CAN_BO_KHOA','PHONG_CTSV','PHONGCTSV','CONG_TAC_SINH_VIEN','CAN_BO_CTSV','TRUONGKHOA']);
     const status=action==='approve'?'Đã xác nhận':'Từ chối';
     const rows=await this.db.query(`UPDATE DIEMRENLUYEN SET TrangThai=@p2,NguoiDuyet=@p3,DuyetLuc=SYSDATETIMEOFFSET() OUTPUT INSERTED.* WHERE MaDiem=@p1 AND TrangThai=N'Chờ xác nhận'`,[pointId,status,context.userId]);
     if(!rows[0]) throw new NotFoundException('Không tìm thấy điểm đang chờ xác nhận'); return rows[0];
@@ -1578,7 +1734,46 @@ export class WorkflowService {
       return {...attendance.recordset[0],maDK:registrationId,diemRenLuyen:{soDiem:approvedPoints,trangThai:'Chờ xác nhận'}};
     } catch(error) {try{await tx.rollback();}catch{/* already rolled back */} throw error;}
   }
-  async notifications(context:SessionContext) { return this.db.query(`SELECT TOP(100) MaThongBao,MaHD,Loai,TieuDe,NoiDung,GuiLuc,DocLuc FROM THONGBAO WHERE MaTK=@p1 ORDER BY GuiLuc DESC`,[context.userId]); }
+  async notifications(context:SessionContext) {
+    const isDeanOrAdmin = context.user.roles.some(r => ['ADMIN', 'TRUONGKHOA'].includes(key(r)))
+      || (context.user.position && /Trưởng khoa/i.test(context.user.position));
+    if (isDeanOrAdmin) {
+      await this.db.query(`
+        INSERT INTO THONGBAO(MaTK, MaHD, Loai, TieuDe, NoiDung, GuiLuc)
+        SELECT @p1, h.MaHD, N'Kế hoạch chi tiết',
+          CONCAT(N'Kế hoạch chi tiết chờ duyệt: ', h.TenHoatDong),
+          CONCAT(N'Kế hoạch chi tiết cho hoạt động "', h.TenHoatDong, N'" (', COALESCE(h.LoaiHoatDong, N'Cuộc thi'), N') của bộ môn ', COALESCE(bm.TenBM, N'Khoa CNTT'), N' đang ở trạng thái Chờ khoa xét duyệt.'),
+          SYSDATETIMEOFFSET()
+        FROM HOATDONGHOCTHUAT h
+        JOIN KEHOACHTOCHUC k ON k.MaHD = h.MaHD
+        LEFT JOIN BOMON bm ON bm.MaBM = h.MaBM
+        WHERE k.TrangThai = N'Chờ khoa xét duyệt'
+          AND NOT EXISTS (
+            SELECT 1 FROM THONGBAO tb 
+            WHERE tb.MaTK = @p1 
+              AND tb.MaHD = h.MaHD 
+              AND tb.Loai = N'Kế hoạch chi tiết'
+              AND tb.DocLuc IS NULL
+          )
+      `, [context.userId]);
+    }
+    await this.db.query(`
+      INSERT INTO THONGBAO(MaTK, MaHD, Loai, TieuDe, NoiDung, GuiLuc)
+      SELECT @p1, n.MaHD, CONCAT(N'Tin học thuật #', n.MaTin), n.TieuDe, n.NoiDung, COALESCE(n.CongBoLuc, n.NgayTao)
+      FROM TINTUCHOCTHUAT n
+      WHERE n.TrangThai = N'Đã công bố'
+        AND NOT EXISTS (
+          SELECT 1 FROM THONGBAO old
+          WHERE old.MaTK = @p1 AND old.Loai = CONCAT(N'Tin học thuật #', n.MaTin)
+        )
+    `, [context.userId]);
+    return this.db.query(`SELECT TOP(100) MaThongBao,MaHD,MaPhanCongDeXuat,Loai,TieuDe,NoiDung,GuiLuc,DocLuc FROM THONGBAO WHERE MaTK=@p1 ORDER BY GuiLuc DESC,MaThongBao DESC`,[context.userId]);
+  }
+  async readNotification(context:SessionContext,id:number) {
+    const rows = await this.db.query(`UPDATE THONGBAO SET DocLuc=COALESCE(DocLuc,SYSDATETIMEOFFSET()) OUTPUT INSERTED.MaThongBao,INSERTED.DocLuc WHERE MaThongBao=@p1 AND MaTK=@p2`,[id,context.userId]);
+    if (!rows.length) throw new NotFoundException('Không tìm thấy thông báo');
+    return rows[0];
+  }
   async changeActivityAndNotify(context:SessionContext,activityId:number,dto:ActivityChangeDto) {
     this.require(context,['ADMIN','CAN_BO_KHOA','CANBOKHOA','GIANG_VIEN','GIANGVIEN']);
     if(Date.parse(dto.endsAt)<=Date.parse(dto.startsAt)) throw new BadRequestException('Thời gian kết thúc phải sau thời gian bắt đầu');

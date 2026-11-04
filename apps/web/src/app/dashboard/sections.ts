@@ -19,12 +19,13 @@ export type DashboardSection = {
 
 const staff = ["ADMIN", "CANBOKHOA", "GIANGVIEN"] as const;
 const managers = ["ADMIN", "CANBOKHOA", "GIANGVIEN"] as const;
-const allStaff = ["ADMIN", "CANBOKHOA", "TRUONGKHOA", "GIANGVIEN", "PHONGKHCN", "HIEUTRUONG", "PHONGCTSV"] as const;
+const allStaff = ["ADMIN", "CANBOKHOA", "TRUONGKHOA", "GIANGVIEN", "PHONGKHCN", "HIEUTRUONG", "PHONGCTSV", "TRUONGBANHOCTHUAT"] as const;
 const allUsers = [...allStaff, "SINHVIEN"] as const;
 
 export const sections: DashboardSection[] = [
   { id: "overview", title: "Trang chủ", detail: "Theo dõi hoạt động học thuật của toàn khoa.", roles: ["ADMIN", "CANBOKHOA", "GIANGVIEN", "PHONGCTSV"] },
-  { id: "news", title: "Tin tức & thông báo", detail: "Quản lý tin tức và thông báo tổ chức cuộc thi, seminar học thuật.", roles: [...allUsers] },
+  { id: "news", title: "Tin tức & thông báo", detail: "Xem tin tức và thông báo tổ chức cuộc thi, seminar học thuật.", roles: [...allUsers] },
+  { id: "news-management", title: "QL Tin tức & thông báo", detail: "Soạn thảo bản tin mới, tạo thông báo và quản lý các bài đăng học thuật.", roles: [...allStaff], parentId: "news" },
   { id: "users", title: "Tài khoản & phân quyền", detail: "Quản lý người dùng, vai trò và phạm vi truy cập dữ liệu.", roles: ["ADMIN"] },
   { id: "student-profiles", title: "Hồ sơ sinh viên", detail: "Quản lý danh sách sinh viên, lớp, mã số sinh viên và tài khoản liên kết.", roles: ["ADMIN"], parentId: "users" },
   { id: "staff-profiles", title: "Hồ sơ cán bộ", detail: "Quản lý danh sách cán bộ, giảng viên, học vị, chức vụ và phân công bộ môn.", roles: ["ADMIN"], parentId: "users" },
@@ -44,12 +45,12 @@ export const sections: DashboardSection[] = [
   { id: "detailed-plans-all", title: "Kế hoạch chi tiết Seminar và Cuộc thi", detail: "Lập kế hoạch tổ chức chi tiết cho các buổi seminar và cuộc thi học thuật, thành lập các ban và phân công giảng viên.", roles: ["ADMIN", "CANBOKHOA", "TRUONGKHOA", "GIANGVIEN", "PHONGCTSV"], parentId: "detailed-plans" },
   { id: "detailed-plans-assignment", title: "Phân công thực hiện", detail: "Lập các ban và phân công cán bộ, giảng viên thực hiện kế hoạch chi tiết.", roles: ["ADMIN", "CANBOKHOA", "TRUONGKHOA", "GIANGVIEN", "PHONGCTSV"], parentId: "detailed-plans" },
   { id: "competitions", title: "Tổ chức cuộc thi", detail: "Đăng ký từng vòng, phân công ra đề, nộp bài, chấm điểm và công bố trao giải.", roles: [...allUsers] },
+  { id: "seminars", title: "Seminar học thuật", detail: "Quản lý thông tin các buổi seminar học thuật, diễn giả, chương trình và tài liệu.", roles: ["ADMIN", "CANBOKHOA", "GIANGVIEN", "TRUONGKHOA", "PHONGCTSV"] },
   { id: "registrations", title: "Đăng ký dự thi", detail: "Quản lý thí sinh đăng ký theo cá nhân và đội nhóm.", roles: [...staff, "SINHVIEN"] },
   { id: "support", title: "Hỗ trợ & cổ vũ", detail: "Đăng ký tham dự, phân bổ hoạt động hỗ trợ và cổ vũ.", roles: [...staff, "SINHVIEN"] },
   { id: "attendance", title: "Điểm danh", detail: "Tạo mã QR cho hoạt động hoặc ghi nhận điểm danh theo danh sách ký tên.", roles: [...staff] },
-  { id: "training-points", title: "Điểm rèn luyện", detail: "Ghi nhận điểm rèn luyện khi sinh viên dự thi, hỗ trợ và cổ vũ.", roles: ["ADMIN", "PHONGCTSV", "SINHVIEN"] },
+  { id: "training-points", title: "Thông báo & điểm RL", detail: "Gửi thông báo theo nhóm và quản lý cộng/trừ điểm rèn luyện minh bạch.", roles: ["ADMIN", "CANBOKHOA", "GIANGVIEN", "PHONGCTSV", "SINHVIEN"] },
   { id: "results", title: "Đề tài & kết quả", detail: "Quản lý đề tài dự thi, kết quả cuộc thi và các đội đạt giải.", roles: [...allUsers] },
-  { id: "seminars", title: "Seminar học thuật", detail: "Quản lý thông tin, thời gian, địa điểm và người tham dự seminar.", roles: [...allUsers] },
   { id: "reports", title: "Thống kê & báo cáo", detail: "Thống kê, lập biên bản và báo cáo hoạt động, chi phí trong năm theo bộ môn và khoa.", roles: ["ADMIN", "CANBOKHOA", "GIANGVIEN", "PHONGCTSV"] },
 ];
 

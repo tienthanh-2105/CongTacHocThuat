@@ -38,7 +38,10 @@ export async function workflowRequest<T = unknown>(
         : typeof rawMsg === "string"
         ? rawMsg
         : `Yêu cầu thất bại (${response.status})`;
-      throw new Error(`${message} · ${method} ${path}`);
+      if (response.status >= 500) {
+        throw new Error(`${message} · ${method} ${path}`);
+      }
+      throw new Error(message);
     }
     return payload as T;
   }
