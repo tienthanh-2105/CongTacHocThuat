@@ -14,11 +14,12 @@ import { FeaturesService } from '../business/features/features.service';
 import { WorkflowService } from '../business/workflow/workflow.service';
 import { DetailedPlansService } from '../business/detailed-plans/detailed-plans.service';
 import { DetailedPlansController } from '../presentation/detailed-plans/detailed-plans.controller';
+import { PushNotificationsService } from '../business/features/push-notifications.service';
 import { AcademicActivitiesController, ActivityChangesController, AdminAccountsController, AttendanceController, CompetitionResultsController, CompetitionRoundsController, PlansController, SeminarMaterialsController, SubmissionsController, SummaryReportsController, TrainingPointsController, UserNotificationsController, WaitlistController } from '../presentation/workflow/workflow.controller';
 
 @Module({
   imports: [DatabaseModule, AuthModule, RegistrationModule],
   controllers: [NewsController, DepartmentPlansController, CompetitionWorkflowController, MobileController, NotificationsController, UserNotificationsController, ActivitiesController, WaitlistController, ActivityChangesController, SeminarsController, SeminarMaterialsController, ExpensesController, SettlementsController, ReportsController, PlansController, CompetitionRoundsController, SubmissionsController, CompetitionResultsController, TrainingPointsController, AttendanceController, SummaryReportsController, AdminAccountsController, AcademicActivitiesController, DetailedPlansController],
-  providers: [NewsService, DepartmentPlansService, CompetitionWorkflowService, FeaturesRepository, FeaturesService, WorkflowService, DetailedPlansService],
+  providers: [NewsService, DepartmentPlansService, CompetitionWorkflowService, FeaturesRepository, FeaturesService, WorkflowService, DetailedPlansService, PushNotificationsService],
 })
 export class FeaturesModule {}

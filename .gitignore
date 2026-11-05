@@ -9,6 +9,10 @@ backups/
 .expo/
 .env.local
 .env.*.local
+**/google-services.json
+**/firebase-admin*.json
+**/*service-account*.json
+apps/flutter/.dart-appdata/
 *.tsbuildinfo
 web-build/
 dist-check/

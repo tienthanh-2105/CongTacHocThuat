@@ -41,6 +41,21 @@ export class FeaturesService {
     });
   }
 
+  async getMobileActivities(context: SessionContext) {
+    await this.requireStudent(context);
+    return this.repository.listMobileActivities();
+  }
+
+  async getMobileTopics(context: SessionContext) {
+    await this.requireStudent(context);
+    return this.repository.listMobileTopics();
+  }
+
+  async getMobileNotifications(context: SessionContext) {
+    await this.requireStudent(context);
+    return this.repository.getMobileNotifications(context.userId);
+  }
+
   async getMyActivities(context: SessionContext) {
     await this.requireStudent(context);
     return this.repository.getMobileActivities(context.userId);

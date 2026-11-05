@@ -1767,7 +1767,17 @@ export class WorkflowService {
           WHERE old.MaTK = @p1 AND old.Loai = CONCAT(N'Tin học thuật #', n.MaTin)
         )
     `, [context.userId]);
-    return this.db.query(`SELECT TOP(100) MaThongBao,MaHD,MaPhanCongDeXuat,Loai,TieuDe,NoiDung,GuiLuc,DocLuc FROM THONGBAO WHERE MaTK=@p1 ORDER BY GuiLuc DESC,MaThongBao DESC`,[context.userId]);
+    const hasAssignmentColumn = (await this.db.query<{ HasColumn: number }>(
+      `SELECT CASE WHEN COL_LENGTH(N'dbo.THONGBAO',N'MaPhanCongDeXuat') IS NULL THEN 0 ELSE 1 END AS HasColumn`,
+    ))[0]?.HasColumn === 1;
+    const assignmentColumn = hasAssignmentColumn
+      ? 'MaPhanCongDeXuat'
+      : 'CAST(NULL AS BIGINT) AS MaPhanCongDeXuat';
+    return this.db.query(
+      `SELECT TOP(100) MaThongBao,MaHD,${assignmentColumn},Loai,TieuDe,NoiDung,GuiLuc,DocLuc
+       FROM THONGBAO WHERE MaTK=@p1 ORDER BY GuiLuc DESC,MaThongBao DESC`,
+      [context.userId],
+    );
   }
   async readNotification(context:SessionContext,id:number) {
     const rows = await this.db.query(`UPDATE THONGBAO SET DocLuc=COALESCE(DocLuc,SYSDATETIMEOFFSET()) OUTPUT INSERTED.MaThongBao,INSERTED.DocLuc WHERE MaThongBao=@p1 AND MaTK=@p2`,[id,context.userId]);

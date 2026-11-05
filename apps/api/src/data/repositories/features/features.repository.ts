@@ -50,19 +50,78 @@ export class FeaturesRepository {
   async getReminders(userId: string) {
     return this.db.query(
       `SELECT TOP(50) x.* FROM (
-        SELECT h.MaHD,h.TenHoatDong,h.TgBatDau,h.TgKetThuc,h.DiaDiem,h.HanDangKy,
-          DATEDIFF(MINUTE,SYSDATETIME(),h.TgBatDau) AS ConBaoNhieuPhut,
-          CASE WHEN h.TgBatDau<DATEADD(MINUTE,121,SYSDATETIME()) THEN N'Nhắc trước 2 giờ'
-               WHEN h.TgBatDau<DATEADD(HOUR,25,SYSDATETIME()) THEN N'Nhắc trước 24 giờ' ELSE N'Hoạt động sắp tới' END AS LoaiNhac
-        FROM TAIKHOAN a JOIN SINHVIEN sv ON sv.MaNgDung=a.MaNgDung JOIN DKTHAMGIA dk ON dk.MaSV=sv.MaSV JOIN HOATDONGHOCTHUAT h ON h.MaHD=dk.MaHD
-        WHERE a.MaTK=@p1 AND dk.TrangThai IN(N'Đã đăng ký',N'Đã xác nhận') AND h.TgBatDau>=SYSDATETIME() AND h.TgBatDau<DATEADD(DAY,8,SYSDATETIME())
+        SELECT h.MaHD,h.TenHoatDong,d.ThoiGianBatDau AS TgBatDau,d.ThoiGianKetThuc AS TgKetThuc,
+          COALESCE(d.DiaDiem,h.DiaDiem) AS DiaDiem,d.HanDangKy,
+          DATEDIFF(MINUTE,SYSDATETIME(),d.ThoiGianBatDau) AS ConBaoNhieuPhut,
+          CASE WHEN d.ThoiGianBatDau<DATEADD(MINUTE,121,SYSDATETIME()) THEN N'Nhắc trước 2 giờ'
+               WHEN d.ThoiGianBatDau<DATEADD(HOUR,25,SYSDATETIME()) THEN N'Nhắc trước 24 giờ' ELSE N'Hoạt động sắp tới' END AS LoaiNhac
+        FROM TAIKHOAN a JOIN SINHVIEN sv ON sv.MaNgDung=a.MaNgDung JOIN DKTHAMGIA dk ON dk.MaSV=sv.MaSV
+        JOIN HOATDONGHOCTHUAT h ON h.MaHD=dk.MaHD JOIN KEHOACHTOCHUC d ON d.MaHD=h.MaHD
+        WHERE a.MaTK=@p1 AND dk.TrangThai IN(N'Đã đăng ký',N'Đã xác nhận') AND d.ThoiGianBatDau>=SYSDATETIME() AND d.ThoiGianBatDau<DATEADD(DAY,8,SYSDATETIME())
         UNION ALL
-        SELECT h.MaHD,h.TenHoatDong,h.TgBatDau,h.TgKetThuc,h.DiaDiem,h.HanDangKy,
-          DATEDIFF(MINUTE,SYSDATETIME(),h.HanDangKy) AS ConBaoNhieuPhut,N'Hạn đăng ký sắp kết thúc' AS LoaiNhac
+        SELECT h.MaHD,h.TenHoatDong,d.ThoiGianBatDau AS TgBatDau,d.ThoiGianKetThuc AS TgKetThuc,
+          COALESCE(d.DiaDiem,h.DiaDiem) AS DiaDiem,d.HanDangKy,
+          DATEDIFF(MINUTE,SYSDATETIME(),d.HanDangKy) AS ConBaoNhieuPhut,N'Hạn đăng ký sắp kết thúc' AS LoaiNhac
         FROM TAIKHOAN a JOIN SINHVIEN sv ON sv.MaNgDung=a.MaNgDung CROSS JOIN HOATDONGHOCTHUAT h
-        WHERE a.MaTK=@p1 AND h.HanDangKy>=SYSDATETIME() AND h.HanDangKy<DATEADD(DAY,1,SYSDATETIME())
+        JOIN KEHOACHTOCHUC d ON d.MaHD=h.MaHD
+        WHERE a.MaTK=@p1 AND d.HanDangKy>=SYSDATETIME() AND d.HanDangKy<DATEADD(DAY,1,SYSDATETIME())
           AND h.TrangThai=N'Đã công bố' AND NOT EXISTS(SELECT 1 FROM DKTHAMGIA dk WHERE dk.MaHD=h.MaHD AND dk.MaSV=sv.MaSV AND dk.TrangThai NOT IN(N'Đã hủy',N'Từ chối'))
       ) x ORDER BY CASE WHEN x.LoaiNhac=N'Hạn đăng ký sắp kết thúc' THEN x.HanDangKy ELSE x.TgBatDau END`, [userId]);
+  }
+
+  async listMobileActivities() {
+    return this.db.query(
+      `SELECT TOP (100) h.MaHD,h.TenHoatDong,h.NoiDung,h.TgDuKien,
+              COALESCE(d.ThoiGianBatDau,c.ThoiGian,s.ThoiGian,
+                TRY_CONVERT(DATETIME2,REPLACE(h.TgDuKien,N'Ngày ',N''),103)) AS TgBatDau,
+              COALESCE(d.ThoiGianBatDau,c.ThoiGian,s.ThoiGian,
+                TRY_CONVERT(DATETIME2,REPLACE(h.TgDuKien,N'Ngày ',N''),103)) AS ThoiGianBatDau,
+              d.ThoiGianKetThuc,COALESCE(h.HanDangKy,d.HanDangKy) AS HanDangKy,
+              COALESCE(d.DiaDiem,s.DiaDiem,h.DiaDiem) AS DiaDiem,h.SLSVDuKien,h.TrangThai,
+              d.TrangThai AS TrangThaiKeHoach,d.CongBoLuc,d.NguoiKyKhoa,d.NguoiKyCTSV,
+              c.MaCThi,c.TenCuocThi,c.HinhThucThi,c.TheLe,s.MaSeminar,s.ChuDe,
+              CAST(CASE WHEN d.TrangThai=N'Đã duyệt' AND d.NguoiKyKhoa IS NOT NULL
+                     AND d.NguoiKyCTSV IS NOT NULL AND annual.TrangThai=N'Đã duyệt'
+                     AND (h.HanDangKy IS NULL OR h.HanDangKy>SYSDATETIME())
+                     THEN 1 ELSE 0 END AS BIT) AS CoTheDangKy
+       FROM HOATDONGHOCTHUAT h
+       LEFT JOIN KEHOACHTOCHUC d ON d.MaHD=h.MaHD
+       LEFT JOIN KEHOACHHOCTHUAT annual ON annual.MaKeHoach=d.MaKeHoach
+       LEFT JOIN CUOCTHI c ON c.MaHD=h.MaHD
+       LEFT JOIN SEMINAR s ON s.MaHD=h.MaHD
+       WHERE h.TrangThai=N'Đã công bố'
+       ORDER BY COALESCE(d.ThoiGianBatDau,c.ThoiGian,s.ThoiGian,
+                TRY_CONVERT(DATETIME2,REPLACE(h.TgDuKien,N'Ngày ',N''),103)) DESC,h.MaHD DESC`,
+    );
+  }
+
+  async listMobileTopics() {
+    return this.db.query(
+      `SELECT t.MaDeTai,t.MaCThi,t.TenDeTai,t.LinhVuc,t.MoTa,t.GVHD,t.TrangThai,
+              c.TenCuocThi,h.TenHoatDong,d.TenDoi
+       FROM DETAI t
+       JOIN CUOCTHI c ON c.MaCThi=t.MaCThi
+       JOIN HOATDONGHOCTHUAT h ON h.MaHD=c.MaHD
+       LEFT JOIN DOITHI d ON d.MaDoi=t.MaDoi
+       WHERE h.TrangThai=N'Đã công bố'
+       ORDER BY t.MaDeTai DESC`,
+    );
+  }
+
+  async getMobileNotifications(userId: string) {
+    await this.db.query(
+      `INSERT INTO THONGBAO(MaTK,MaHD,Loai,TieuDe,NoiDung,GuiLuc)
+       SELECT @p1,n.MaHD,CONCAT(N'Tin học thuật #',n.MaTin),n.TieuDe,n.NoiDung,COALESCE(n.CongBoLuc,n.NgayTao)
+       FROM TINTUCHOCTHUAT n
+       WHERE n.TrangThai=N'Đã công bố'
+         AND NOT EXISTS(SELECT 1 FROM THONGBAO old WHERE old.MaTK=@p1 AND old.Loai=CONCAT(N'Tin học thuật #',n.MaTin))`,
+      [userId],
+    );
+    return this.db.query(
+      `SELECT TOP(100) MaThongBao,MaHD,Loai,TieuDe,NoiDung,GuiLuc,DocLuc
+       FROM THONGBAO WHERE MaTK=@p1 ORDER BY GuiLuc DESC,MaThongBao DESC`,
+      [userId],
+    );
   }
 
   async listSeminars() {

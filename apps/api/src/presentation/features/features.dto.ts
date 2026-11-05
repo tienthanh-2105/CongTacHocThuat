@@ -1,6 +1,15 @@
 import { Type } from 'class-transformer';
 import { ArrayMaxSize, IsArray, IsDateString, IsInt, IsNotEmpty, IsNumber, IsOptional, IsString, Max, MaxLength, Min, MinLength, ValidateNested } from 'class-validator';
 
+export class RegisterPushDeviceDto {
+  @IsString() @IsNotEmpty() @MaxLength(500) token!: string;
+  @IsOptional() @IsString() @MaxLength(20) platform?: string;
+}
+
+export class UnregisterPushDeviceDto {
+  @IsString() @IsNotEmpty() @MaxLength(500) token!: string;
+}
+
 export class SeminarSpeakerDto {
   @IsString() @IsNotEmpty() @MaxLength(150) hoTen!: string;
   @IsOptional() @IsString() @MaxLength(200) hocVi?: string;

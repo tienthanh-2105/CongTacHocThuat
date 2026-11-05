@@ -4,7 +4,8 @@ import { FeaturesService } from '../../business/features/features.service';
 import { SessionGuard } from '../auth/auth.guards';
 import type { AuthRequest } from '../auth/auth.http';
 import { Req } from '@nestjs/common';
-import { CreateExpenseDto, CreateSeminarDto, UpdateSeminarDetailsDto } from './features.dto';
+import { CreateExpenseDto, CreateSeminarDto, RegisterPushDeviceDto, UnregisterPushDeviceDto, UpdateSeminarDetailsDto } from './features.dto';
+import { PushNotificationsService } from '../../business/features/push-notifications.service';
 
 @ApiTags('mobile')
 @ApiBearerAuth()
@@ -12,15 +13,42 @@ import { CreateExpenseDto, CreateSeminarDto, UpdateSeminarDetailsDto } from './f
 @UseGuards(SessionGuard)
 @Controller('mobile')
 export class MobileController {
-  constructor(@Inject(FeaturesService) private readonly service: FeaturesService) {}
+  constructor(
+    @Inject(FeaturesService) private readonly service: FeaturesService,
+    @Inject(PushNotificationsService) private readonly push: PushNotificationsService,
+  ) {}
+
+  @Post('devices')
+  @ApiOperation({ summary: 'Đăng ký token thiết bị để nhận thông báo đẩy FCM' })
+  registerPushDevice(@Req() request: AuthRequest, @Body() dto: RegisterPushDeviceDto) {
+    return this.push.registerDevice(request.auth!.userId, dto.token, dto.platform || 'android');
+  }
+
+  @Post('devices/unregister')
+  @ApiOperation({ summary: 'Hủy đăng ký thiết bị nhận thông báo đẩy FCM' })
+  unregisterPushDevice(@Req() request: AuthRequest, @Body() dto: UnregisterPushDeviceDto) {
+    return this.push.unregisterDevice(request.auth!.userId, dto.token);
+  }
 
   @Get('profile')
   @ApiOperation({ summary: 'Hồ sơ sinh viên, lớp, khoa và tổng điểm rèn luyện' })
   profile(@Req() request: AuthRequest) { return this.service.getProfile(request.auth!); }
 
+  @Get('activities')
+  @ApiOperation({ summary: 'Hoạt động đã công bố; CoTheDangKy cho biết hoạt động đã đủ điều kiện đăng ký mobile' })
+  activities(@Req() request: AuthRequest) { return this.service.getMobileActivities(request.auth!); }
+
+  @Get('topics')
+  @ApiOperation({ summary: 'Danh sách đề tài thuộc các cuộc thi đã công bố dành cho sinh viên mobile' })
+  topics(@Req() request: AuthRequest) { return this.service.getMobileTopics(request.auth!); }
+
+  @Get('notifications')
+  @ApiOperation({ summary: 'Tin tức và thông báo dành cho sinh viên trên mobile' })
+  notifications(@Req() request: AuthRequest) { return this.service.getMobileNotifications(request.auth!); }
+
   @Get('my-activities')
   @ApiOperation({ summary: 'Lịch sử hoạt động đã đăng ký của sinh viên hiện tại' })
-  activities(@Req() request: AuthRequest) { return this.service.getMyActivities(request.auth!); }
+  myActivities(@Req() request: AuthRequest) { return this.service.getMyActivities(request.auth!); }
 
   @Get('my-training-points')
   @ApiOperation({ summary: 'Tổng điểm và chi tiết điểm rèn luyện hiện có' })
