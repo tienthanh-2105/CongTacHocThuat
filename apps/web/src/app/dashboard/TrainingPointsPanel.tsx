@@ -7,6 +7,21 @@ import s from "./dashboard.module.css";
 
 type Row = Record<string, unknown>;
 const text = (row: Row | null | undefined, key: string) => String(row?.[key] ?? "");
+const formatBroadcastTime = (value: string) => {
+  const date = new Date(value);
+  if (!value || !Number.isFinite(date.getTime())) return value || "—";
+  const parts = new Intl.DateTimeFormat("vi-VN", {
+    timeZone: "Asia/Ho_Chi_Minh",
+    day: "2-digit",
+    month: "2-digit",
+    year: "numeric",
+    hour: "2-digit",
+    minute: "2-digit",
+    hourCycle: "h23",
+  }).formatToParts(date);
+  const part = (type: Intl.DateTimeFormatPartTypes) => parts.find((item) => item.type === type)?.value ?? "";
+  return `${part("day")}/${part("month")}/${part("year")} · ${part("hour")}:${part("minute")}`;
+};
 
 interface BroadcastItem {
   id: number | string;
@@ -202,7 +217,7 @@ export default function TrainingPointsPanel({ user }: { user?: { roles: string[]
     setError("");
     try {
       const title = quickContent.trim().split("\n")[0].slice(0, 60);
-      await workflowRequest("/training-points/broadcasts", {
+      const result = await workflowRequest<{ notificationCount?: number; pushQueuedCount?: number }>("/training-points/broadcasts", {
         method: "POST",
         body: {
           tieuDe: title,
@@ -210,7 +225,7 @@ export default function TrainingPointsPanel({ user }: { user?: { roles: string[]
           doiTuong: quickTarget !== "Chọn người nhận" ? quickTarget : "Toàn khoa",
           kenh: Object.keys(channels).filter((k) => channels[k as keyof typeof channels]),
         },
-      }).catch(() => null);
+      });
 
       const newItem: BroadcastItem = {
         id: Date.now(),
@@ -220,7 +235,10 @@ export default function TrainingPointsPanel({ user }: { user?: { roles: string[]
         daDoc: "—",
       };
       setBroadcasts((prev) => [newItem, ...prev]);
-      setNotice("Đã lên lịch gửi thông báo thành công!");
+      const queued = Number(result.pushQueuedCount ?? 0);
+      setNotice(queued > 0
+        ? `Đã tạo thông báo cho ${Number(result.notificationCount ?? 0).toLocaleString("vi-VN")} tài khoản; ${queued.toLocaleString("vi-VN")} thiết bị đã đăng ký đang chờ nhận thông báo đẩy.`
+        : "Đã tạo thông báo trong ứng dụng, nhưng chưa có thiết bị nào đăng ký nhận thông báo đẩy. Hãy mở app mobile và đăng nhập lại.");
       setQuickContent("");
     } catch (err) {
       setError(err instanceof Error ? err.message : "Không gửi được thông báo.");
@@ -316,7 +334,7 @@ export default function TrainingPointsPanel({ user }: { user?: { roles: string[]
   // Export data as CSV
   function handleExport() {
     const headers = ["Tiêu đề", "Người nhận", "Gửi lúc", "Tỷ lệ đã đọc"];
-    const rows = filteredBroadcasts.map((b) => [b.tieuDe, b.doiTuong, b.guiLuc, b.daDoc]);
+    const rows = filteredBroadcasts.map((b) => [b.tieuDe, b.doiTuong, formatBroadcastTime(b.guiLuc), b.daDoc]);
     const csvContent =
       "data:text/csv;charset=utf-8,\uFEFF" +
       [headers.join(","), ...rows.map((e) => e.map((x) => `"${x}"`).join(","))].join("\n");
@@ -618,7 +636,7 @@ export default function TrainingPointsPanel({ user }: { user?: { roles: string[]
                       {item.doiTuong}
                     </td>
                     <td style={{ padding: "13px 12px", color: "#64748b", whiteSpace: "nowrap" }}>
-                      {item.guiLuc}
+                      {formatBroadcastTime(item.guiLuc)}
                     </td>
                     <td style={{ padding: "13px 4px 13px 12px", fontWeight: 600, color: "#334155" }}>
                       {item.daDoc}
@@ -803,7 +821,7 @@ export default function TrainingPointsPanel({ user }: { user?: { roles: string[]
                 <line x1="8" y1="2" x2="8" y2="6" />
                 <line x1="3" y1="10" x2="21" y2="10" />
               </svg>
-              <span>Lên lịch gửi</span>
+              <span>Gửi thông báo</span>
             </button>
           </form>
         </div>
