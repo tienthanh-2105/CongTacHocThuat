@@ -41,12 +41,17 @@ export class RegistrationService {
 
     requireOpenRegistration(activity);
 
+    const hinhThuc = dto.hinhThuc ?? 'Dự thi';
+    if (hinhThuc === 'Dự thi' && (!dto.tenDeTai?.trim() || !dto.gvhd?.trim())) {
+      throw new BadRequestException('Đăng ký dự thi cần có tên đề tài và giáo viên hướng dẫn');
+    }
+
     const existing = await this.repository.findRegistration(dto.maHD, student.MaSV);
     if (existing && existing.TrangThai !== 'Đã hủy') {
       throw new ConflictException(`Bạn đã đăng ký tham gia hoạt động này rồi (Trạng thái: ${existing.TrangThai})`);
     }
 
-    const result = await this.repository.registerIndividualWithinCapacity(dto.maHD,student.MaSV,dto.hinhThuc ?? 'Dự thi');
+    const result = await this.repository.registerIndividualWithinCapacity(dto.maHD,student.MaSV,hinhThuc,dto.tenDeTai?.trim(),dto.gvhd?.trim());
     if(!result) throw new NotFoundException(`Không tìm thấy hoạt động học thuật với mã: ${dto.maHD}`);
     if(result.waitlisted) return {
       message: 'Hoạt động đã đủ chỗ; bạn được đưa vào danh sách chờ theo thứ tự đăng ký',
@@ -67,7 +72,7 @@ export class RegistrationService {
           hoTen: student.HoTen,
           tenLop: student.TenLop,
         },
-        hinhThuc: dto.hinhThuc ?? 'Dự thi',
+        hinhThuc,
         trangThai: 'Đã đăng ký',
       },
     };
@@ -85,6 +90,10 @@ export class RegistrationService {
     }
 
     requireOpenRegistration(competition);
+
+    if (!dto.tenDeTai?.trim() || !dto.gvhd?.trim()) {
+      throw new BadRequestException('Đăng ký đội thi cần có tên đề tài và giáo viên hướng dẫn');
+    }
 
     const cleanTeamName = dto.tenDoi.trim();
     const existingTeam = await this.repository.findTeamByName(dto.maCThi, cleanTeamName);
@@ -130,7 +139,7 @@ export class RegistrationService {
     }
 
     const waitlisted = await this.repository.createWaitlistedTeam(
-      competition.MaCThi,competition.MaHD,cleanTeamName,captain.MaSV,resolvedMemberIds,
+      competition.MaCThi,competition.MaHD,cleanTeamName,captain.MaSV,resolvedMemberIds,dto.tenDeTai.trim(),dto.gvhd.trim(),
     );
     if (waitlisted) {
       return {
@@ -155,6 +164,8 @@ export class RegistrationService {
       cleanTeamName,
       captain.MaSV,
       resolvedMemberIds,
+      dto.tenDeTai.trim(),
+      dto.gvhd.trim(),
     );
 
     return {
@@ -209,6 +220,14 @@ export class RegistrationService {
     };
   }
 
+  async getStudentForTeam(mssv: string) {
+    const normalizedMssv = mssv.trim();
+    if (!normalizedMssv) throw new BadRequestException('Vui lòng nhập MSSV');
+    const student = await this.repository.findStudentByMssv(normalizedMssv);
+    if (!student) throw new NotFoundException('Không tìm thấy sinh viên');
+    return { mssv: student.MSSV, hoTen: student.HoTen, tenLop: student.TenLop };
+  }
+
   async getMyRegistrations(userId: string | number) {
     const student = await this.repository.findStudentByUserId(userId);
     if (!student) {
@@ -224,6 +243,11 @@ export class RegistrationService {
       throw new NotFoundException(`Không tìm thấy hoạt động với mã: ${activityId}`);
     }
     return this.repository.getRegistrationsByActivity(activityId);
+  }
+
+  async getAllRegistrations(context: SessionContext) {
+    this.requireStaff(context);
+    return this.repository.getRegistrationsByActivity();
   }
 
   async updateRegistrationStatus(context: SessionContext, maDK: number, trangThai: string) {

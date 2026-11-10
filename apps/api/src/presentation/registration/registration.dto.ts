@@ -17,6 +17,14 @@ export class RegisterIndividualDto {
   @IsOptional()
   @IsIn(['Dự thi', 'Tham gia', 'Hỗ trợ', 'Cổ vũ'])
   hinhThuc?: 'Dự thi' | 'Tham gia' | 'Hỗ trợ' | 'Cổ vũ';
+
+  @ApiPropertyOptional({ description: 'Tên đề tài dự thi' })
+  @IsOptional() @IsString() @MinLength(2) @MaxLength(250)
+  tenDeTai?: string;
+
+  @ApiPropertyOptional({ description: 'Giáo viên hướng dẫn đề tài' })
+  @IsOptional() @IsString() @MinLength(2) @MaxLength(150)
+  gvhd?: string;
 }
 
 export class RegisterTeamDto {
@@ -42,6 +50,14 @@ export class RegisterTeamDto {
   @ArrayNotEmpty()
   @IsString({ each: true })
   thanhVienMSSV!: string[];
+
+  @ApiProperty({ description: 'Tên đề tài dự thi' })
+  @IsString() @IsNotEmpty() @MinLength(2) @MaxLength(250)
+  tenDeTai!: string;
+
+  @ApiProperty({ description: 'Giáo viên hướng dẫn đề tài' })
+  @IsString() @IsNotEmpty() @MinLength(2) @MaxLength(150)
+  gvhd!: string;
 }
 
 export class JoinCompetitionTeamDto {

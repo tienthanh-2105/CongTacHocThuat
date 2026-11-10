@@ -2,11 +2,19 @@
 
 import { useEffect, useState, type FormEvent } from "react";
 import Link from "next/link";
+import QRCode from "qrcode";
 import { workflowRequest } from "@/services/workflow";
 import type { AuthUser } from "@/services/auth";
 import NoticeDialog from "./NoticeDialog";
+import s from "./dashboard.module.css";
+import { parseArticleContent } from "./newsContent";
 
 type Row = Record<string, unknown>;
+type SeminarAnnouncement = {
+  activityId: string;
+  article: { title: string; content: ReturnType<typeof parseArticleContent> } | null;
+  unavailable?: boolean;
+};
 
 const text = (row: Row | null | undefined, key: string) => String(row?.[key] ?? "");
 
@@ -36,9 +44,16 @@ function formatDateVn(value: unknown): string {
   }
 }
 
+function toDateTimeLocal(value: unknown): string {
+  if (!value) return "";
+  const date = new Date(String(value));
+  if (Number.isNaN(date.getTime())) return "";
+  return new Date(date.getTime() - date.getTimezoneOffset() * 60_000).toISOString().slice(0, 16);
+}
+
 const read = () =>
   Promise.all([
-    workflowRequest<Row[]>("/seminars"),
+    workflowRequest<Row[]>("/seminars?source=management"),
     workflowRequest<Row[]>("/news/activities").catch(() => []),
   ]);
 
@@ -46,6 +61,7 @@ export default function SeminarPanel({ user }: { user: AuthUser }) {
   const [list, setList] = useState<Row[]>([]);
   const [managed, setManaged] = useState<Row[]>([]);
   const [selected, setSelected] = useState("");
+  const [announcement, setAnnouncement] = useState<SeminarAnnouncement | null>(null);
   const [error, setError] = useState("");
   const [notice, setNotice] = useState("");
   const [loading, setLoading] = useState(true);
@@ -53,8 +69,15 @@ export default function SeminarPanel({ user }: { user: AuthUser }) {
   const [activeTab, setActiveTab] = useState<"speakers" | "agenda" | "materials">("speakers");
   const [isUpdateModalOpen, setIsUpdateModalOpen] = useState(false);
   const [isCreateModalOpen, setIsCreateModalOpen] = useState(false);
+  const [isAttendanceModalOpen, setIsAttendanceModalOpen] = useState(false);
+  const [attendanceSeminarId, setAttendanceSeminarId] = useState("");
+  const [attendanceStartsAt, setAttendanceStartsAt] = useState("");
+  const [attendanceEndsAt, setAttendanceEndsAt] = useState("");
+  const [attendanceQr, setAttendanceQr] = useState<{ image: string; endsAt: string } | null>(null);
 
-  const isAdminOrStaff = user.roles.includes("ADMIN") || user.roles.includes("CANBOKHOA");
+  const isAdmin = user.roles.includes("ADMIN");
+  const isAdminOrStaff = isAdmin || user.roles.includes("CANBOKHOA");
+  const canCreateSeminar = isAdminOrStaff || user.roles.includes("GIANGVIEN");
 
   useEffect(() => {
     let active = true;
@@ -63,9 +86,6 @@ export default function SeminarPanel({ user }: { user: AuthUser }) {
         if (active) {
           setList(items);
           setManaged(choices);
-          if (items.length > 0 && !selected) {
-            setSelected(text(items[0], "MaSeminar"));
-          }
         }
       })
       .catch((cause) => {
@@ -79,10 +99,45 @@ export default function SeminarPanel({ user }: { user: AuthUser }) {
     };
   }, []);
 
-  const seminar = list.find((item) => text(item, "MaSeminar") === selected);
-  const canManage = Boolean(
-    isAdminOrStaff || (seminar && managed.some((item) => Number(item.MaHD) === Number(seminar.MaHD)))
+  const visibleSeminars = list.filter(
+    (item) =>
+      isAdminOrStaff ||
+      text(item, "NguoiLap") === user.id ||
+      item.TrangThai === "Đã công bố" ||
+      item.TrangThai === "Đã duyệt" ||
+      managed.some((choice) => Number(choice.MaHD) === Number(item.MaHD))
   );
+  const seminar = visibleSeminars.find((item) => text(item, "MaHD") === selected) ?? visibleSeminars[0];
+  const seminarActivityId = text(seminar, "MaHD");
+  const currentAnnouncement = announcement?.activityId === seminarActivityId ? announcement : null;
+  const publishedArticle = currentAnnouncement?.article;
+  const seminarSection = publishedArticle?.content.seminarSection;
+  const pdfData = publishedArticle?.content.pdfData;
+  const pdfUrl = typeof pdfData === "string" && /^data:application\/(?:pdf|octet-stream);base64,JVBERi0/.test(pdfData)
+    ? pdfData.replace("data:application/octet-stream;", "data:application/pdf;")
+    : "";
+  const canEditSeminar = Boolean(
+    seminar?.MaSeminar &&
+    (isAdmin || text(seminar, "NguoiLap") === user.id || managed.some((item) => Number(item.MaHD) === Number(seminar.MaHD)))
+  );
+
+  useEffect(() => {
+    if (!seminarActivityId) return;
+    let active = true;
+    void workflowRequest<{ TieuDe: string; NoiDung: string } | null>(`/news/activities/${seminarActivityId}/announcement`)
+      .then((row) => {
+        if (active) {
+          setAnnouncement({
+            activityId: seminarActivityId,
+            article: row ? { title: row.TieuDe, content: parseArticleContent(row.NoiDung) } : null,
+          });
+        }
+      })
+      .catch(() => {
+        if (active) setAnnouncement({ activityId: seminarActivityId, article: null, unavailable: true });
+      });
+    return () => { active = false; };
+  }, [seminarActivityId]);
 
   async function act(path: string, method: string, body: Row) {
     setBusy(true);
@@ -105,7 +160,7 @@ export default function SeminarPanel({ user }: { user: AuthUser }) {
 
   function saveDetails(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
-    if (!selected) return;
+    if (!seminar) return;
     const data = new FormData(event.currentTarget);
     const speakers = String(data.get("dienGia") ?? "")
       .split("\n")
@@ -129,16 +184,50 @@ export default function SeminarPanel({ user }: { user: AuthUser }) {
       return;
     }
 
-    void act(`/seminars/${selected}`, "PATCH", {
+    if (!seminar?.MaSeminar) return;
+    const pointsInput = data.get("diemRenLuyen");
+    void act(`/seminars/${text(seminar, "MaSeminar")}`, "PATCH", {
       dvChuTri: data.get("dvChuTri"),
       dvPhoiHop: data.get("dvPhoiHop"),
       thoiLuong: data.get("thoiLuong") ? Number(data.get("thoiLuong")) : undefined,
+      diemRenLuyen: pointsInput !== null && String(pointsInput).trim() !== "" ? Number(pointsInput) : undefined,
       noiDung: data.get("noiDung") ? String(data.get("noiDung")).trim() : undefined,
       dienGia: speakers,
       chuongTrinh: agenda,
     }).then((ok) => {
       if (ok) setIsUpdateModalOpen(false);
     });
+  }
+
+  async function createAttendanceQr(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    const start = new Date(attendanceStartsAt);
+    const end = new Date(attendanceEndsAt);
+    if (!attendanceSeminarId || !attendanceStartsAt || !attendanceEndsAt || end <= start) {
+      setError("Vui lòng chọn seminar và thời gian kết thúc phải sau thời gian bắt đầu.");
+      return;
+    }
+
+    setBusy(true);
+    setError("");
+    setNotice("");
+    setAttendanceQr(null);
+    try {
+      const startsAt = start.toISOString();
+      const endsAt = end.toISOString();
+      const response = await workflowRequest<Row>(`/attendance/activities/${attendanceSeminarId}/qr`, {
+        method: "POST",
+        body: { startsAt, endsAt },
+      });
+      const token = response.maQRCode ?? response.MaQRCode;
+      if (!token) throw new Error("API chưa trả về mã QR để hiển thị.");
+      const image = await QRCode.toDataURL(String(token), { errorCorrectionLevel: "H", margin: 2, width: 320 });
+      setAttendanceQr({ image, endsAt: String(response.TGHetHan ?? endsAt) });
+    } catch (cause) {
+      setError(cause instanceof Error ? cause.message : "Không thể tạo mã QR điểm danh.");
+    } finally {
+      setBusy(false);
+    }
   }
 
 
@@ -197,14 +286,10 @@ export default function SeminarPanel({ user }: { user: AuthUser }) {
         },
       });
 
-      const [items, choices] = await read();
-      setList(items);
-      setManaged(choices);
-      if (res?.MaSeminar) {
-        setSelected(String(res.MaSeminar));
-      }
+      setList((items) => [res, ...items]);
+      setSelected(text(res, "MaHD"));
       setIsCreateModalOpen(false);
-      setNotice("Đã tạo buổi Seminar học thuật mới thành công và gửi thông báo tới sinh viên!");
+      setNotice("Đã lưu bản nháp seminar.");
     } catch (cause) {
       setError(cause instanceof Error ? cause.message : "Không thể tạo seminar");
     } finally {
@@ -214,22 +299,14 @@ export default function SeminarPanel({ user }: { user: AuthUser }) {
 
   function saveMaterial(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
-    if (!selected) return;
+    if (!seminar?.MaSeminar) return;
     const data = new FormData(event.currentTarget);
-    void act(`/seminars/${selected}/materials`, "POST", {
+    void act(`/seminars/${text(seminar, "MaSeminar")}/materials`, "POST", {
       tenTep: data.get("tenTep"),
       urlTep: data.get("urlTep"),
       loaiTep: data.get("loaiTep"),
     });
   }
-
-  const visibleSeminars = list.filter(
-    (item) =>
-      isAdminOrStaff ||
-      item.TrangThai === "Đã công bố" ||
-      item.TrangThai === "Đã duyệt" ||
-      managed.some((choice) => Number(choice.MaHD) === Number(item.MaHD))
-  );
 
   return (
     <div style={{ width: "100%", paddingBottom: "40px" }}>
@@ -263,9 +340,10 @@ export default function SeminarPanel({ user }: { user: AuthUser }) {
         </div>
 
         <div style={{ display: "flex", gap: "10px", alignItems: "center", flexWrap: "wrap" }}>
-          {canManage && (
+          {canCreateSeminar && (
             <button
               type="button"
+              disabled={loading}
               onClick={() => setIsCreateModalOpen(true)}
               style={{
                 padding: "9px 16px",
@@ -306,8 +384,17 @@ export default function SeminarPanel({ user }: { user: AuthUser }) {
             <span>📋</span>
             <span>Kế hoạch tổ chức</span>
           </Link>
-          <Link
-            href="/dashboard/attendance"
+          {canCreateSeminar && <button
+            type="button"
+            disabled={!visibleSeminars.length}
+            onClick={() => {
+              const initial = seminar ?? visibleSeminars[0];
+              setAttendanceSeminarId(text(initial, "MaHD"));
+              setAttendanceStartsAt(toDateTimeLocal(initial?.ThoiGianBatDau));
+              setAttendanceEndsAt(toDateTimeLocal(initial?.ThoiGianKetThuc));
+              setAttendanceQr(null);
+              setIsAttendanceModalOpen(true);
+            }}
             style={{
               padding: "9px 16px",
               borderRadius: "8px",
@@ -315,123 +402,48 @@ export default function SeminarPanel({ user }: { user: AuthUser }) {
               color: "#2563eb",
               fontWeight: 600,
               fontSize: "13px",
-              textDecoration: "none",
               border: "1px solid #bfdbfe",
               display: "inline-flex",
               alignItems: "center",
               gap: "6px",
+              cursor: visibleSeminars.length ? "pointer" : "not-allowed",
+              opacity: visibleSeminars.length ? 1 : 0.55,
             }}
           >
             <span>📱</span>
             <span>Điểm danh QR</span>
-          </Link>
+          </button>}
         </div>
       </div>
 
       {/* Main 2-Column Layout */}
-      <div
-        style={{
-          display: "grid",
-          gridTemplateColumns: "360px 1fr",
-          gap: "24px",
-          alignItems: "start",
-        }}
-      >
-        {/* LEFT COLUMN: Seminar List */}
-        <div
-          style={{
-            background: "#ffffff",
-            borderRadius: "12px",
-            border: "1px solid #e2e8f0",
-            overflow: "hidden",
-            boxShadow: "0 2px 6px rgba(0,0,0,0.02)",
-          }}
-        >
-          <div
-            style={{
-              padding: "16px 20px",
-              borderBottom: "1px solid #e2e8f0",
-              background: "#f8fafc",
-              display: "flex",
-              justifyContent: "space-between",
-              alignItems: "center",
-            }}
-          >
-            <strong style={{ fontSize: "14px", color: "#1e293b", textTransform: "uppercase", letterSpacing: "0.5px" }}>
-              Danh sách Seminar ({visibleSeminars.length})
-            </strong>
+      <div style={{ display: "grid", gridTemplateColumns: "360px 1fr", gap: "24px", alignItems: "start" }}>
+        {/* Seminar selection list */}
+        <div style={{ background: "#ffffff", borderRadius: "12px", border: "1px solid #e2e8f0", overflow: "hidden", boxShadow: "0 2px 6px rgba(0,0,0,0.02)" }}>
+          <div style={{ padding: "16px 20px", borderBottom: "1px solid #e2e8f0", background: "#f8fafc" }}>
+            <strong style={{ fontSize: "14px", color: "#1e293b", textTransform: "uppercase", letterSpacing: "0.5px" }}>Danh sách Seminar ({visibleSeminars.length})</strong>
           </div>
-
           {loading ? (
-            <div style={{ padding: "40px 20px", textAlign: "center", color: "#64748b" }}>
-              Đang tải danh sách seminar…
-            </div>
+            <div style={{ padding: "40px 20px", textAlign: "center", color: "#64748b" }}>Đang tải danh sách seminar…</div>
           ) : visibleSeminars.length === 0 ? (
-            <div style={{ padding: "40px 20px", textAlign: "center", color: "#64748b", fontSize: "14px" }}>
-              Chưa có seminar nào được lập.
-            </div>
-          ) : (
-            <div style={{ display: "flex", flexDirection: "column" }}>
-              {visibleSeminars.map((item) => {
-                const isCurrent = text(item, "MaSeminar") === selected;
-                const timeText = text(item, "ThoiGianSeminar") || formatDateVn(item.ThoiGianBatDau || item.TgDuKien);
-                const venueText = text(item, "DiaDiem") || "Trung tâm thư viện F401";
-
-                return (
-                  <div
-                    key={text(item, "MaSeminar")}
-                    onClick={() => setSelected(text(item, "MaSeminar"))}
-                    style={{
-                      padding: "16px 20px",
-                      borderBottom: "1px solid #f1f5f9",
-                      background: isCurrent ? "#eff6ff" : "#ffffff",
-                      borderLeft: isCurrent ? "4px solid #2563eb" : "4px solid transparent",
-                      cursor: "pointer",
-                      transition: "all 0.15s ease",
-                    }}
-                  >
-                    <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", marginBottom: "6px", gap: "8px" }}>
-                      <span
-                        style={{
-                          fontSize: "11px",
-                          fontWeight: 700,
-                          padding: "2px 6px",
-                          borderRadius: "4px",
-                          background: item.TrangThai === "Đã công bố" ? "#ecfdf5" : "#f1f5f9",
-                          color: item.TrangThai === "Đã công bố" ? "#15803d" : "#475569",
-                        }}
-                      >
-                        {text(item, "TrangThai") || "Đã duyệt"}
-                      </span>
-                      <span style={{ fontSize: "11.5px", color: "#64748b", fontWeight: 600 }}>
-                        Mã #{text(item, "MaSeminar")}
-                      </span>
-                    </div>
-
-                    <h4
-                      style={{
-                        margin: "0 0 6px",
-                        fontSize: "14.5px",
-                        fontWeight: 700,
-                        color: isCurrent ? "#1d4ed8" : "#0f172a",
-                        lineHeight: "1.4",
-                      }}
-                    >
-                      {text(item, "ChuDe") || text(item, "TenHoatDong")}
-                    </h4>
-
-                    <div style={{ fontSize: "12px", color: "#64748b", display: "flex", flexDirection: "column", gap: "3px" }}>
-                      <span>📅 {timeText}</span>
-                      <span>📍 {venueText}</span>
-                    </div>
-                  </div>
-                );
-              })}
-            </div>
-          )}
+            <div style={{ padding: "40px 20px", textAlign: "center", color: "#64748b", fontSize: "14px" }}>Chưa có seminar nào được lập.</div>
+          ) : visibleSeminars.map((item) => {
+            const isCurrent = item === seminar;
+            const timeText = text(item, "ThoiGianSeminar") || formatDateVn(item.ThoiGianBatDau || item.TgDuKien);
+            const venueText = text(item, "DiaDiem") || "Trung tâm thư viện F401";
+            return <button key={text(item, "MaHD")} type="button" onClick={() => setSelected(text(item, "MaHD"))} style={{ display: "block", width: "100%", padding: "16px 20px", border: 0, borderBottom: "1px solid #f1f5f9", borderLeft: isCurrent ? "4px solid #2563eb" : "4px solid transparent", background: isCurrent ? "#eff6ff" : "#fff", textAlign: "left", cursor: "pointer" }}>
+              <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", marginBottom: "6px", gap: "8px" }}>
+                <span style={{ fontSize: "11px", fontWeight: 700, padding: "2px 6px", borderRadius: "4px", background: item.TrangThai === "Đã công bố" ? "#ecfdf5" : "#f1f5f9", color: item.TrangThai === "Đã công bố" ? "#15803d" : "#475569" }}>{text(item, "TrangThai") || "Đã duyệt"}</span>
+                <span style={{ fontSize: "11.5px", color: "#64748b", fontWeight: 600 }}>Mã hoạt động #{text(item, "MaHD")}</span>
+              </div>
+              <strong style={{ display: "block", marginBottom: "6px", fontSize: "14.5px", color: isCurrent ? "#1d4ed8" : "#0f172a", lineHeight: 1.4 }}>{text(item, "ChuDe") || text(item, "TenHoatDong")}</strong>
+              <span style={{ fontSize: "12px", color: "#64748b", lineHeight: 1.5 }}>📅 {timeText}<br />📍 {venueText}</span>
+            </button>;
+          })}
         </div>
 
-        {/* RIGHT COLUMN: Seminar Detail & Management */}
+        {/* Seminar detail */}
+        <div style={{ display: "flex", flexDirection: "column", gap: "20px", minWidth: 0 }}>
         {seminar ? (
           <div style={{ display: "flex", flexDirection: "column", gap: "20px" }}>
             {/* Top Detail Card */}
@@ -446,27 +458,13 @@ export default function SeminarPanel({ user }: { user: AuthUser }) {
             >
               <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", marginBottom: "12px", gap: "12px", flexWrap: "wrap" }}>
                 <div>
-                  <span
-                    style={{
-                      display: "inline-block",
-                      padding: "4px 10px",
-                      borderRadius: "6px",
-                      background: "#e0f2fe",
-                      color: "#0369a1",
-                      fontSize: "12px",
-                      fontWeight: 700,
-                      marginBottom: "8px",
-                    }}
-                  >
-                    🎤 SEMINAR HỌC THUẬT KHOA CNTT
-                  </span>
                   <h2 style={{ fontSize: "20px", fontWeight: 800, margin: "0 0 8px", color: "#0f172a", lineHeight: 1.35 }}>
                     {text(seminar, "ChuDe") || text(seminar, "TenHoatDong")}
                   </h2>
                 </div>
 
                 <div style={{ display: "flex", gap: "10px", alignItems: "center" }}>
-                  {canManage && (
+                  {canEditSeminar && (
                     <button
                       type="button"
                       onClick={() => setIsUpdateModalOpen(true)}
@@ -488,7 +486,7 @@ export default function SeminarPanel({ user }: { user: AuthUser }) {
                       <span>Cập nhật thông tin</span>
                     </button>
                   )}
-                  {canManage && (
+                  {canEditSeminar && (
                     <span
                       style={{
                         padding: "4px 10px",
@@ -546,7 +544,9 @@ export default function SeminarPanel({ user }: { user: AuthUser }) {
                 </div>
                 <div>
                   <span style={{ color: "#64748b", display: "block", marginBottom: "2px" }}>Quyền lợi điểm RL:</span>
-                  <strong style={{ color: "#059669" }}>+3 Điểm rèn luyện (CTSV duyệt)</strong>
+                  <strong style={{ color: "#059669" }}>
+                    {text(seminar, "DiemRenLuyen") ? `+${text(seminar, "DiemRenLuyen")} Điểm rèn luyện` : "Chưa cập nhật"}
+                  </strong>
                 </div>
               </div>
 
@@ -560,14 +560,39 @@ export default function SeminarPanel({ user }: { user: AuthUser }) {
                     </div>
                   </div>
                 )}
-                {Boolean(text(seminar, "NoiDung") || text(seminar, "MoTa")) && (
-                  <div>
-                    <strong style={{ color: "#0f172a" }}>Chủ đề & Nội dung:</strong>
-                    <div style={{ marginTop: "6px", color: "#334155", whiteSpace: "pre-line", lineHeight: "1.65" }}>
-                      {text(seminar, "NoiDung") || text(seminar, "MoTa")}
-                    </div>
+                <div>
+                  <strong style={{ color: "#0f172a" }}>
+                    {seminarSection ? "I. Chủ đề và nội dung" : "Chủ đề & Nội dung:"}
+                  </strong>
+                  <div style={{ marginTop: "6px", whiteSpace: "pre-line" }}>
+                    {!currentAnnouncement ? "Đang tải thông báo đã công bố…" :
+                      currentAnnouncement.unavailable ? "Không tải được thông báo đã công bố." :
+                      publishedArticle ? (
+                        <>
+                          {!seminarSection && <strong>{publishedArticle.title}</strong>}
+                          {(seminarSection || publishedArticle.content.text) && (
+                            <p style={{ margin: "6px 0" }}>{seminarSection || publishedArticle.content.text}</p>
+                          )}
+                          {pdfUrl && (
+                            <details style={{ marginTop: "8px" }}>
+                              <summary style={{ color: "#1d4ed8", cursor: "pointer", fontWeight: 600 }}>
+                                Xem thông báo PDF ({publishedArticle.content.pdfName || "tai-lieu.pdf"})
+                              </summary>
+                              <iframe
+                                title="Thông báo seminar đã công bố"
+                                src={pdfUrl}
+                                loading="lazy"
+                                style={{ width: "100%", height: "min(65vh, 620px)", marginTop: "8px", border: "1px solid #cbd5e1", borderRadius: "8px" }}
+                              />
+                              <a href={pdfUrl} download={publishedArticle.content.pdfName || "tai-lieu.pdf"}>
+                                Tải thông báo PDF
+                              </a>
+                            </details>
+                          )}
+                        </>
+                      ) : text(seminar, "NoiDung") || text(seminar, "MoTa") || "Chưa cập nhật"}
                   </div>
-                )}
+                </div>
               </div>
             </div>
 
@@ -622,7 +647,7 @@ export default function SeminarPanel({ user }: { user: AuthUser }) {
                   })}
                 </div>
 
-                {canManage && (
+                {canEditSeminar && (
                   <button
                     type="button"
                     onClick={() => setIsUpdateModalOpen(true)}
@@ -654,7 +679,7 @@ export default function SeminarPanel({ user }: { user: AuthUser }) {
                       <h3 style={{ fontSize: "16px", fontWeight: 700, margin: 0, color: "#0f172a" }}>
                         Danh sách Diễn giả & Khách mời báo cáo
                       </h3>
-                      {canManage && (
+                      {canEditSeminar && (
                         <button
                           type="button"
                           onClick={() => setIsUpdateModalOpen(true)}
@@ -732,7 +757,7 @@ export default function SeminarPanel({ user }: { user: AuthUser }) {
                       <h3 style={{ fontSize: "16px", fontWeight: 700, margin: 0, color: "#0f172a" }}>
                         Lịch trình chi tiết buổi Seminar (Timeline)
                       </h3>
-                      {canManage && (
+                      {canEditSeminar && (
                         <button
                           type="button"
                           onClick={() => setIsUpdateModalOpen(true)}
@@ -868,7 +893,7 @@ export default function SeminarPanel({ user }: { user: AuthUser }) {
                     )}
 
                     {/* Add material form */}
-                    {canManage && (
+                    {canEditSeminar && (
                       <form
                         onSubmit={saveMaterial}
                         style={{
@@ -935,8 +960,80 @@ export default function SeminarPanel({ user }: { user: AuthUser }) {
               </div>
             </div>
           </div>
-        ) : null}
+        ) : (
+          <div style={{ padding: "48px 24px", border: "1px solid #e2e8f0", borderRadius: "12px", background: "#fff", color: "#64748b", textAlign: "center" }}>
+            {loading ? "Đang tải seminar…" : visibleSeminars.length === 0 ? "Chưa có seminar nào được lập." : "Chọn seminar để xem thông tin và danh sách sinh viên đăng ký."}
+          </div>
+        )}
       </div>
+      </div>
+
+      {isAttendanceModalOpen && (
+        <div className={s.modalOverlay} role="presentation" onClick={() => setIsAttendanceModalOpen(false)}>
+          <div className={`${s.modalCard} ${s.seminarAttendanceModal}`} role="dialog" aria-modal="true" aria-labelledby="seminar-attendance-title" onClick={(event) => event.stopPropagation()}>
+            <div className={s.modalHeader}>
+              <div>
+                <h3 id="seminar-attendance-title">Điểm danh Seminar bằng QR</h3>
+                <p style={{ margin: "5px 0 0", color: "#64748b", fontSize: "13px" }}>Chọn seminar và thời gian mã QR có hiệu lực.</p>
+              </div>
+              <button type="button" className={s.modalCloseBtn} aria-label="Đóng" onClick={() => setIsAttendanceModalOpen(false)}>×</button>
+            </div>
+
+            <form onSubmit={createAttendanceQr}>
+              <div className={s.modalBody} style={{ padding: "20px 24px", display: "grid", gap: "16px" }}>
+                <label className={s.businessField}>
+                  <span>Seminar</span>
+                  <select
+                    className={s.businessInput}
+                    value={attendanceSeminarId}
+                    onChange={(event) => {
+                      const nextId = event.target.value;
+                      const nextSeminar = visibleSeminars.find((item) => text(item, "MaHD") === nextId);
+                      setAttendanceSeminarId(nextId);
+                      setAttendanceStartsAt(toDateTimeLocal(nextSeminar?.ThoiGianBatDau));
+                      setAttendanceEndsAt(toDateTimeLocal(nextSeminar?.ThoiGianKetThuc));
+                      setAttendanceQr(null);
+                    }}
+                    required
+                  >
+                    <option value="">Chọn seminar</option>
+                    {visibleSeminars.map((item) => <option key={text(item, "MaHD")} value={text(item, "MaHD")}>
+                      {text(item, "ChuDe") || text(item, "TenHoatDong")} · #{text(item, "MaHD")}
+                    </option>)}
+                  </select>
+                </label>
+
+                <div className={s.seminarAttendanceTimes}>
+                  <label className={s.businessField}>
+                    <span>Thời gian bắt đầu</span>
+                    <input className={s.businessInput} type="datetime-local" value={attendanceStartsAt} onChange={(event) => setAttendanceStartsAt(event.target.value)} required />
+                  </label>
+                  <label className={s.businessField}>
+                    <span>Thời gian kết thúc</span>
+                    <input className={s.businessInput} type="datetime-local" value={attendanceEndsAt} onChange={(event) => setAttendanceEndsAt(event.target.value)} required />
+                  </label>
+                </div>
+                <p style={{ margin: 0, color: "#64748b", fontSize: "12px", lineHeight: 1.5 }}>
+                  Mã QR chỉ điểm danh được trong khoảng thời gian đã chọn. Thời gian được lấy sẵn từ kế hoạch Seminar và có thể chỉnh sửa.
+                </p>
+
+                {attendanceQr && (
+                  <div className={s.attendanceQr} style={{ marginTop: 0 }}>
+                    <strong>Sinh viên quét mã bằng ứng dụng để điểm danh</strong>
+                    <img src={attendanceQr.image} alt="Mã QR điểm danh Seminar" width={320} height={320} />
+                    <span>Mã hết hạn lúc {formatDateVn(attendanceQr.endsAt)}</span>
+                    <a href={attendanceQr.image} download={`diem-danh-seminar-${attendanceSeminarId}.png`}>Tải mã QR</a>
+                  </div>
+                )}
+              </div>
+              <div className={s.modalFooter} style={{ display: "flex", justifyContent: "flex-end", gap: "10px", padding: "14px 24px" }}>
+                <button type="button" className={s.secondaryButton} onClick={() => setIsAttendanceModalOpen(false)}>Đóng</button>
+                <button type="submit" className={s.primary} disabled={busy || !attendanceSeminarId}>{busy ? "Đang tạo…" : attendanceQr ? "Tạo lại mã QR" : "Tạo mã QR"}</button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
 
       {/* POPUP MODAL: CẬP NHẬT THÔNG TIN SEMINAR */}
       {isUpdateModalOpen && seminar && (
@@ -1024,7 +1121,7 @@ export default function SeminarPanel({ user }: { user: AuthUser }) {
                 }}
               >
                 {/* Row 1: Đơn vị chủ trì, phối hợp, thời lượng */}
-                <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 160px", gap: "14px" }}>
+                <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(150px, 1fr))", gap: "14px" }}>
                   <label style={{ display: "flex", flexDirection: "column", gap: "6px", fontSize: "13px", color: "#334155", fontWeight: 600 }}>
                     <span>Đơn vị chủ trì:</span>
                     <input
@@ -1054,13 +1151,30 @@ export default function SeminarPanel({ user }: { user: AuthUser }) {
                       style={{ padding: "10px 14px", borderRadius: "8px", border: "1px solid #cbd5e1", fontSize: "13.5px", fontWeight: 500 }}
                     />
                   </label>
+                  <label style={{ display: "flex", flexDirection: "column", gap: "6px", fontSize: "13px", color: "#334155", fontWeight: 600 }}>
+                    <span>Quyền lợi điểm rèn luyện:</span>
+                    <input
+                      name="diemRenLuyen"
+                      type="number"
+                      min={0}
+                      max={100}
+                      step="0.01"
+                      defaultValue={text(seminar, "DiemRenLuyen")}
+                      disabled={Boolean(seminar.DiemRenLuyenDaKhoa)}
+                      placeholder="Số điểm đề xuất"
+                      style={{ padding: "10px 14px", borderRadius: "8px", border: "1px solid #cbd5e1", fontSize: "13.5px", fontWeight: 500, background: seminar.DiemRenLuyenDaKhoa ? "#f1f5f9" : "#fff" }}
+                    />
+                    {Boolean(seminar.DiemRenLuyenDaKhoa) && (
+                      <span style={{ color: "#64748b", fontSize: "11px", fontWeight: 400 }}>Theo kế hoạch đã duyệt hoặc đã công bố</span>
+                    )}
+                  </label>
                 </div>
 
                 {/* Row 2: Chủ đề & Nội dung */}
                 <label style={{ display: "flex", flexDirection: "column", gap: "6px", fontSize: "13px", color: "#334155", fontWeight: 600 }}>
                   <div style={{ display: "flex", justifyContent: "space-between" }}>
-                    <span>Chủ đề & Nội dung Seminar:</span>
-                    <span style={{ fontSize: "12px", color: "#64748b", fontWeight: 400 }}>Hiển thị theo thông báo chính thức</span>
+                    <span>Nội dung hồ sơ Seminar:</span>
+                    <span style={{ fontSize: "12px", color: "#64748b", fontWeight: 400 }}>Hiển thị khi chưa có thông báo đã công bố</span>
                   </div>
                   <textarea
                     name="noiDung"
@@ -1229,7 +1343,7 @@ export default function SeminarPanel({ user }: { user: AuthUser }) {
                   <span>Lập buổi Seminar học thuật mới</span>
                 </h3>
                 <p style={{ margin: 0, fontSize: "13px", color: "#64748b" }}>
-                  Tạo hoạt động seminar mới, mở đăng ký cho sinh viên và thiết lập chương trình.
+                  Lưu bản nháp seminar và thiết lập chương trình.
                 </p>
               </div>
 

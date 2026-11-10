@@ -1,4 +1,4 @@
-import { Body, Controller, Get, HttpCode, Inject, Post, Req, Res, UseGuards } from '@nestjs/common';
+import { Body, Controller, Get, HttpCode, Inject, Post, Req, Res, UnauthorizedException, UseGuards } from '@nestjs/common';
 import { ApiBearerAuth, ApiCookieAuth, ApiOperation, ApiResponse, ApiTags } from '@nestjs/swagger';
 import type { ServerResponse } from 'node:http';
 import { ChangePasswordDto, LoginDto } from './auth.dto';
@@ -10,7 +10,10 @@ import { AuthRequest, clearSessionCookie, sessionToken, writeSessionCookie } fro
 @Controller('auth')
 @UseGuards(AuthOriginGuard)
 export class AuthController {
-  constructor(@Inject(AuthService) private readonly auth: AuthService) {}
+  constructor(
+    @Inject(AuthService) private readonly auth: AuthService,
+    @Inject(LoginRateGuard) private readonly loginRate: LoginRateGuard,
+  ) {}
 
   @Post('login')
   @HttpCode(200)
@@ -18,9 +21,16 @@ export class AuthController {
   @ApiOperation({ summary: 'Đăng nhập và tạo cookie phiên (8 giờ mặc định)' })
   @ApiResponse({ status: 200, description: 'Tài khoản hiện tại và thời hạn phiên; token chỉ có trong cookie HttpOnly' })
   @ApiResponse({ status: 401, description: 'Thông tin đăng nhập không hợp lệ' })
-  @ApiResponse({ status: 429, description: 'Vượt giới hạn thử đăng nhập' })
+  @ApiResponse({ status: 429, description: 'Vượt giới hạn đăng nhập thất bại theo IP/tài khoản' })
   async login(@Body() dto: LoginDto, @Req() request: AuthRequest, @Res({ passthrough: true }) response: ServerResponse) {
-    const result = await this.auth.login(dto);
+    let result: Awaited<ReturnType<AuthService['login']>>;
+    try {
+      result = await this.auth.login(dto);
+      this.loginRate.clearAccountIpFailures(request, dto.username);
+    } catch (error) {
+      if (error instanceof UnauthorizedException) this.loginRate.recordFailure(request, dto.username);
+      throw error;
+    }
     await this.auth.logout(sessionToken(request));
     writeSessionCookie(response, result.token, this.auth.lifetimeSeconds, this.auth.secureCookie);
     return { user: result.user, expiresAt: result.expiresAt };
@@ -31,8 +41,15 @@ export class AuthController {
   @UseGuards(LoginRateGuard)
   @ApiOperation({ summary: 'Đăng nhập ứng dụng mobile và nhận Bearer token phiên' })
   @ApiResponse({ status: 200, description: 'Trả accessToken dùng trong Authorization: Bearer' })
-  async mobileLogin(@Body() dto: LoginDto, @Res({ passthrough: true }) response: ServerResponse) {
-    const result = await this.auth.login(dto);
+  async mobileLogin(@Body() dto: LoginDto, @Req() request: AuthRequest, @Res({ passthrough: true }) response: ServerResponse) {
+    let result: Awaited<ReturnType<AuthService['login']>>;
+    try {
+      result = await this.auth.login(dto);
+      this.loginRate.clearAccountIpFailures(request, dto.username);
+    } catch (error) {
+      if (error instanceof UnauthorizedException) this.loginRate.recordFailure(request, dto.username);
+      throw error;
+    }
     response.setHeader('Cache-Control', 'no-store');
     return { accessToken: result.token, tokenType: 'Bearer', expiresAt: result.expiresAt, user: result.user };
   }

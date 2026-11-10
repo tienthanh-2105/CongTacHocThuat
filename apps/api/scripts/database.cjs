@@ -27,7 +27,7 @@ const requiredTables = [
   'MAQR', 'DIEMDANH', 'GIAITHUONG', 'KETQUAHOCTHUAT', 'DIEMRENLUYEN',
   'HOSOQUYETTOAN', 'CHIPHITHUCTE', 'PHIENDANGNHAP',
 ];
-const workflowTables = ['SCHEMAMIGRATION', 'CHITIETKEHOACH', 'VONGTHI', 'BAITHI', 'CHAMDIEMVONG', 'HANGDOICHODANGKY', 'THONGBAO', 'TEPSEMINAR', 'GIANGVIEN_BOMON', 'DUTRUKINHPHI', 'KINHPHIHOATDONG', 'KEHOACHTOCHUC', 'PHANCONGVONGTHI', 'DETHIVONG', 'DANGKYVONGTHI', 'TINTUCHOCTHUAT', 'PHANCONGDEXUATBOMON', 'NGUOITHUCHIENDEXUAT'];
+const workflowTables = ['SCHEMAMIGRATION', 'CHITIETKEHOACH', 'VONGTHI', 'BAITHI', 'CHAMDIEMVONG', 'HANGDOICHODANGKY', 'THONGBAO', 'TEPSEMINAR', 'GIANGVIEN_BOMON', 'DUTRUKINHPHI', 'KINHPHIHOATDONG', 'KEHOACHTOCHUC', 'PHANCONGVONGTHI', 'DETHIVONG', 'DANGKYVONGTHI', 'TINTUCHOCTHUAT', 'PHANCONGDEXUATBOMON', 'NGUOITHUCHIENDEXUAT', 'BAOCAOQUYETTOAN'];
 
 async function getApplicationTables(pool) {
   const result = await pool.request().query(
@@ -123,6 +123,22 @@ async function migrate(pool) {
       '044_phancong_end_date.sql',
       '045_department_assignment_member_content.sql',
       '046_firebase_push.sql',
+      '046_competition_registration_topics.sql',
+      '047_fix_team_unique_topic_constraint.sql',
+      '048_drop_legacy_team_topic_unique.sql',
+      '049_activity_committees_and_legacy_fields.sql',
+      '050_validate_actual_costs_against_budget_lines.sql',
+      '051_activity_participant_composition.sql',
+      '052_activity_participant_composition_unlimited.sql',
+      '053_budget_estimate_status_constraint.sql',
+      '054_seminar_management_source.sql',
+      '055_seminar_announced_in_management.sql',
+      '056_seminar_proposed_training_points.sql',
+      '057_actual_expense_explanation.sql',
+      '058_actual_expense_budget_lines.sql',
+      '059_actual_expense_quantity_unit.sql',
+      '060_actual_expense_manual_budget_item.sql',
+      '061_settlement_reports.sql',
     );
     for (const fileName of migrations) {
       const migration = path.resolve(__dirname, '../migrations', fileName);

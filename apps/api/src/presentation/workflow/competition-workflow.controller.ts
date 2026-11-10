@@ -11,6 +11,11 @@ import { CompetitionTopicDto, CompetitionTopicStatusDto } from './competition-wo
 export class CompetitionWorkflowController {
   constructor(@Inject(CompetitionWorkflowService) private readonly service: CompetitionWorkflowService) {}
   @Get('competitions') competitions(@Req() r:AuthRequest){return this.service.competitions(r.auth!);}
+  @Get('manage/competitions') managedCompetitions(@Req() r:AuthRequest){return this.service.managedCompetitions(r.auth!);}
+  @Get('manage/competitions/:id') managedCompetition(@Req() r:AuthRequest,@Param('id',ParseIntPipe) id:number){return this.service.managedCompetition(r.auth!,id);}
+  @Post('manage/competitions/:id/rounds') createManagedRound(@Req() r:AuthRequest,@Param('id',ParseIntPipe) id:number,@Body() dto:CompetitionRoundDto){return this.service.createRound(r.auth!,id,dto);}
+  @Post('manage/competitions/:id/awards') createManagedAward(@Req() r:AuthRequest,@Param('id',ParseIntPipe) id:number,@Body() dto:CompetitionAwardDto){return this.service.createAward(r.auth!,id,dto);}
+  @Post('manage/competitions/:id/results') createManagedResult(@Req() r:AuthRequest,@Param('id',ParseIntPipe) id:number,@Body() dto:GradedCompetitionResultDto){return this.service.createResult(r.auth!,id,dto);}
   @Get('competitions/:id') competition(@Req() r:AuthRequest,@Param('id',ParseIntPipe) id:number){return this.service.competition(r.auth!,id);}
   @Post('competitions/:id/topics') topic(@Req() r:AuthRequest,@Param('id',ParseIntPipe) id:number,@Body() dto:CompetitionTopicDto){return this.service.createTopic(r.auth!,id,dto);}
   @Patch('topics/:id/status') topicStatus(@Req() r:AuthRequest,@Param('id',ParseIntPipe) id:number,@Body() dto:CompetitionTopicStatusDto){return this.service.topicStatus(r.auth!,id,dto.trangThai);}

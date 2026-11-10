@@ -6,11 +6,18 @@ export interface RegistrationEligibility {
   HanDangKy?: Date | string | null;
 }
 
+export function registrationDeadlineOverrideEnabled() {
+  return process.env.REGISTRATION_OPEN_OVERRIDE?.trim().toLowerCase() === 'true';
+}
+
 export function requireOpenRegistration(activity: RegistrationEligibility, now = Date.now()) {
-  if (activity.TrangThai !== 'Đã công bố' || !activity.CoSoDuyet) {
+  const allowAfterDeadline = registrationDeadlineOverrideEnabled();
+  const statusAllowsRegistration = activity.TrangThai === 'Đã công bố'
+    || (allowAfterDeadline && activity.TrangThai === 'Đã duyệt');
+  if (!statusAllowsRegistration || !activity.CoSoDuyet) {
     throw new BadRequestException('Chỉ đăng ký sau khi kế hoạch chi tiết được khoa, Phòng CTSV ký duyệt và ban tổ chức công bố');
   }
-  if (activity.HanDangKy && new Date(activity.HanDangKy).getTime() <= now) {
+  if (!allowAfterDeadline && activity.HanDangKy && new Date(activity.HanDangKy).getTime() <= now) {
     throw new BadRequestException('Đã hết hạn đăng ký cho hoạt động này');
   }
 }

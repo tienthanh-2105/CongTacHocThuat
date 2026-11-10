@@ -33,6 +33,9 @@ export default function ClassesManagementPanel() {
   const [search, setSearch] = useState("");
   const [filterFaculty, setFilterFaculty] = useState("all");
   const [filterCohort, setFilterCohort] = useState("all");
+  const [currentPage, setCurrentPage] = useState(1);
+  const [pageSize, setPageSize] = useState(10);
+  const [sortAscending, setSortAscending] = useState(true);
 
   // Create Modal State
   const [showAddModal, setShowAddModal] = useState(false);
@@ -136,6 +139,25 @@ export default function ClassesManagementPanel() {
       return true;
     });
   }, [classes, search, filterFaculty, filterCohort]);
+
+  const sortedClasses = useMemo(
+    () => [...filteredClasses].sort((first, second) => {
+      const difference = Number(value(first, "MaLop")) - Number(value(second, "MaLop"));
+      return sortAscending ? difference : -difference;
+    }),
+    [filteredClasses, sortAscending],
+  );
+  const totalPages = Math.ceil(sortedClasses.length / pageSize);
+  const startIndex = (currentPage - 1) * pageSize;
+  const visibleClasses = sortedClasses.slice(startIndex, startIndex + pageSize);
+
+  useEffect(() => {
+    setCurrentPage(1);
+  }, [search, filterFaculty, filterCohort, pageSize]);
+
+  useEffect(() => {
+    if (totalPages > 0 && currentPage > totalPages) setCurrentPage(totalPages);
+  }, [currentPage, totalPages]);
 
   // Metrics
   const totalClasses = classes.length;
@@ -421,7 +443,11 @@ export default function ClassesManagementPanel() {
         <table className={s.modernTable}>
           <thead>
             <tr>
-              <th style={{ fontWeight: 700, color: "#0f172a", fontSize: "12px", width: "90px" }}>MÃ LỚP</th>
+              <th style={{ fontWeight: 700, color: "#0f172a", fontSize: "12px", width: "90px" }}>
+                <button type="button" onClick={() => setSortAscending((ascending) => !ascending)} aria-label={`Sắp xếp mã lớp ${sortAscending ? "giảm dần" : "tăng dần"}`} style={{ padding: 0, border: 0, background: "none", color: "inherit", font: "inherit", fontWeight: 700, cursor: "pointer" }}>
+                  MÃ LỚP {sortAscending ? "↑" : "↓"}
+                </button>
+              </th>
               <th style={{ fontWeight: 700, color: "#0f172a", fontSize: "12px" }}>TÊN LỚP</th>
               <th style={{ fontWeight: 700, color: "#0f172a", fontSize: "12px" }}>KHOA / ĐƠN VỊ</th>
               <th style={{ fontWeight: 700, color: "#0f172a", fontSize: "12px" }}>KHÓA HỌC</th>
@@ -444,7 +470,7 @@ export default function ClassesManagementPanel() {
                 </td>
               </tr>
             ) : (
-              filteredClasses.map((cls, index) => {
+              visibleClasses.map((cls, index) => {
                 const id = Number(value(cls, "MaLop"));
                 const tenLop = text(cls, "TenLop");
                 const tenKhoa = text(cls, "TenKhoa");
@@ -452,7 +478,7 @@ export default function ClassesManagementPanel() {
                 const siSo = Number(value(cls, "SiSo")) || 0;
 
                 return (
-                  <tr key={`class-row-${id}-${index}`}>
+                  <tr key={`class-row-${id}`}>
                     <td>
                       <span style={{ fontWeight: 600, color: "#2563eb", background: "#eff6ff", padding: "4px 8px", borderRadius: "6px" }}>
                         #{id}
@@ -528,6 +554,14 @@ export default function ClassesManagementPanel() {
             )}
           </tbody>
         </table>
+        <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: "12px", flexWrap: "wrap", padding: "16px 24px", borderTop: "1px solid #f1f5f9", background: "#fafbfc", fontSize: "14px", color: "#64748b" }}>
+          <span>{sortedClasses.length === 0 ? "Không có lớp học" : <>Hiển thị <strong style={{ color: "#1e293b" }}>{startIndex + 1}–{Math.min(startIndex + pageSize, sortedClasses.length)}</strong> trên tổng số <strong style={{ color: "#1e293b" }}>{sortedClasses.length}</strong> lớp</>}</span>
+          <div style={{ display: "flex", alignItems: "center", gap: "8px" }}>
+            <button type="button" className={s.exportBtn} disabled={currentPage <= 1} onClick={() => setCurrentPage((page) => Math.max(1, page - 1))}>Trước</button>
+            <span>Trang {totalPages === 0 ? 0 : currentPage} / {totalPages}</span>
+            <button type="button" className={s.exportBtn} disabled={currentPage >= totalPages} onClick={() => setCurrentPage((page) => Math.min(totalPages, page + 1))}>Tiếp</button>
+          </div>
+        </div>
       </div>
 
       {/* Modal: Tạo lớp học mới */}
@@ -690,17 +724,17 @@ export default function ClassesManagementPanel() {
                 ✕
               </button>
             </div>
-            <div style={{ padding: "16px 0", fontSize: "14px", color: "#334155", lineHeight: "1.6" }}>
-              <p>
+            <div className={s.deleteConfirmBody}>
+              <p className={s.deleteConfirmMessage}>
                 Bạn có chắc chắn muốn xóa lớp học{" "}
                 <strong>{text(deletingClass, "TenLop")}</strong> thuộc khoa{" "}
                 <strong>{text(deletingClass, "TenKhoa")}</strong> không?
               </p>
-              <p style={{ marginTop: "8px", fontSize: "13px", color: "#64748b" }}>
+              <p className={s.deleteConfirmNote}>
                 Lưu ý: Chỉ có thể xóa các lớp chưa có sinh viên biên chế và không có phân công hỗ trợ.
               </p>
             </div>
-            <div className={s.modalFoot}>
+            <div className={s.deleteConfirmActions}>
               <button
                 type="button"
                 className={s.exportBtn}

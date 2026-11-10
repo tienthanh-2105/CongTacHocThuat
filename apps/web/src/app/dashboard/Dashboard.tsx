@@ -5,12 +5,14 @@ import TrainingPointsPanel from "./TrainingPointsPanel";
 import NewsPanel from "./NewsPanel";
 import SeminarPanel from "./SeminarPanel";
 import SettlementPanel from "./SettlementPanel";
+import SettlementDocumentsPanel from "./SettlementDocumentsPanel";
 import { workflowRequest } from "@/services/workflow";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { usePathname, useRouter } from "next/navigation";
 import { getCurrentUser, logout, type AuthUser } from "@/services/auth";
 import AccountPanel from "./AccountPanel";
 import BusinessPanel from "./BusinessPanel";
+import ReportsPanel from "./ReportsPanel";
 import StudentProfilesPanel from "./StudentProfilesPanel";
 import StaffProfilesPanel from "./StaffProfilesPanel";
 import ClassesManagementPanel from "./ClassesManagementPanel";
@@ -126,6 +128,7 @@ export default function Dashboard() {
   const [expenseActivityId, setExpenseActivityId] = useState<number | null>(null);
   const [expenseActivityName, setExpenseActivityName] = useState("");
   const [routeExpenseActivity, setRouteExpenseActivity] = useState<{ id: number | null; name: string }>({ id: null, name: "" });
+  const [reportActivity, setReportActivity] = useState<{ id: string; name: string; academicYear: string } | null>(null);
   useEffect(() => {
     if (!user?.id) return;
     let active = true;
@@ -263,6 +266,11 @@ export default function Dashboard() {
     }
   }
   function navigate(id: string, search = "") {
+    if (id === "settlement-documents") {
+      const params = new URLSearchParams(search);
+      const activityId = params.get("activityId") ?? "";
+      setReportActivity(activityId ? { id: activityId, name: params.get("activityName") ?? "", academicYear: params.get("academicYear") ?? "" } : null);
+    } else setReportActivity(null);
     if (id !== "expenses") {
       setExpenseActivityId(null);
       setExpenseActivityName("");
@@ -352,6 +360,7 @@ export default function Dashboard() {
         !user.roles.some((role) => ["TRUONGKHOA", "ADMIN"].includes(role.toUpperCase())) &&
         !/^(trưởng|phó)\s*(trưởng\s*)?khoa$/i.test(user.position?.trim() ?? "")))
   );
+  const sidebarSections = visibleSections.filter((section) => !["support", "academic-steering", "academic-organizing", "academic-support"].includes(section.id));
   if (!visibleSections.length) {
     return <main className={s.loading}><div><Icon type={1} /><h1>Tài khoản chưa được cấp quyền sử dụng chức năng web.</h1><button disabled={busy} onClick={signOut}>Đăng xuất</button></div></main>;
   }
@@ -362,7 +371,7 @@ export default function Dashboard() {
     ? "news"
     : visibleSections[0]?.id ?? "news";
   const selected = visibleSections.find((item) => item.id === activeSectionId)!;
-  const matches = visibleSections.filter((item) =>
+  const matches = sidebarSections.filter((item) =>
     item.title.toLocaleLowerCase("vi").includes(query.toLocaleLowerCase("vi")),
   );
   return (
@@ -382,7 +391,7 @@ export default function Dashboard() {
           </div>
         </div>
         <nav aria-label="Chức năng hệ thống">
-          {visibleSections.map((item, index) => {
+          {sidebarSections.map((item, index) => {
             const isSub = Boolean(item.parentId);
             if (isSub && item.parentId !== openParentId && item.parentId !== selected.parentId) {
               return null;
@@ -537,7 +546,7 @@ export default function Dashboard() {
           </div>
         </header>
         <main className={s.main}>
-          {activeSectionId !== "users" && activeSectionId !== "staff-profiles" && activeSectionId !== "student-profiles" && activeSectionId !== "classes" && activeSectionId !== "plans" && !activeSectionId.startsWith("academic-") && !(activeSectionId === "training-points" && !user?.roles?.includes("SINHVIEN")) && activeSectionId !== "seminars" && accountView !== "info" && (
+          {activeSectionId !== "users" && activeSectionId !== "staff-profiles" && activeSectionId !== "student-profiles" && activeSectionId !== "classes" && activeSectionId !== "plans" && !activeSectionId.startsWith("academic-") && !(activeSectionId === "training-points" && !user?.roles?.includes("SINHVIEN")) && activeSectionId !== "seminars" && activeSectionId !== "registrations" && activeSectionId !== "results" && accountView !== "info" && (
             <div className={s.heading}>
               <div>
                 <h1>{selected.title}</h1>
@@ -561,6 +570,8 @@ export default function Dashboard() {
           {accountView === "password" && <AccountPanel view="password" user={user} onClose={() => setAccountView(null)} />}
           {accountView === "info" ? (
             <AccountPanel view="info" user={user} onClose={() => setAccountView(null)} />
+          ) : activeSectionId === "reports" ? (
+            <ReportsPanel />
           ) : activeSectionId === "users" ? (
             <UsersManagementPanel currentUserId={user.id} />
           ) : activeSectionId === "staff-profiles" ? (
@@ -580,7 +591,9 @@ export default function Dashboard() {
           ) : activeSectionId === "academic-support" ? (
             <AcademicActivitiesPanel view="support" user={user} onNavigateTab={(tab) => navigate(tab === "activities" ? "academic-activities" : tab === "steering" ? "academic-steering" : tab === "organizing" ? "academic-organizing" : "academic-support")} />
           ) : activeSectionId === "actual-expenses" ? (
-            <SettlementPanel user={user} />
+            <SettlementPanel user={user} onOpenSettlementList={(activity) => navigate("settlement-documents", new URLSearchParams({ activityId: activity.id, activityName: activity.name, academicYear: activity.academicYear }).toString())} />
+          ) : activeSectionId === "settlement-documents" ? (
+            <SettlementDocumentsPanel initialActivity={reportActivity} />
           ) : activeSectionId === "seminars" ? (
             <SeminarPanel user={user} />
           ) : activeSectionId === "news" || activeSectionId === "news-management" ? (
@@ -590,10 +603,11 @@ export default function Dashboard() {
           ) : activeSectionId === "training-points" ? (
             <TrainingPointsPanel user={user} />
           ) : (
-            ["detailed-plans", "detailed-plans-all", "detailed-plans-seminar", "detailed-plans-competition", "detailed-plans-assignment", "competitions", "results"].includes(activeSectionId) ? (
+            ["detailed-plans", "detailed-plans-all", "detailed-plans-seminar", "detailed-plans-competition", "detailed-plans-assignment", "competitions", "topics", "results"].includes(activeSectionId) ? (
               <OrganizationPanel
                 key={activeSectionId}
                 detailed={["detailed-plans", "detailed-plans-all", "detailed-plans-seminar", "detailed-plans-competition", "detailed-plans-assignment"].includes(activeSectionId)}
+                managementView={activeSectionId === "topics" ? "topics" : activeSectionId === "results" ? "results" : undefined}
                 filterType={
                   activeSectionId === "detailed-plans-assignment" ? "Phân công thực hiện" :
                   undefined

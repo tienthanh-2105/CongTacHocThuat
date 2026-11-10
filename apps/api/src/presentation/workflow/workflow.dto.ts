@@ -1,5 +1,5 @@
 import { Transform, Type } from 'class-transformer';
-import { ArrayMaxSize, ArrayUnique, IsArray, IsBoolean, IsDateString, IsEmail, IsIn, IsInt, IsNotEmpty, IsNumber, IsOptional, IsString, Max, MaxLength, Min, MinLength } from 'class-validator';
+import { ArrayMaxSize, ArrayUnique, IsArray, IsBoolean, IsDateString, IsEmail, IsIn, IsInt, IsNotEmpty, IsNumber, IsOptional, IsString, Max, MaxLength, Min, MinLength, ValidateNested } from 'class-validator';
 
 export class CreatePlanDto {
   @IsOptional() @IsString() @MaxLength(50) soKeHoach?: string;
@@ -86,7 +86,8 @@ export class AdjustTrainingPointDto {
 }
 
 export class CreateAttendanceCodeDto {
-  @IsDateString() expiresAt!: string;
+  @IsDateString() startsAt!: string;
+  @IsDateString() endsAt!: string;
 }
 
 export class CheckInDto {
@@ -94,10 +95,7 @@ export class CheckInDto {
 }
 
 export class BroadcastNotificationDto {
-  @IsString() @IsNotEmpty() @MaxLength(255) tieuDe!: string;
-  @IsString() @IsNotEmpty() noiDung!: string;
-  @IsOptional() @IsString() doiTuong?: string;
-  @IsOptional() kenh?: string[];
+  @Type(() => Number) @IsInt() @Min(1) maHD!: number;
 }
 
 export class SeminarMaterialDto {
@@ -226,6 +224,14 @@ export class CreateStaffAccountDto {
   @Type(() => Number) @IsInt() @Min(1) roleId!: number;
 }
 
+export class ActivityCommitteeMemberDto {
+  @IsString() @IsNotEmpty() @MaxLength(100) ban!: string;
+  @IsOptional() @Type(() => Number) @IsInt() @Min(1) maNgDung?: number | null;
+  @IsString() @IsNotEmpty() @MaxLength(250) hoTen!: string;
+  @IsOptional() @IsString() @MaxLength(150) chucDanh?: string;
+  @IsOptional() @IsString() @MaxLength(100) chucVu?: string;
+}
+
 export class CreateAcademicActivityDto {
   @IsOptional() @IsString() @MaxLength(30) hocKy?: string;
   @IsString() @IsNotEmpty() @MaxLength(20) namHoc!: string;
@@ -240,7 +246,9 @@ export class CreateAcademicActivityDto {
   @IsOptional() @IsString() @MaxLength(255) diaDiem?: string;
   @IsOptional() @IsString() tienDoTH?: string;
   @IsString() @IsNotEmpty() doiTuongThamDu!: string;
+  @IsOptional() @IsString() thanhPhanTD?: string;
   @IsString() @IsNotEmpty() @MaxLength(225) slsvDuKien!: string;
+  @IsOptional() @IsArray() @ArrayMaxSize(100) @ValidateNested({ each: true }) @Type(() => ActivityCommitteeMemberDto) banThamGia?: ActivityCommitteeMemberDto[];
 }
 
 export class CreateActivityBudgetDto {
@@ -257,6 +265,10 @@ export class CreateActivityBudgetDto {
 export class ReviewActivityBudgetDto {
   @IsIn(['approve', 'reject', 'request_changes']) action!: 'approve' | 'reject' | 'request_changes';
   @IsOptional() @IsString() @MaxLength(500) ghiChu?: string;
+}
+
+export class AddBudgetEstimateLinesDto {
+  @Type(() => Number) @IsArray() @ArrayUnique() @ArrayMaxSize(500) @IsInt({ each: true }) @Min(1, { each: true }) maKPHDs!: number[];
 }
 
 export class CreateBudgetEstimateDto {
@@ -279,7 +291,9 @@ export class UpdateAcademicActivityDto {
   @IsOptional() @IsString() @MaxLength(255) diaDiem?: string;
   @IsOptional() @IsString() tienDoTH?: string;
   @IsOptional() @IsString() doiTuongThamDu?: string;
+  @IsOptional() @IsString() thanhPhanTD?: string;
   @IsOptional() @IsString() @IsNotEmpty() @MaxLength(225) slsvDuKien?: string;
+  @IsOptional() @IsArray() @ArrayMaxSize(100) @ValidateNested({ each: true }) @Type(() => ActivityCommitteeMemberDto) banThamGia?: ActivityCommitteeMemberDto[];
   @IsOptional() @IsIn(['Dự thảo', 'Chờ duyệt', 'Đã duyệt', 'Từ chối']) trangThai?: string;
 }
 

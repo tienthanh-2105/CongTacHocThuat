@@ -1,0 +1,23 @@
+IF OBJECT_ID(N'dbo.BAOCAOQUYETTOAN',N'U') IS NULL
+BEGIN
+  DECLARE @activityType sysname, @accountType sysname;
+  SELECT @activityType=TYPE_NAME(user_type_id) FROM sys.columns WHERE object_id=OBJECT_ID(N'dbo.HOATDONGHOCTHUAT') AND name=N'MaHD';
+  SELECT @accountType=TYPE_NAME(user_type_id) FROM sys.columns WHERE object_id=OBJECT_ID(N'dbo.TAIKHOAN') AND name=N'MaTK';
+  IF COALESCE(@activityType,N'') NOT IN(N'int',N'bigint') OR COALESCE(@accountType,N'') NOT IN(N'int',N'bigint')
+    THROW 51061,'Settlement reports require int or bigint activity and account keys.',1;
+  EXEC(N'CREATE TABLE dbo.BAOCAOQUYETTOAN (
+    MaBC BIGINT IDENTITY(1,1) NOT NULL PRIMARY KEY,
+    MaHD '+@activityType+N' NOT NULL,
+    NguoiLap '+@accountType+N' NOT NULL,
+    NgayLap DATETIMEOFFSET NOT NULL CONSTRAINT DF_BCQT_NGAYLAP DEFAULT SYSDATETIMEOFFSET(),
+    CacDong NVARCHAR(MAX) NOT NULL,
+    TongDuToan DECIMAL(18,2) NOT NULL,
+    TongThucThi DECIMAL(18,2) NOT NULL,
+    TongChenhLech DECIMAL(18,2) NOT NULL,
+    CONSTRAINT FK_BCQT_HOATDONG FOREIGN KEY(MaHD) REFERENCES dbo.HOATDONGHOCTHUAT(MaHD),
+    CONSTRAINT FK_BCQT_NGUOILAP FOREIGN KEY(NguoiLap) REFERENCES dbo.TAIKHOAN(MaTK),
+    CONSTRAINT CK_BCQT_CACDONG CHECK(ISJSON(CacDong)=1),
+    CONSTRAINT CK_BCQT_TONG CHECK(TongDuToan>=0 AND TongThucThi>=0)
+  );
+  CREATE INDEX IX_BAOCAOQUYETTOAN_MAHD_NGAYLAP ON dbo.BAOCAOQUYETTOAN(MaHD,NgayLap DESC);');
+END;

@@ -59,12 +59,12 @@ export default function LoginPage() {
   }
   return (
     <main className="login-page">
-      <div className="heritage-pattern" aria-hidden="true" />
       <div className="login-shell">
         <section
           className="login-card"
           aria-label="Đăng nhập hệ thống học thuật"
         >
+          <div className="heritage-pattern" aria-hidden="true" />
           <aside className="visual-panel">
             <div className="visual-heading">
               <h1>

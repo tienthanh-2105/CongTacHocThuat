@@ -1,7 +1,11 @@
-import { Inject, Injectable } from '@nestjs/common';
+import { ConflictException, Inject, Injectable } from '@nestjs/common';
 import sql from 'mssql';
 import { DatabaseService } from '../../database.service';
-import type { CreateExpenseDto, CreateSeminarDto, UpdateSeminarDetailsDto } from '../../../presentation/features/features.dto';
+import type { CreateExpenseDto, CreateSeminarDto, CreateSettlementReportDto, UpdateSeminarDetailsDto } from '../../../presentation/features/features.dto';
+
+const trainingPointsLockedSql = `CASE WHEN h.TrangThai=N'Đã công bố' OR d.CongBoLuc IS NOT NULL
+  OR (d.MaKHToChuc IS NOT NULL AND d.TrangThai NOT IN(N'Chờ phân công thực hiện',N'Cần lập ban đề thi',N'Dự thảo',N'Cần bổ sung',N'Từ chối'))
+  THEN CAST(1 AS BIT) ELSE CAST(0 AS BIT) END`;
 
 @Injectable()
 export class FeaturesRepository {
@@ -77,7 +81,9 @@ export class FeaturesRepository {
               COALESCE(d.ThoiGianBatDau,c.ThoiGian,s.ThoiGian,
                 TRY_CONVERT(DATETIME2,REPLACE(h.TgDuKien,N'Ngày ',N''),103)) AS ThoiGianBatDau,
               d.ThoiGianKetThuc,COALESCE(h.HanDangKy,d.HanDangKy) AS HanDangKy,
-              COALESCE(d.DiaDiem,s.DiaDiem,h.DiaDiem) AS DiaDiem,h.SLSVDuKien,h.TrangThai,
+              COALESCE(d.DiaDiem,s.DiaDiem,h.DiaDiem) AS DiaDiem,h.SLSVDuKien,h.BanThamGia,h.TrangThai,
+              TRY_CONVERT(INT,NULLIF(h.SLSVDuKien,N'')) AS SLToiDa,
+              COALESCE((SELECT SUM(k.SoTien) FROM KINHPHIHOATDONG k WHERE k.MaHD=h.MaHD),0) AS KinhPhiDuTru,
               d.TrangThai AS TrangThaiKeHoach,d.CongBoLuc,d.NguoiKyKhoa,d.NguoiKyCTSV,
               c.MaCThi,c.TenCuocThi,c.HinhThucThi,c.TheLe,s.MaSeminar,s.ChuDe,
               CAST(CASE WHEN d.TrangThai=N'Đã duyệt' AND d.NguoiKyKhoa IS NOT NULL
@@ -124,23 +130,52 @@ export class FeaturesRepository {
     );
   }
 
-  async listSeminars() {
+  async listSeminars(includeUnpublished = false, managementOnly = false) {
     return this.db.query(
-      `SELECT TOP (100) s.MaSeminar, s.MaHD, s.ChuDe, s.MucDich, s.NoiDung, s.DoiTuongTG, s.ThoiLuong,s.ChuongTrinh,
+      `SELECT TOP (100) s.MaSeminar, h.MaHD, s.ChuDe, s.MucDich, s.NoiDung, s.DoiTuongTG, s.ThoiLuong,s.ChuongTrinh,
               s.DVChuTri, s.ThoiGian AS ThoiGianSeminar, COALESCE(d.DiaDiem, s.DiaDiem, h.DiaDiem) AS DiaDiem,
-              h.TenHoatDong, h.NoiDung AS MoTa, h.TgDuKien, h.SLSVDuKien, h.TrangThai, d.ThoiGianBatDau, d.ThoiGianKetThuc, d.HanDangKy,
+              COALESCE(d.DiemRenLuyen,s.DiemRenLuyenDeXuat) AS DiemRenLuyen, ${trainingPointsLockedSql} AS DiemRenLuyenDaKhoa,
+              h.TenHoatDong, h.LoaiHoatDong, h.NoiDung AS MoTa, h.TgDuKien, h.SLSVDuKien, h.BanThamGia, h.NguoiLap,
+              TRY_CONVERT(INT,NULLIF(h.SLSVDuKien,N'')) AS SLToiDa,
+              COALESCE((SELECT SUM(k.SoTien) FROM KINHPHIHOATDONG k WHERE k.MaHD=h.MaHD),0) AS KinhPhiDuTru,
+              CASE WHEN d.TrangThai=N'Đã duyệt' AND d.NguoiKyKhoa IS NOT NULL AND d.NguoiKyCTSV IS NOT NULL THEN N'Đã duyệt' ELSE COALESCE(d.TrangThai,h.TrangThai) END AS TrangThai,
+              d.ThoiGianBatDau, d.ThoiGianKetThuc, COALESCE(d.HanDangKy,h.HanDangKy) AS HanDangKy,
               (SELECT c.DienGia as hoTen, c.TenChuDe as chuDeTrinhBay FROM CHUDE c WHERE c.MaSeminar=s.MaSeminar FOR JSON PATH) AS DienGia,
               (SELECT t.MaTep,t.TenTep,t.UrlTep,t.LoaiTep FROM TEPSEMINAR t WHERE t.MaSeminar=s.MaSeminar FOR JSON PATH) AS TaiLieu
-       FROM SEMINAR s JOIN HOATDONGHOCTHUAT h ON h.MaHD = s.MaHD LEFT JOIN KEHOACHTOCHUC d ON d.MaHD=h.MaHD
-       ORDER BY h.TgBatDau DESC`);
+       FROM HOATDONGHOCTHUAT h LEFT JOIN SEMINAR s ON s.MaHD = h.MaHD LEFT JOIN KEHOACHTOCHUC d ON d.MaHD=h.MaHD
+       WHERE (s.MaSeminar IS NOT NULL OR h.LoaiHoatDong LIKE N'%Seminar%')
+         AND (@p1=1 OR (d.TrangThai=N'Đã duyệt' AND d.NguoiKyKhoa IS NOT NULL AND d.NguoiKyCTSV IS NOT NULL))
+         AND (@p2=0 OR s.TaoTuQuanLy=1 OR s.DaDangThongBao=1)
+       ORDER BY CASE WHEN @p2=1 THEN h.MaHD END DESC, h.TgBatDau DESC`, [includeUnpublished ? 1 : 0, managementOnly ? 1 : 0]);
+  }
+
+  async includeAnnouncedSeminar(activityId: number, transaction: sql.Transaction) {
+    await new sql.Request(transaction).input('activityId', sql.BigInt, activityId).query(`
+      INSERT INTO SEMINAR(MaHD,ChuDe,NoiDung,DoiTuongTG,ThoiGian,DiaDiem,SLSVDuKien,DaDangThongBao)
+      SELECT h.MaHD,h.TenHoatDong,COALESCE(d.NoiDung,h.NoiDung),h.DoiTuongThamDu,
+        CASE WHEN d.ThoiGianBatDau IS NULL AND h.TgBatDau IS NOT NULL
+          THEN CONCAT(CONVERT(CHAR(5),h.TgBatDau,108),N' ',LEFT(h.TgDuKien,219)) END,
+        COALESCE(d.DiaDiem,h.DiaDiem),TRY_CONVERT(INT,NULLIF(h.SLSVDuKien,N'')),1
+      FROM HOATDONGHOCTHUAT h
+      LEFT JOIN KEHOACHTOCHUC d ON d.MaHD=h.MaHD
+      WHERE h.MaHD=@activityId AND h.LoaiHoatDong=N'Seminar'
+        AND NOT EXISTS (SELECT 1 FROM SEMINAR s WITH(UPDLOCK,HOLDLOCK) WHERE s.MaHD=h.MaHD);
+
+      UPDATE s SET DaDangThongBao=1
+      FROM SEMINAR s JOIN HOATDONGHOCTHUAT h ON h.MaHD=s.MaHD
+      WHERE s.MaHD=@activityId AND h.LoaiHoatDong=N'Seminar' AND s.DaDangThongBao=0;
+    `);
   }
 
   async listActivities() {
     return this.db.query(
-      `SELECT TOP (100) h.MaHD, h.TenHoatDong, h.NoiDung, h.TgDuKien,
-              COALESCE(d.DiaDiem, s.DiaDiem, h.DiaDiem) AS DiaDiem, h.SLSVDuKien, h.TrangThai,
+      `SELECT TOP (100) h.MaHD, h.TenHoatDong, h.NamHoc, h.NoiDung, h.TgDuKien,
+              COALESCE(d.DiaDiem, s.DiaDiem, h.DiaDiem) AS DiaDiem, h.SLSVDuKien, h.BanThamGia, h.TrangThai,
+              TRY_CONVERT(INT,NULLIF(h.SLSVDuKien,N'')) AS SLToiDa,
+              COALESCE((SELECT SUM(k.SoTien) FROM KINHPHIHOATDONG k WHERE k.MaHD=h.MaHD),0) AS KinhPhiDuTru,
               d.MaKeHoach, d.TrangThai AS TrangThaiKeHoach, d.CongBoLuc, d.NguoiKyKhoa, d.NguoiKyCTSV,
-              c.MaCThi, c.TenCuocThi, c.HinhThucThi, c.TheLe, d.ThoiGianBatDau, d.ThoiGianKetThuc, d.HanDangKy,
+              c.MaCThi, c.TenCuocThi, c.HinhThucThi, c.TheLe, c.DoiTuongTG, c.GiaiThuong, COALESCE(d.DiemRenLuyen,s.DiemRenLuyenDeXuat) AS DiemRenLuyen,
+              d.ThoiGianBatDau, d.ThoiGianKetThuc, d.HanDangKy,
               s.MaSeminar, s.ChuDe, s.ThoiGian AS ThoiGianSeminar
        FROM HOATDONGHOCTHUAT h
        LEFT JOIN CUOCTHI c ON c.MaHD = h.MaHD
@@ -154,11 +189,15 @@ export class FeaturesRepository {
   async findSeminar(id: number) {
     const rows = await this.db.query(
       `SELECT s.MaSeminar, s.MaHD, s.ChuDe, s.MucDich, s.NoiDung, s.DoiTuongTG, s.ThoiLuong,s.ChuongTrinh,
-              s.DVChuTri, h.TenHoatDong, h.NoiDung AS MoTa, h.TgBatDau, h.TgKetThuc,
-              h.HanDangKy, h.DiaDiem, h.SLToiDa, h.TrangThai,
+              s.DVChuTri, s.ThoiGian AS ThoiGianSeminar, h.TenHoatDong, h.NoiDung AS MoTa, h.TgBatDau, h.TgKetThuc, h.TgDuKien, h.NguoiLap,
+              COALESCE(d.DiemRenLuyen,s.DiemRenLuyenDeXuat) AS DiemRenLuyen, ${trainingPointsLockedSql} AS DiemRenLuyenDaKhoa,
+              h.HanDangKy, h.DiaDiem, TRY_CONVERT(INT,NULLIF(h.SLSVDuKien,N'')) AS SLToiDa, h.TrangThai,
+              COALESCE((SELECT SUM(k.SoTien) FROM KINHPHIHOATDONG k WHERE k.MaHD=h.MaHD),0) AS KinhPhiDuTru,
+              h.BanThamGia,
               (SELECT c.DienGia as hoTen, c.TenChuDe as chuDeTrinhBay FROM CHUDE c WHERE c.MaSeminar=s.MaSeminar FOR JSON PATH) AS DienGia,
               (SELECT t.MaTep,t.TenTep,t.UrlTep,t.LoaiTep FROM TEPSEMINAR t WHERE t.MaSeminar=s.MaSeminar FOR JSON PATH) AS TaiLieu
        FROM SEMINAR s JOIN HOATDONGHOCTHUAT h ON h.MaHD = s.MaHD
+       LEFT JOIN KEHOACHTOCHUC d ON d.MaHD=h.MaHD
        WHERE s.MaSeminar = @p1`, [id]);
     return rows[0] ?? null;
   }
@@ -168,13 +207,63 @@ export class FeaturesRepository {
     return rows[0]?.MaHD ?? null;
   }
   async updateSeminarDetails(accountId: string, admin: boolean, id: number, dto: UpdateSeminarDetailsDto) {
-    return (await this.db.query(`UPDATE s SET DVChuTri=COALESCE(@p4,s.DVChuTri),
-      ThoiLuong=COALESCE(@p5,s.ThoiLuong),ChuongTrinh=COALESCE(@p6,s.ChuongTrinh),NoiDung=COALESCE(@p7,s.NoiDung),MucDich=COALESCE(@p8,s.MucDich) OUTPUT INSERTED.*
-      FROM SEMINAR s WHERE s.MaSeminar=@p1 AND (@p3=1
-        OR EXISTS(SELECT 1 FROM BANTOCHUC b JOIN TAIKHOAN t ON t.MaNgDung=b.MaNgDung WHERE b.MaHD=s.MaHD AND t.MaTK=@p2)
-        OR EXISTS(SELECT 1 FROM KEHOACHTOCHUC d CROSS APPLY OPENJSON(d.CacBan) WITH(loaiBan VARCHAR(30),thanhVien NVARCHAR(MAX) AS JSON) b
-          CROSS APPLY OPENJSON(b.thanhVien) WITH(maTK BIGINT) m WHERE d.MaHD=s.MaHD AND b.loaiBan='TO_CHUC' AND m.maTK=@p2))`,
-      [id,accountId,admin ? 1 : 0,dto.dvChuTri?.trim() ?? null,dto.thoiLuong ?? null,dto.chuongTrinh ? JSON.stringify(dto.chuongTrinh) : null,dto.noiDung?.trim() ?? null,dto.mucDich?.trim() ?? null]))[0] ?? null;
+    const transaction = new sql.Transaction(this.db.pool);
+    await transaction.begin(sql.ISOLATION_LEVEL.SERIALIZABLE);
+    try {
+      const access = await new sql.Request(transaction)
+        .input('id', sql.Int, id)
+        .input('accountId', sql.BigInt, accountId)
+        .input('admin', sql.Bit, admin)
+        .query<{ MaHD: number; DiemRenLuyen: number | null; DiemRenLuyenDaKhoa: boolean }>(`SELECT s.MaHD,COALESCE(d.DiemRenLuyen,s.DiemRenLuyenDeXuat) AS DiemRenLuyen,
+          ${trainingPointsLockedSql} AS DiemRenLuyenDaKhoa
+          FROM SEMINAR s JOIN HOATDONGHOCTHUAT h WITH(UPDLOCK,HOLDLOCK) ON h.MaHD=s.MaHD
+          LEFT JOIN KEHOACHTOCHUC d WITH(UPDLOCK,HOLDLOCK) ON d.MaHD=h.MaHD
+          WHERE s.MaSeminar=@id AND (@admin=1
+            OR (s.TaoTuQuanLy=1 AND h.NguoiLap=@accountId)
+            OR EXISTS(SELECT 1 FROM BANTOCHUC b JOIN TAIKHOAN t ON t.MaNgDung=b.MaNgDung WHERE b.MaHD=s.MaHD AND t.MaTK=@accountId)
+            OR EXISTS(SELECT 1 FROM KEHOACHTOCHUC planAuth CROSS APPLY OPENJSON(planAuth.CacBan) WITH(loaiBan VARCHAR(30),thanhVien NVARCHAR(MAX) AS JSON) b
+              CROSS APPLY OPENJSON(b.thanhVien) WITH(maTK BIGINT) m WHERE planAuth.MaHD=s.MaHD AND b.loaiBan='TO_CHUC' AND m.maTK=@accountId))`);
+      const current = access.recordset[0];
+      if (!current) {
+        await transaction.commit();
+        return null;
+      }
+
+      if (dto.diemRenLuyen !== undefined && current.DiemRenLuyenDaKhoa
+          && (current.DiemRenLuyen === null || Number(dto.diemRenLuyen) !== Number(current.DiemRenLuyen))) {
+        throw new ConflictException('Kế hoạch seminar đã được duyệt hoặc công bố nên không thể thay đổi quyền lợi điểm rèn luyện.');
+      }
+
+      const request = new sql.Request(transaction);
+      request.input('id', sql.Int, id);
+      request.input('dvChuTri', sql.NVarChar(200), dto.dvChuTri?.trim() ?? null);
+      request.input('thoiLuong', sql.Int, dto.thoiLuong ?? null);
+      request.input('chuongTrinh', sql.NVarChar(sql.MAX), dto.chuongTrinh ? JSON.stringify(dto.chuongTrinh) : null);
+      request.input('noiDung', sql.NVarChar(sql.MAX), dto.noiDung?.trim() ?? null);
+      request.input('mucDich', sql.NVarChar(sql.MAX), dto.mucDich?.trim() ?? null);
+      request.input('diemRenLuyen', sql.Decimal(5, 2), dto.diemRenLuyen ?? null);
+      const rows = await request.query(`UPDATE s SET DVChuTri=COALESCE(@dvChuTri,s.DVChuTri),
+        ThoiLuong=COALESCE(@thoiLuong,s.ThoiLuong),ChuongTrinh=COALESCE(@chuongTrinh,s.ChuongTrinh),
+        NoiDung=COALESCE(@noiDung,s.NoiDung),MucDich=COALESCE(@mucDich,s.MucDich),
+        DiemRenLuyenDeXuat=CASE WHEN @diemRenLuyen IS NOT NULL AND NOT EXISTS(
+          SELECT 1 FROM KEHOACHTOCHUC d WHERE d.MaHD=s.MaHD) AND (${trainingPointsLockedSql})=CAST(0 AS BIT)
+          THEN @diemRenLuyen ELSE s.DiemRenLuyenDeXuat END
+        OUTPUT INSERTED.* FROM SEMINAR s JOIN HOATDONGHOCTHUAT h ON h.MaHD=s.MaHD
+        LEFT JOIN KEHOACHTOCHUC d ON d.MaHD=h.MaHD WHERE s.MaSeminar=@id`);
+      if (dto.diemRenLuyen !== undefined && !current.DiemRenLuyenDaKhoa) {
+        await new sql.Request(transaction)
+          .input('activityId', sql.BigInt, current.MaHD)
+          .input('points', sql.Decimal(5, 2), dto.diemRenLuyen)
+          .query(`UPDATE KEHOACHTOCHUC SET DiemRenLuyen=@points WHERE MaHD=@activityId
+            AND TrangThai IN(N'Chờ phân công thực hiện',N'Cần lập ban đề thi',N'Dự thảo',N'Cần bổ sung',N'Từ chối')
+            AND CongBoLuc IS NULL`);
+      }
+      await transaction.commit();
+      return rows.recordset[0] ?? null;
+    } catch (error) {
+      await transaction.rollback().catch(() => undefined);
+      throw error;
+    }
   }
 
   async activityExists(id: number): Promise<boolean> {
@@ -182,33 +271,31 @@ export class FeaturesRepository {
     return rows.length > 0;
   }
 
-  async createSeminar(dto: CreateSeminarDto) {
+  async createSeminar(dto: CreateSeminarDto, accountId: string) {
+    const startsAt = new Date(dto.tgBatDau);
+    const endsAt = new Date(dto.tgKetThuc);
+    const localDateTime = new Intl.DateTimeFormat('vi-VN', {
+      timeZone: 'Asia/Ho_Chi_Minh', dateStyle: 'short', timeStyle: 'short', hourCycle: 'h23',
+    });
     const transaction = new sql.Transaction(this.db.pool);
     await transaction.begin();
+    let maSeminar: number;
     try {
       const activityRequest = new sql.Request(transaction);
       activityRequest.input('name', sql.NVarChar(250), dto.tenHoatDong);
       activityRequest.input('description', sql.NVarChar(sql.MAX), dto.moTa ?? dto.noiDung ?? null);
-      activityRequest.input('startsAt', sql.DateTime2, new Date(dto.tgBatDau));
-      activityRequest.input('endsAt', sql.DateTime2, new Date(dto.tgKetThuc));
+      activityRequest.input('startsAt', sql.DateTime2, startsAt);
+      activityRequest.input('endsAt', sql.DateTime2, endsAt);
       activityRequest.input('registrationDeadline', sql.DateTime2, dto.hanDangKy ? new Date(dto.hanDangKy) : null);
       activityRequest.input('location', sql.NVarChar(255), dto.diaDiem ?? null);
       activityRequest.input('capacity', sql.Int, dto.slToiDa ?? 150);
+      activityRequest.input('owner', sql.BigInt, accountId);
       const activity = await activityRequest.query<{ MaHD: number }>(
-        `INSERT INTO HOATDONGHOCTHUAT(TenHoatDong, MoTa, NoiDung, TgBatDau, TgKetThuc, HanDangKy, DiaDiem, SLToiDa, SLSVDuKien, TrangThai, LoaiHoatDong)
-         OUTPUT INSERTED.MaHD VALUES(@name, @description, @description, @startsAt, @endsAt, @registrationDeadline, @location, @capacity, @capacity, N'Đã công bố', N'Seminar')`);
+        `INSERT INTO HOATDONGHOCTHUAT(TenHoatDong, NoiDung, TgDuKien, TgBatDau, TgKetThuc, HanDangKy, DiaDiem, SLSVDuKien, TrangThai, LoaiHoatDong, NguoiLap)
+         OUTPUT INSERTED.MaHD VALUES(@name, @description, CONVERT(CHAR(10), DATEADD(HOUR,7,@startsAt), 23),
+         CAST(DATEADD(HOUR,7,@startsAt) AS TIME), CAST(DATEADD(HOUR,7,@endsAt) AS TIME), @registrationDeadline, @location,
+         CONVERT(NVARCHAR(225),@capacity), N'Dự thảo', N'Seminar', @owner)`);
       const maHD = activity.recordset[0].MaHD;
-
-      const keHoachRequest = new sql.Request(transaction);
-      keHoachRequest.input('activityId', sql.BigInt, maHD);
-      keHoachRequest.input('name', sql.NVarChar(250), dto.tenHoatDong);
-      keHoachRequest.input('startsAt', sql.DateTime2, new Date(dto.tgBatDau));
-      keHoachRequest.input('endsAt', sql.DateTime2, new Date(dto.tgKetThuc));
-      keHoachRequest.input('registrationDeadline', sql.DateTime2, dto.hanDangKy ? new Date(dto.hanDangKy) : null);
-      keHoachRequest.input('location', sql.NVarChar(255), dto.diaDiem ?? null);
-      await keHoachRequest.query(
-        `INSERT INTO KEHOACHTOCHUC(MaHD, TenKeHoach, ThoiGianBatDau, ThoiGianKetThuc, HanDangKy, DiaDiem, TrangThai, CongBoLuc)
-         VALUES(@activityId, @name, @startsAt, @endsAt, @registrationDeadline, @location, N'Đã duyệt', SYSDATETIMEOFFSET())`);
 
       const seminarRequest = new sql.Request(transaction);
       seminarRequest.input('activityId', sql.BigInt, maHD);
@@ -220,11 +307,12 @@ export class FeaturesRepository {
       seminarRequest.input('location', sql.NVarChar(255), dto.diaDiem ?? null);
       seminarRequest.input('capacity', sql.Int, dto.slToiDa ?? 150);
       seminarRequest.input('agenda', sql.NVarChar(sql.MAX), JSON.stringify(dto.chuongTrinh ?? []));
+      seminarRequest.input('schedule', sql.NVarChar(225), `${localDateTime.format(startsAt)} – ${localDateTime.format(endsAt)}`);
       const seminar = await seminarRequest.query<{ MaSeminar: number }>(
-        `INSERT INTO SEMINAR(MaHD, ChuDe, NoiDung, DoiTuongTG, ThoiLuong, DVChuTri, DiaDiem, SLSVDuKien, ChuongTrinh)
+        `INSERT INTO SEMINAR(MaHD, ChuDe, NoiDung, DoiTuongTG, ThoiLuong, DVChuTri, DiaDiem, SLSVDuKien, ChuongTrinh, ThoiGian, TaoTuQuanLy)
          OUTPUT INSERTED.MaSeminar
-         VALUES(@activityId, @topic, @content, @audience, @duration, @hostUnit, @location, @capacity, @agenda)`);
-      const maSeminar = seminar.recordset[0].MaSeminar;
+         VALUES(@activityId, @topic, @content, @audience, @duration, @hostUnit, @location, @capacity, @agenda, @schedule, 1)`);
+      maSeminar = seminar.recordset[0].MaSeminar;
 
       if (Array.isArray(dto.dienGia) && dto.dienGia.length > 0) {
         for (let i = 0; i < dto.dienGia.length; i++) {
@@ -240,19 +328,12 @@ export class FeaturesRepository {
         }
       }
 
-      const notificationRequest = new sql.Request(transaction);
-      notificationRequest.input('activityId', sql.BigInt, maHD);
-      notificationRequest.input('title', sql.NVarChar(250), dto.tenHoatDong);
-      await notificationRequest.query(`INSERT INTO THONGBAO(MaTK,MaHD,Loai,TieuDe,NoiDung)
-        SELECT DISTINCT tk.MaTK,@activityId,N'Hoạt động mới',@title,
-          CONCAT(N'Seminar học thuật mới đã được công bố. Thời gian: ',CONVERT(nvarchar(30),h.TgBatDau,126),N'; địa điểm: ',COALESCE(h.DiaDiem,N'Chưa cập nhật'))
-        FROM TAIKHOAN tk JOIN SINHVIEN sv ON sv.MaNgDung=tk.MaNgDung JOIN HOATDONGHOCTHUAT h ON h.MaHD=@activityId`);
       await transaction.commit();
-      return this.findSeminar(maSeminar);
     } catch (error) {
       await transaction.rollback();
       throw error;
     }
+    return this.findSeminar(maSeminar);
   }
 
   async createExpense(accountId: string, dto: CreateExpenseDto) {
@@ -277,16 +358,21 @@ export class FeaturesRepository {
       }
       const expenseRequest = new sql.Request(transaction);
       expenseRequest.input('activityId', sql.BigInt, dto.maHD);
+      expenseRequest.input('budgetLineId', sql.BigInt, dto.maKPHD ?? null);
+      expenseRequest.input('budgetItem', sql.NVarChar(500), dto.hangMucDuTru?.trim() || null);
       expenseRequest.input('settlementId', sql.BigInt, settlementId);
       expenseRequest.input('description', sql.NVarChar(sql.MAX), dto.noiDung);
       expenseRequest.input('amount', sql.Decimal(18, 2), dto.soTien);
+      expenseRequest.input('quantity', sql.Decimal(10, 2), dto.soLuong ?? null);
+      expenseRequest.input('unit', sql.NVarChar(50), dto.donViTinh?.trim() || null);
       expenseRequest.input('spentOn', sql.Date, new Date(dto.ngChi));
       expenseRequest.input('accountId', sql.BigInt, accountId);
+      expenseRequest.input('explanation', sql.NVarChar(500), dto.thuyetMinh?.trim() || null);
       expenseRequest.input('receipts', sql.NVarChar(sql.MAX), JSON.stringify(dto.chungTu ?? []));
       const expense = await expenseRequest.query<{ MaCP: number }>(
         `DECLARE @expenseKeys TABLE(MaCP BIGINT);
-         INSERT INTO CHIPHITHUCTE(MaHD, MaHS, NoiDung, SoTien, NgChi, NguoiGhi, ChungTu)
-         OUTPUT INSERTED.MaCP INTO @expenseKeys VALUES(@activityId, @settlementId, @description, @amount, @spentOn, @accountId, @receipts);
+         INSERT INTO CHIPHITHUCTE(MaHD, MaHS, MaKPHD, HangMucDuTru, NoiDung, SoLuong, DonViTinh, SoTien, NgChi, NguoiGhi, ThuyetMinh, ChungTu)
+         OUTPUT INSERTED.MaCP INTO @expenseKeys VALUES(@activityId, @settlementId, @budgetLineId, @budgetItem, @description, @quantity, @unit, @amount, @spentOn, @accountId, @explanation, @receipts);
          SELECT MaCP FROM @expenseKeys;`);
       await transaction.commit();
       return { maCP: expense.recordset[0].MaCP, maHS: settlementId, maHD: dto.maHD };
@@ -294,6 +380,51 @@ export class FeaturesRepository {
       await transaction.rollback();
       throw error;
     }
+  }
+
+  async activityBudgetLineExists(lineId: number, activityId: number) {
+    const rows = await this.db.query('SELECT 1 AS found FROM KINHPHIHOATDONG WHERE MaKPHD=@p1 AND MaHD=@p2', [lineId,activityId]);
+    return rows.length > 0;
+  }
+
+  async canManageActivitySettlement(accountId: string, activityId: number) {
+    const rows = await this.db.query(
+      `SELECT TOP (1) 1 AS allowed FROM HOATDONGHOCTHUAT h
+       JOIN KEHOACHTOCHUC activityPlan ON activityPlan.MaHD=h.MaHD
+       JOIN DUTRUKINHPHI budget ON budget.MaHD=h.MaHD AND budget.TrangThai=N'Đã duyệt'
+       WHERE h.MaHD=@p1
+         AND activityPlan.NguoiKyKhoa IS NOT NULL AND activityPlan.NgayKyKhoa IS NOT NULL
+         AND activityPlan.TrangThai IN (N'Đã duyệt',N'Chờ CTSV ký')
+         AND (h.NguoiLap=CAST(@p2 AS INT) OR EXISTS (
+           SELECT 1 FROM PHANCONGTHUCHIEN task
+           JOIN TAIKHOAN account ON account.MaNgDung=task.MaNgDung
+           WHERE task.MaHD=h.MaHD AND account.MaTK=CAST(@p2 AS INT)
+             AND (task.NoiDung LIKE N'%kinh phí%' OR task.NoiDung LIKE N'%quyết toán%'
+               OR task.NoiDung LIKE N'%thanh toán%' OR task.NoiDung LIKE N'%chi phí%'
+               OR task.NoiDung LIKE N'%hồ sơ%')
+         ))`, [activityId,accountId]);
+    return rows.length > 0;
+  }
+
+  async listSettlementActivitiesForUser(accountId: string, includeAll = false) {
+    return this.db.query(
+      `SELECT h.MaHD,h.TenHoatDong,h.NamHoc
+       FROM HOATDONGHOCTHUAT h
+       WHERE (@p1=1 OR h.NguoiLap=TRY_CONVERT(INT,@p2) OR EXISTS (
+         SELECT 1 FROM PHANCONGTHUCHIEN task
+         JOIN TAIKHOAN account ON account.MaNgDung=task.MaNgDung
+         WHERE task.MaHD=h.MaHD AND account.MaTK=TRY_CONVERT(INT,@p2)
+           AND (task.NoiDung LIKE N'%kinh phí%' OR task.NoiDung LIKE N'%quyết toán%'
+             OR task.NoiDung LIKE N'%thanh toán%' OR task.NoiDung LIKE N'%chi phí%'
+             OR task.NoiDung LIKE N'%hồ sơ%')
+       ))
+         AND EXISTS (
+           SELECT 1 FROM KEHOACHTOCHUC activityPlan
+           WHERE activityPlan.MaHD=h.MaHD AND activityPlan.NguoiKyKhoa IS NOT NULL AND activityPlan.NgayKyKhoa IS NOT NULL
+             AND activityPlan.TrangThai IN (N'Đã duyệt',N'Chờ CTSV ký')
+             AND EXISTS (SELECT 1 FROM DUTRUKINHPHI budget WHERE budget.MaHD=h.MaHD AND budget.TrangThai=N'Đã duyệt')
+         )
+       ORDER BY h.NamHoc DESC,h.TenHoatDong`, [includeAll ? 1 : 0,accountId]);
   }
 
   async getSettlement(activityId: number) {
@@ -308,7 +439,7 @@ export class FeaturesRepository {
        LEFT JOIN NGUOIDUNG nguoiDuyet ON nguoiDuyet.MaNgDung = tkDuyet.MaNgDung
        WHERE hs.MaHD = @p1 ORDER BY hs.MaHS DESC`, [activityId]);
     const expenses = await this.db.query(
-      `SELECT cp.MaCP, cp.MaHD, cp.NoiDung, cp.SoTien, cp.NgChi, cp.NguoiGhi,cp.ChungTu,
+      `SELECT cp.MaCP, cp.MaHD, cp.MaKPHD, cp.HangMucDuTru, cp.NoiDung, cp.SoLuong, cp.DonViTinh, cp.SoTien, cp.NgChi, cp.NguoiGhi,cp.ThuyetMinh,cp.ChungTu,
               nd.HoTen AS TenNguoiGhi
        FROM CHIPHITHUCTE cp
        LEFT JOIN TAIKHOAN tk ON tk.MaTK = cp.NguoiGhi
@@ -317,6 +448,20 @@ export class FeaturesRepository {
        ORDER BY cp.NgChi, cp.MaCP`, [activityId, headers[0]?.MaHS ?? null]);
     const total = expenses.reduce((sum, row) => sum + Number(row.SoTien), 0);
     return { activityId, settlement: headers[0] ?? null, expenses, totalAmount: total };
+  }
+
+  async updateExpense(expenseId: number, accountId: string, dto: import('../../../presentation/features/features.dto').UpdateExpenseDto) {
+    const rows = await this.db.query(
+      `DECLARE @updatedExpense TABLE(MaCP BIGINT,MaHD BIGINT,MaKPHD BIGINT NULL);
+       UPDATE expense SET MaKPHD=@p1,NoiDung=@p2,SoLuong=@p10,DonViTinh=@p11,SoTien=@p3,NgChi=@p4,ThuyetMinh=@p5,ChungTu=@p6,HangMucDuTru=@p12
+       OUTPUT INSERTED.MaCP,INSERTED.MaHD,INSERTED.MaKPHD INTO @updatedExpense
+       FROM CHIPHITHUCTE expense
+       JOIN HOSOQUYETTOAN hs ON hs.MaHS=expense.MaHS AND hs.TrangThai=N'Dự thảo' AND hs.NguoiLap=@p7
+       WHERE expense.MaCP=@p8 AND expense.MaHD=@p9
+         AND (@p1 IS NULL OR EXISTS(SELECT 1 FROM KINHPHIHOATDONG kp WHERE kp.MaKPHD=@p1 AND kp.MaHD=expense.MaHD));
+       SELECT MaCP,MaHD,MaKPHD FROM @updatedExpense;`,
+      [dto.maKPHD ?? null,dto.noiDung,dto.soTien,new Date(dto.ngChi),dto.thuyetMinh?.trim()||null,JSON.stringify(dto.chungTu??[]),accountId,expenseId,dto.maHD,dto.soLuong??null,dto.donViTinh?.trim()||null,dto.hangMucDuTru?.trim()||null]);
+    return rows[0] ?? null;
   }
 
   async approveSettlement(id: number, accountId: string) {
@@ -337,13 +482,77 @@ export class FeaturesRepository {
     return rows[0] ?? null;
   }
 
+  async canManageSettlement(accountId: string, settlementId: number) {
+    const rows = await this.db.query(
+      `SELECT TOP (1) 1 AS allowed FROM HOSOQUYETTOAN hs
+       JOIN HOATDONGHOCTHUAT h ON h.MaHD=hs.MaHD
+       WHERE hs.MaHS=@p1 AND hs.NguoiLap=@p2 AND hs.TrangThai=N'Dự thảo'
+         AND (h.NguoiLap=CAST(@p2 AS INT) OR EXISTS (SELECT 1 FROM PHANCONGTHUCHIEN task
+           JOIN TAIKHOAN account ON account.MaNgDung=task.MaNgDung
+           WHERE task.MaHD=hs.MaHD AND account.MaTK=@p2
+             AND (task.NoiDung LIKE N'%kinh phí%' OR task.NoiDung LIKE N'%quyết toán%'
+               OR task.NoiDung LIKE N'%thanh toán%' OR task.NoiDung LIKE N'%chi phí%'
+               OR task.NoiDung LIKE N'%hồ sơ%')))` , [settlementId,accountId]);
+    return rows.length > 0;
+  }
+
+  async listSettlementReports(accountId: string, includeAll = false) {
+    return this.db.query(
+      `SELECT report.MaBC,report.MaHD,activity.TenHoatDong,activity.NamHoc,
+              report.NguoiLap,person.HoTen AS TenNguoiLap,report.NgayLap,
+              report.TongDuToan,report.TongThucThi,report.TongChenhLech,
+              (SELECT COUNT(*) FROM OPENJSON(report.CacDong)) AS SoDong,report.CacDong
+       FROM BAOCAOQUYETTOAN report
+       JOIN HOATDONGHOCTHUAT activity ON activity.MaHD=report.MaHD
+       JOIN TAIKHOAN account ON account.MaTK=report.NguoiLap
+       LEFT JOIN NGUOIDUNG person ON person.MaNgDung=account.MaNgDung
+       WHERE @p1=1 OR report.NguoiLap=TRY_CONVERT(BIGINT,@p2) OR EXISTS (
+         SELECT 1 FROM PHANCONGTHUCHIEN task
+         JOIN TAIKHOAN assignedAccount ON assignedAccount.MaNgDung=task.MaNgDung
+         WHERE task.MaHD=report.MaHD AND assignedAccount.MaTK=TRY_CONVERT(BIGINT,@p2)
+           AND (task.NoiDung LIKE N'%kinh phí%' OR task.NoiDung LIKE N'%quyết toán%'
+             OR task.NoiDung LIKE N'%thanh toán%' OR task.NoiDung LIKE N'%chi phí%' OR task.NoiDung LIKE N'%hồ sơ%')
+       )
+       ORDER BY report.NgayLap DESC,report.MaBC DESC`, [includeAll ? 1 : 0, accountId]);
+  }
+
+  async createSettlementReport(accountId: string, dto: CreateSettlementReportDto) {
+    const lines = dto.cacDong.map((line, index) => ({
+      stt: index + 1,
+      noiDungThucHien: line.noiDungThucHien.trim(),
+      duToan: line.duToan,
+      thucThi: line.thucThi,
+      chenhLech: Number((line.thucThi - line.duToan).toFixed(2)),
+      ghiChu: line.ghiChu?.trim() ?? '',
+    }));
+    const totalBudget = Number(lines.reduce((sum, line) => sum + line.duToan, 0).toFixed(2));
+    const totalActual = Number(lines.reduce((sum, line) => sum + line.thucThi, 0).toFixed(2));
+    const totalDifference = Number((totalActual - totalBudget).toFixed(2));
+    const rows = await this.db.query(
+      `DECLARE @created TABLE(MaBC BIGINT);
+       INSERT INTO BAOCAOQUYETTOAN(MaHD,NguoiLap,CacDong,TongDuToan,TongThucThi,TongChenhLech)
+       OUTPUT INSERTED.MaBC INTO @created
+       VALUES(@p1,@p2,@p3,@p4,@p5,@p6);
+       SELECT report.MaBC,report.MaHD,activity.TenHoatDong,activity.NamHoc,
+              report.NguoiLap,person.HoTen AS TenNguoiLap,report.NgayLap,
+              report.TongDuToan,report.TongThucThi,report.TongChenhLech,
+              (SELECT COUNT(*) FROM OPENJSON(report.CacDong)) AS SoDong,report.CacDong
+       FROM BAOCAOQUYETTOAN report JOIN @created created ON created.MaBC=report.MaBC
+       JOIN HOATDONGHOCTHUAT activity ON activity.MaHD=report.MaHD
+       JOIN TAIKHOAN account ON account.MaTK=report.NguoiLap
+       LEFT JOIN NGUOIDUNG person ON person.MaNgDung=account.MaNgDung;`,
+      [dto.maHD, accountId, JSON.stringify(lines), totalBudget, totalActual, totalDifference],
+    );
+    return rows[0] ?? null;
+  }
+
   async getActivityReport(activityId: number) {
     const rows = await this.db.query(
       `SELECT h.MaHD, h.TenHoatDong, h.TgBatDau, h.TgKetThuc, h.DiaDiem, h.TrangThai,
               (SELECT COUNT(*) FROM DKTHAMGIA dk WHERE dk.MaHD = h.MaHD AND dk.TrangThai NOT IN (N'Đã hủy', N'Từ chối')) AS SoLuotDangKy,
               (SELECT COUNT(*) FROM DKTHAMGIA dk JOIN DIEMDANH dd ON dd.MaDK = dk.MaDK
                WHERE dk.MaHD = h.MaHD AND dd.TrangThai IN (N'Đã điểm danh', N'Đã xác nhận')) AS SoLuotDiemDanh,
-              (SELECT COALESCE(SUM(cp.SoTien), 0) FROM CHIPHITHUCTE cp WHERE cp.MaHD = h.MaHD) AS TongChiPhi,
+              (SELECT COALESCE(SUM(cp.SoTien), 0) FROM CHIPHITHUCTE cp JOIN HOSOQUYETTOAN hs ON hs.MaHS=cp.MaHS WHERE cp.MaHD = h.MaHD AND hs.TrangThai=N'Đã duyệt') AS TongChiPhi,
               (SELECT COUNT(*) FROM KETQUAHOCTHUAT kq JOIN CUOCTHI c ON c.MaCThi = kq.MaCThi
                WHERE c.MaHD = h.MaHD AND kq.TrangThai IN (N'Đã xác nhận', N'Đã công bố')) AS SoKetQuaCongBo
        FROM HOATDONGHOCTHUAT h WHERE h.MaHD = @p1`, [activityId]);

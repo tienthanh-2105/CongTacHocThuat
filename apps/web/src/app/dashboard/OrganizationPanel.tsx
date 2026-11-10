@@ -39,11 +39,13 @@ function ActionForm({ title, submitLabel, fields, defaults = {}, onSave, busy, c
 export default function OrganizationPanel({
   user,
   detailed,
+  managementView,
   filterType,
   onNavigateTab,
 }: {
   user: AuthUser;
   detailed: boolean;
+  managementView?: "topics" | "results";
   filterType?: "Cuộc thi" | "Seminar" | "Phân công thực hiện" | "Tất cả";
   onNavigateTab?: (sectionId: string, activityId?: string) => void;
 }) {
@@ -55,7 +57,16 @@ export default function OrganizationPanel({
   const [notice, setNotice] = useState("");
   const [planDirty, setPlanDirty] = useState(false);
   const [viewMode, setViewMode] = useState<"view" | "edit">("view");
-  const base = detailed ? "/detailed-plans" : "/competition-workflow/competitions";
+  const [topicSearch, setTopicSearch] = useState("");
+  const [topicStatusFilter, setTopicStatusFilter] = useState("all");
+  const [resultSearch, setResultSearch] = useState("");
+  const [resultYearFilter, setResultYearFilter] = useState("all");
+  const canUseManagementEndpoint = user.roles.some((role) => ["ADMIN", "CANBOKHOA", "TRUONGKHOA"].includes(role.toUpperCase()));
+  const base = detailed
+    ? "/detailed-plans"
+    : canUseManagementEndpoint
+    ? "/competition-workflow/manage/competitions"
+    : "/competition-workflow/competitions";
 
   function renderStatusBadge(statusVal: string) {
     const st = statusVal || "Chưa lập chi tiết";
@@ -114,6 +125,8 @@ export default function OrganizationPanel({
           const actId = params.get("activityId");
           if (actId) {
             void open(actId, "edit");
+          } else if (!detailed && (managementView || canUseManagementEndpoint) && v.length) {
+            void open(text(v[0], "MaCThi"), "view");
           }
         }
       }
@@ -121,7 +134,7 @@ export default function OrganizationPanel({
       if (active) setError(e.message);
     });
     return () => { active = false; };
-  }, [base, filterType]);
+  }, [base, detailed, filterType, managementView, canUseManagementEndpoint]);
 
   useEffect(() => {
     setSelected(null);
@@ -129,7 +142,17 @@ export default function OrganizationPanel({
     setPlanDirty(false);
   }, [filterType]);
 
+  function confirmDiscardPlanChanges() {
+    return !planDirty || window.confirm("Bạn có thay đổi phân công chưa lưu. Nếu rời biểu mẫu, các thay đổi này sẽ mất. Bạn có muốn tiếp tục không?");
+  }
+
+  function navigateTab(sectionId: string, activityId?: string) {
+    if (!confirmDiscardPlanChanges()) return;
+    onNavigateTab?.(sectionId, activityId);
+  }
+
   async function open(id: string, mode: "view" | "edit" = "view") {
+    if (!confirmDiscardPlanChanges()) return;
     try {
       setError("");
       setSelected(await workflowRequest<Row>(`${base}/${id}`));
@@ -169,13 +192,30 @@ export default function OrganizationPanel({
   }
 
   const detailId = selected ? text(selected, "MaHD") : "";
+  const validDetailId = /^\d+$/.test(detailId);
   const status = selected ? text(selected, "TrangThai") : "";
   const awaitingAssignment = pendingAssignmentStatuses.includes(status);
   const canEdit = detailed && Boolean(selected?.canEdit);
-  const canSign = user.roles.includes("ADMIN") || ((status === "Chờ khoa xét duyệt" || status === "Chờ khoa ký") && (user.roles.includes("TRUONGKHOA") || user.roles.includes("CANBOKHOA"))) || (status === "Chờ CTSV ký" && user.roles.includes("PHONGCTSV"));
+  const canSign = validDetailId && (user.roles.includes("ADMIN") || ((status === "Chờ khoa xét duyệt" || status === "Chờ khoa ký") && (user.roles.includes("TRUONGKHOA") || user.roles.includes("CANBOKHOA"))) || (status === "Chờ CTSV ký" && user.roles.includes("PHONGCTSV")));
   const competition = selected?.competition as Row | undefined;
   const currentRound = round?.round as Row | undefined;
   const options = (items: Row[], key: string, label: string) => items.map(r => ({ value: text(r, key), label: `${text(r, label)} (#${text(r, key)})` }));
+  const planCommittee = (type: "DE_THI" | "CHAM_THI") => rows(selected?.cacBan).find((committee) => {
+    const kind = text(committee, "loaiBan");
+    if (kind === type) return true;
+    const name = text(committee, "tenBan").normalize("NFD").replace(/[\u0300-\u036f]/g, "").toLowerCase();
+    return type === "DE_THI" ? name.includes("de thi") || name.includes("ra de") : name.includes("giam khao") || name.includes("cham thi") || name.includes("cham diem");
+  });
+  const committeeMemberOptions = (type: "DE_THI" | "CHAM_THI") => {
+    const committee = planCommittee(type);
+    return rows(committee?.thanhVien).flatMap((member) => {
+      const accountId = text(member, "maTK") || text(member, "MaTK");
+      if (!accountId) return [];
+      const staff = rows(selected?.staff).find((person) => text(person, "MaTK") === accountId);
+      const name = text(member, "hoTen") || text(member, "HoTen") || text(staff ?? {}, "HoTen") || `Tài khoản ${accountId}`;
+      return [{ value: accountId, label: `${name} (#${accountId})` }];
+    });
+  };
   const roundPath = `/competition-workflow/rounds/${currentRound?.MaVong}`;
 
   const currentFilter = filterType ?? "Tất cả";
@@ -193,6 +233,40 @@ export default function OrganizationPanel({
     : list;
   const seminarCount = list.filter((r) => String(r.LoaiHoatDong ?? "").trim().toLowerCase() === "seminar").length;
   const competitionCount = list.filter((r) => String(r.LoaiHoatDong ?? "").trim().toLowerCase() === "cuộc thi").length;
+  const resultYearOptions = [...new Set(displayList.map((row) => text(row, "NamHoc")).filter(Boolean))];
+  const resultCompetitionOptions = resultYearFilter === "all" ? displayList : displayList.filter((row) => text(row, "NamHoc") === resultYearFilter);
+  const topicRows = rows(selected?.topics);
+  const teamTopicRows = rows(selected?.planTeams);
+  const competitionResultRows = rows(selected?.results);
+  const visibleCompetitionTopics = topicRows.filter((topic) => {
+    const query = resultSearch.trim().toLocaleLowerCase("vi");
+    if (!query) return true;
+    const team = teamTopicRows.find((candidate) => text(candidate, "MaDoi") === text(topic, "MaDoi"));
+    return [text(topic, "TenDeTai"), text(topic, "TenDoi"), text(topic, "HoTen"), text(topic, "MSSV"), text(topic, "LinhVuc"), text(topic, "GVHD"), text(team ?? {}, "ThanhVien")]
+      .some((value) => value.toLocaleLowerCase("vi").includes(query));
+  });
+  const visibleCompetitionResults = competitionResultRows.filter((result) => {
+    const query = resultSearch.trim().toLocaleLowerCase("vi");
+    if (!query) return true;
+    const team = teamTopicRows.find((candidate) => text(candidate, "MaDoi") === text(result, "MaDoi"));
+    return [text(result, "TenDoi"), text(result, "HoTen"), text(result, "MSSV"), text(result, "TenGiaiThuong"), text(result, "TenGiai"), text(result, "GhiChu"), text(team ?? {}, "TenDeTai"), text(team ?? {}, "ThanhVien")]
+      .some((value) => value.toLocaleLowerCase("vi").includes(query));
+  });
+  const visibleTopics = topicRows.filter((topic) => {
+    if (topicStatusFilter !== "all" && text(topic, "TrangThai") !== topicStatusFilter) return false;
+    const query = topicSearch.trim().toLocaleLowerCase("vi");
+    if (!query) return true;
+    return ["TenDeTai", "TenDoi", "HoTen", "MSSV", "TenLop", "ThanhVien", "LinhVuc", "GVHD"]
+      .some((key) => text(topic, key).toLocaleLowerCase("vi").includes(query));
+  });
+  const topicsNeedingReview = topicRows.filter((topic) => /chờ|phản biện|cần duyệt/i.test(text(topic, "TrangThai"))).length;
+  const visibleTeamTopics = teamTopicRows.filter((team) => {
+    if (topicStatusFilter !== "all" && text(team, "TrangThai") !== topicStatusFilter) return false;
+    const query = topicSearch.trim().toLocaleLowerCase("vi");
+    if (!query) return true;
+    return ["TenDoi", "TenDeTai", "ThanhVien", "GVHD", "LinhVuc", "TrangThai"]
+      .some((key) => text(team, key).toLocaleLowerCase("vi").includes(query));
+  });
   const assignmentCount = list.length;
   const isFacultyWide = user.roles.some((r) =>
     ["ADMIN", "CANBOKHOA", "TRUONGKHOA", "PHONGCTSV", "PHONGKHCN", "HIEUTRUONG"].includes(r.toUpperCase())
@@ -214,8 +288,26 @@ export default function OrganizationPanel({
     }
   }
 
+  function exportResultsCsv() {
+    const escape = (value: unknown) => `"${String(value ?? "").replace(/"/g, '""')}"`;
+    const lines = [
+      ["Mã đề tài", "Tên đề tài", "Đội / Thí sinh", "Lĩnh vực", "Giải thưởng", "Xếp hạng", "Điểm", "Trạng thái"],
+      ...topicRows.map((topic) => {
+        const result = competitionResultRows.find((item) => (text(topic, "MaDoi") && text(item, "MaDoi") === text(topic, "MaDoi")) || (text(topic, "MaDK") && text(item, "MaDK") === text(topic, "MaDK")));
+        return [text(topic, "MaDeTai"), text(topic, "TenDeTai"), text(topic, "TenDoi") || text(topic, "HoTen"), text(topic, "LinhVuc"), text(result ?? {}, "TenGiaiThuong") || text(result ?? {}, "TenGiai"), text(result ?? {}, "XepHang"), text(result ?? {}, "Diem"), text(result ?? {}, "TrangThai") || text(topic, "TrangThai")];
+      }),
+    ];
+    const csv = `\uFEFF${lines.map((line) => line.map(escape).join(",")).join("\r\n")}`;
+    const url = URL.createObjectURL(new Blob([csv], { type: "text/csv;charset=utf-8" }));
+    const link = document.createElement("a");
+    link.href = url;
+    link.download = `ket-qua-${text(competition ?? {}, "MaCThi") || "cuoc-thi"}.csv`;
+    link.click();
+    URL.revokeObjectURL(url);
+  }
+
   return (
-    <div className={s.businessPanel}>
+    <div className={`${s.businessPanel} ${managementView === "topics" ? s.topicManagementPage : managementView === "results" ? s.resultsManagementPage : ""}`}>
       {error ? <NoticeDialog message={error} kind="error" onClose={() => setError("")} /> : notice ? <NoticeDialog message={notice} kind="success" onClose={() => setNotice("")} /> : null}
 
       {detailed && (
@@ -223,7 +315,7 @@ export default function OrganizationPanel({
           <div style={{ display: "flex", gap: "10px", flexWrap: "wrap" }}>
             <button
               type="button"
-              onClick={() => onNavigateTab ? onNavigateTab("detailed-plans-all") : undefined}
+              onClick={() => navigateTab("detailed-plans-all")}
               style={{
                 padding: "9px 18px",
                 borderRadius: "8px",
@@ -254,7 +346,7 @@ export default function OrganizationPanel({
             </button>
             <button
               type="button"
-              onClick={() => onNavigateTab ? onNavigateTab("detailed-plans-assignment") : undefined}
+              onClick={() => navigateTab("detailed-plans-assignment")}
               style={{
                 padding: "9px 18px",
                 borderRadius: "8px",
@@ -317,9 +409,33 @@ export default function OrganizationPanel({
         </div>
       )}
 
-      <section className={s.card}>
+      <section className={`${s.card} ${managementView === "results" ? s.resultsHeaderCard : ""}`}>
+        {!detailed && managementView === "results" ? (
+          <>
+            <header className={s.resultsMainHeader}>
+              <div><h1>Đề tài, kết quả & seminar học thuật</h1><p>Quản lý hồ sơ dự thi, đội nhóm, công bố kết quả và vinh danh sinh viên.</p></div>
+              <div className={s.resultsHeaderActions}><button type="button" className={s.secondaryButton} disabled={!competition} onClick={exportResultsCsv}>↓ Xuất dữ liệu</button><button type="button" onClick={() => onNavigateTab?.("topics")}>＋ Tiếp nhận đề tài</button></div>
+            </header>
+            <div className={s.resultsStats}>
+              <div><span>Đề tài đã nộp</span><strong>{topicRows.length}</strong><small>{teamTopicRows.filter((team) => Boolean(text(team, "MaDeTai"))).length} thuộc đội thi</small></div>
+              <div><span>Vào chung kết</span><strong>{competitionResultRows.length}</strong><small>{competitionResultRows.filter((result) => text(result, "TrangThai") === "Đã công bố").length} kết quả đã công bố</small></div>
+              <div><span>Nhóm sinh viên</span><strong>{new Set(teamTopicRows.map((team) => text(team, "MaDoi")).filter(Boolean)).size}</strong><small>{teamTopicRows.reduce((sum, team) => sum + text(team, "ThanhVien").split("|").filter(Boolean).length, 0)} thành viên</small></div>
+              <div><span>Cần phản biện</span><strong>{topicsNeedingReview}</strong><small>{topicsNeedingReview ? "Chờ hội đồng xem xét" : "Không có hồ sơ chờ xử lý"}</small></div>
+            </div>
+            <div className={s.resultsToolbar}>
+              <label><span>⌕</span><input value={resultSearch} onChange={(event) => setResultSearch(event.target.value)} placeholder="Tìm theo mã hoặc tên đề tài…" /></label>
+              <select aria-label="Lọc năm học" value={resultYearFilter} onChange={(event) => {
+                const year = event.target.value;
+                setResultYearFilter(year);
+                const nextOptions = year === "all" ? displayList : displayList.filter((row) => text(row, "NamHoc") === year);
+                if (nextOptions.length && !nextOptions.some((row) => text(row, "MaCThi") === text(competition ?? {}, "MaCThi"))) void open(text(nextOptions[0], "MaCThi"), "view");
+              }}><option value="all">Tất cả năm học</option>{resultYearOptions.map((year) => <option key={year} value={year}>{year}</option>)}</select>
+              <select aria-label="Chọn cuộc thi" value={String(competition?.MaCThi ?? "")} onChange={(event) => { if (event.target.value) void open(event.target.value, "view"); }}><option value="">Chọn cuộc thi</option>{resultCompetitionOptions.map((item) => <option key={text(item, "MaCThi")} value={text(item, "MaCThi")}>{text(item, "TenCuocThi") || text(item, "TenHoatDong")}</option>)}</select>
+            </div>
+          </>
+        ) : <>
         {!detailed ? (
-          <h2>Vòng thi, đề thi, bài thi và trao giải</h2>
+          <h2>{managementView === "topics" ? "Danh sách cuộc thi" : managementView === "results" ? "Kết quả cuộc thi" : "Vòng thi, đề thi, bài thi và trao giải"}</h2>
         ) : isAssignmentTab ? (
           <h2 style={{ margin: "0 0 6px", fontSize: "18px", color: "#1e3a8a" }}>
             Phân công thực hiện kế hoạch hoạt động
@@ -334,6 +450,12 @@ export default function OrganizationPanel({
             ? isAssignmentTab
               ? "Lập các ban (Ban tổ chức, Ban đề thi, Ban thư ký, Ban giám khảo...) và phân công cán bộ, giảng viên phụ trách thực hiện kế hoạch chi tiết."
               : "Bộ môn lập kế hoạch tổ chức cho các buổi seminar và cuộc thi học thuật từ kế hoạch chung đã duyệt → Phân công thực hiện (chuyển sang Dự thảo) → Trình Khoa xét duyệt → Ban tổ chức công bố."
+            : managementView === "topics"
+            ? "Chọn cuộc thi để quản lý đề tài và giảng viên hướng dẫn do sinh viên khai báo ngay trong form đăng ký tham gia cuộc thi."
+            : managementView === "results"
+            ? "Chọn cuộc thi để lập, rà soát và công bố kết quả cùng giải thưởng."
+            : canUseManagementEndpoint
+            ? "Chọn cuộc thi để quản lý vòng thi, đề bài, chấm điểm và công bố giải. Danh sách bao gồm cả cuộc thi đang trong giai đoạn thiết lập."
             : "Chỉ hiển thị cuộc thi có kế hoạch chi tiết đã ký và đã công bố. Sinh viên đăng ký hoạt động trước, sau đó đăng ký từng vòng."}
         </p>
 
@@ -361,6 +483,8 @@ export default function OrganizationPanel({
               </thead>
               <tbody>
                 {displayList.map((r, idx) => {
+                  const activityId = text(r, "MaHD");
+                  const validActivityId = /^\d+$/.test(activityId);
                   const isMyDept = isFacultyWide || Boolean(r.canManage);
                   const st = text(r, "TrangThai");
                   const hasPlan = Boolean(r.MaKHToChuc);
@@ -369,9 +493,9 @@ export default function OrganizationPanel({
                   const canEditPlan = isMyDept && (!hasPlan || editablePlanStatuses.includes(st));
                   const canAssign = isMyDept && hasPlan && editablePlanStatuses.includes(st);
                   const canSubmit = isMyDept && hasPlan && ["Dự thảo", "Cần bổ sung", "Từ chối"].includes(st);
-                  const canSignRow = user.roles.includes("ADMIN") ||
+                  const canSignRow = validActivityId && (user.roles.includes("ADMIN") ||
                     ((st === "Chờ khoa xét duyệt" || st === "Chờ khoa ký") && (user.roles.includes("TRUONGKHOA") || user.roles.includes("CANBOKHOA"))) ||
-                    (st === "Chờ CTSV ký" && user.roles.includes("PHONGCTSV"));
+                    (st === "Chờ CTSV ký" && user.roles.includes("PHONGCTSV")));
                   const isSelected = selected && text(selected, "MaHD") === text(r, "MaHD");
 
                   const parsedCommittees = (() => {
@@ -484,7 +608,7 @@ export default function OrganizationPanel({
                                 }
                                 onClick={() => {
                                   if (window.confirm(`Xác nhận Ký duyệt kế hoạch "${text(r, "TenHoatDong")}"?`)) {
-                                    void act(`/detailed-plans/${text(r, "MaHD")}/review`, "PATCH", { action: "approve" });
+                                    void act(`/detailed-plans/${activityId}/review`, "PATCH", { action: "approve" });
                                   }
                                 }}
                                 style={{
@@ -517,7 +641,7 @@ export default function OrganizationPanel({
                                 }
                                 onClick={() => {
                                   if (window.confirm(`Yêu cầu bộ môn bổ sung kế hoạch "${text(r, "TenHoatDong")}"?`)) {
-                                    void act(`/detailed-plans/${text(r, "MaHD")}/review`, "PATCH", { action: "request_changes" });
+                                    void act(`/detailed-plans/${activityId}/review`, "PATCH", { action: "request_changes" });
                                   }
                                 }}
                                 style={{
@@ -588,9 +712,11 @@ export default function OrganizationPanel({
                               </button>
                               <button
                                 type="button"
-                                disabled={!canSubmit || busy}
+                                disabled={!canSubmit || busy || (Boolean(isSelected) && planDirty)}
                                 title={
-                                  !isMyDept
+                                  isSelected && planDirty
+                                    ? "Có phân công chưa lưu. Hãy bấm Lưu phân công thực hiện trước khi trình ký"
+                                    : !isMyDept
                                     ? "Không có quyền thao tác"
                                     : isSubmitted
                                     ? "Kế hoạch đã được trình xét duyệt / đã duyệt"
@@ -608,12 +734,12 @@ export default function OrganizationPanel({
                                 style={{
                                   padding: "6px 12px",
                                   borderRadius: "6px",
-                                  border: canSubmit ? "1px solid #86efac" : "1px solid #e2e8f0",
-                                  background: canSubmit ? "#f0fdf4" : "#f8fafc",
-                                  color: canSubmit ? "#15803d" : "#94a3b8",
+                                  border: canSubmit && !(Boolean(isSelected) && planDirty) ? "1px solid #86efac" : "1px solid #e2e8f0",
+                                  background: canSubmit && !(Boolean(isSelected) && planDirty) ? "#f0fdf4" : "#f8fafc",
+                                  color: canSubmit && !(Boolean(isSelected) && planDirty) ? "#15803d" : "#94a3b8",
                                   fontSize: "12.5px",
                                   fontWeight: 600,
-                                  cursor: canSubmit ? "pointer" : "not-allowed",
+                                  cursor: canSubmit && !(Boolean(isSelected) && planDirty) ? "pointer" : "not-allowed",
                                   whiteSpace: "nowrap",
                                 }}
                               >
@@ -709,9 +835,7 @@ export default function OrganizationPanel({
                                     : "Đi đến trang Phân công thực hiện cho hoạt động này"
                                 }
                                 onClick={() => {
-                                  if (canAssign && onNavigateTab) {
-                                    onNavigateTab("detailed-plans-assignment", text(r, "MaHD"));
-                                  }
+                                  if (canAssign) navigateTab("detailed-plans-assignment", text(r, "MaHD"));
                                 }}
                                 style={{
                                   padding: "6px 12px",
@@ -731,9 +855,11 @@ export default function OrganizationPanel({
                               {/* Nút Gửi */}
                               <button
                                 type="button"
-                                disabled={!canSubmit || busy}
+                                disabled={!canSubmit || busy || (Boolean(isSelected) && planDirty)}
                                 title={
-                                  !isMyDept
+                                  isSelected && planDirty
+                                    ? "Có phân công chưa lưu. Hãy bấm Lưu phân công thực hiện trước khi trình ký"
+                                    : !isMyDept
                                     ? "Không có quyền thao tác"
                                     : isSubmitted
                                     ? "Kế hoạch đã được trình xét duyệt / đã duyệt"
@@ -751,12 +877,12 @@ export default function OrganizationPanel({
                                 style={{
                                   padding: "6px 12px",
                                   borderRadius: "6px",
-                                  border: canSubmit ? "1px solid #86efac" : "1px solid #e2e8f0",
-                                  background: canSubmit ? "#f0fdf4" : "#f8fafc",
-                                  color: canSubmit ? "#15803d" : "#94a3b8",
+                                  border: canSubmit && !(Boolean(isSelected) && planDirty) ? "1px solid #86efac" : "1px solid #e2e8f0",
+                                  background: canSubmit && !(Boolean(isSelected) && planDirty) ? "#f0fdf4" : "#f8fafc",
+                                  color: canSubmit && !(Boolean(isSelected) && planDirty) ? "#15803d" : "#94a3b8",
                                   fontSize: "12.5px",
                                   fontWeight: 600,
-                                  cursor: canSubmit ? "pointer" : "not-allowed",
+                                  cursor: canSubmit && !(Boolean(isSelected) && planDirty) ? "pointer" : "not-allowed",
                                   whiteSpace: "nowrap",
                                 }}
                               >
@@ -796,18 +922,25 @@ export default function OrganizationPanel({
         ) : (
           <div className={s.businessList}>
             {displayList.map(r => (
-              <article key={text(r, "MaCThi")}>
+              <article key={text(r, "MaCThi")} data-selected={String(competition?.MaCThi ?? "") === text(r, "MaCThi")}>
                 <div>
                   <strong>{text(r, "TenHoatDong")}</strong>
                   <p>
                     {text(r, "NamHoc")} · {text(r, "TenBM")} · {text(r, "TrangThai") || "Chưa lập chi tiết"}
                   </p>
+                  {managementView === "topics" && <small>{text(r, "SoDeTai") || "0"} đề tài · {text(r, "SoLuotDangKy") || "0"} lượt đăng ký dự thi</small>}
+                  {managementView === "results" && <small>{text(r, "SoKetQua") || "0"} kết quả · {text(r, "SoLuotDangKy") || "0"} lượt dự thi</small>}
                 </div>
-                <button onClick={() => void open(text(r, "MaCThi"), "view")}>Xem / xử lý</button>
+                <button aria-pressed={String(competition?.MaCThi ?? "") === text(r, "MaCThi")} onClick={() => void open(text(r, "MaCThi"), "view")}>
+                  {String(competition?.MaCThi ?? "") === text(r, "MaCThi")
+                    ? managementView === "topics" ? "Đang xem đề tài" : managementView === "results" ? "Đang xem kết quả" : "Đang mở"
+                    : managementView === "topics" ? "Quản lý đề tài" : managementView === "results" ? "Xem kết quả" : "Xem / xử lý"}
+                </button>
               </article>
             ))}
           </div>
         )}
+        </>}
       </section>
 
       {detailed && selected && isAssignmentTab && (
@@ -846,7 +979,7 @@ export default function OrganizationPanel({
                 onClick={() => {
                   const targetTab = "detailed-plans-all";
                   if (onNavigateTab) {
-                    onNavigateTab(targetTab, text(selected, "MaHD"));
+                    navigateTab(targetTab, text(selected, "MaHD"));
                   }
                 }}
                 style={{
@@ -973,7 +1106,7 @@ export default function OrganizationPanel({
                 type="button"
                 onClick={() => {
                   const targetTab = "detailed-plans-all";
-                  if (onNavigateTab) onNavigateTab(targetTab, text(selected, "MaHD"));
+                  navigateTab(targetTab, text(selected, "MaHD"));
                 }}
                 style={{
                   padding: "9px 18px",
@@ -1009,6 +1142,20 @@ export default function OrganizationPanel({
                   } catch {
                     noiDungThucHien = [];
                   }
+                }
+                const invalidWorkItem = noiDungThucHien.find((item) => {
+                  const start = String(item.thoiGian || "").slice(0, 10);
+                  const end = String(item.thoiGianKetThuc || "").slice(0, 10);
+                  if (start && end && end < start) return true;
+                  const range = String(item.dateText || "").match(/^\s*(\d{1,2})\/(\d{1,2})\/(\d{4})\s*(?:đến|[-–])\s*(\d{1,2})\/(\d{1,2})\/(\d{4})\s*$/i);
+                  if (!range) return false;
+                  const startText = `${range[3]}-${range[2].padStart(2, "0")}-${range[1].padStart(2, "0")}`;
+                  const endText = `${range[6]}-${range[5].padStart(2, "0")}-${range[4].padStart(2, "0")}`;
+                  return endText < startText;
+                });
+                if (invalidWorkItem) {
+                  setError(`Ngày kết thúc ở dòng ${invalidWorkItem.stt} phải bằng hoặc sau ngày bắt đầu.`);
+                  return;
                 }
                 void act(`/detailed-plans/${detailId}`, "PUT", {
                   cacBan,
@@ -1254,7 +1401,7 @@ export default function OrganizationPanel({
               </div>
               <button
                 type="button"
-                onClick={() => onNavigateTab ? onNavigateTab("detailed-plans-assignment", text(selected, "MaHD")) : undefined}
+                onClick={() => navigateTab("detailed-plans-assignment", text(selected, "MaHD"))}
                 style={{
                   padding: "8px 16px",
                   borderRadius: "6px",
@@ -1336,9 +1483,75 @@ export default function OrganizationPanel({
       )}
 
       {!detailed && selected && competition && (
-        <section className={s.card}>
+        <section className={`${s.card} ${managementView === "results" ? s.resultsDetailCard : ""}`}>
+          {managementView === "results" ? (
+            <>
+              <div className={s.resultsContentGrid}>
+                <section className={s.resultsTopicPanel}>
+                  <header className={s.resultsPanelHeader}><div><h3>Đề tài dự thi học thuật</h3><p>{visibleCompetitionTopics.length} / {topicRows.length} hồ sơ trong cuộc thi</p></div><span>{text(competition, "NamHoc")}</span></header>
+                  <div className={s.resultsTableWrap}>
+                    {visibleCompetitionTopics.length ? <table className={s.resultsTable}>
+                      <thead><tr><th>Tên đề tài</th><th>Nhóm</th><th>Lĩnh vực</th><th>Điểm</th><th>Trạng thái</th></tr></thead>
+                      <tbody>{visibleCompetitionTopics.map((topic, index) => {
+                        const result = competitionResultRows.find((item) => (text(topic, "MaDoi") && text(item, "MaDoi") === text(topic, "MaDoi")) || (text(topic, "MaDK") && text(item, "MaDK") === text(topic, "MaDK")));
+                        const team = teamTopicRows.find((candidate) => text(candidate, "MaDoi") === text(topic, "MaDoi"));
+                        const topicName = text(topic, "TenDeTai") || "Chưa đặt tên đề tài";
+                        const topicId = text(topic, "MaDeTai");
+                        const topicStatus = text(topic, "TrangThai") || "Chưa cập nhật";
+                        const memberSource = text(team ?? topic, "ThanhVien");
+                        const memberCount = new Set(memberSource.split(memberSource.includes("|") ? "|" : ", ").map((member) => member.trim()).filter(Boolean)).size;
+                        return <tr key={topicId || `${text(topic, "MaDoi")}-${index}`}>
+                          <td><strong className={s.resultsTopicName}>{topicName}</strong>{topicId && <small className={s.resultsTopicCode}>Mã đề tài: DT-{topicId.padStart(3, "0")}</small>}</td>
+                          <td><strong>{text(topic, "TenDoi") || text(topic, "HoTen") || "Thí sinh cá nhân"}</strong><small>{text(topic, "TenDoi") ? `${memberCount} thành viên` : text(topic, "MSSV")}</small></td>
+                          <td>{text(topic, "LinhVuc") || "Chưa phân loại"}</td>
+                          <td><strong>{text(result ?? {}, "Diem") || "—"}</strong></td>
+                          <td><span className={`${s.resultsStatus} ${text(result ?? {}, "TrangThai") === "Đã công bố" ? s.resultsPublished : s.resultsDraft}`}>{text(result ?? {}, "TenGiaiThuong") || text(result ?? {}, "TenGiai") || topicStatus}</span></td>
+                        </tr>;
+                      })}</tbody>
+                    </table> : <div className={s.resultsEmpty}><span>📄</span><strong>{topicRows.length ? "Không tìm thấy đề tài phù hợp" : "Chưa có đề tài dự thi"}</strong><p>Đề tài sinh viên đăng ký sẽ được tổng hợp tại đây.</p></div>}
+                  </div>
+                </section>
+
+                <aside className={s.resultsWinnersPanel}>
+                  <header className={s.resultsPanelHeader}><div><h3>Kết quả chung kết</h3><p>{text(competition, "TenCuocThi")}</p></div><span className={`${s.resultsStatus} ${competitionResultRows.some((result) => text(result, "TrangThai") === "Đã công bố") ? s.resultsPublished : s.resultsDraft}`}>{competitionResultRows.some((result) => text(result, "TrangThai") === "Đã công bố") ? "Đã công bố" : "Đang cập nhật"}</span></header>
+                  {visibleCompetitionResults.length ? <div className={s.resultsWinnerList}>{visibleCompetitionResults.map((result, index) => {
+                    const team = teamTopicRows.find((candidate) => text(candidate, "MaDoi") === text(result, "MaDoi"));
+                    const rank = Number(text(result, "XepHang")) || index + 1;
+                    const statusValue = text(result, "TrangThai") || "Chưa xác định";
+                    const award = rows(competition.awards).find((candidate) => text(candidate, "MaGT") === text(result, "MaGT"));
+                    return <article className={s.resultsWinner} key={text(result, "MaKQ") || `${text(result, "MaDoi")}-${index}`}>
+                      <span className={`${s.resultsRank} ${rank > 0 && rank <= 3 ? s[`resultsRank${rank}`] : ""}`}>{String(rank).padStart(2, "0")}</span>
+                      <div className={s.resultsWinnerInfo}><strong>{text(result, "TenDoi") || text(result, "HoTen") || "Chưa có tên"}</strong><small>{text(team ?? {}, "TenDeTai") || (text(result, "TenDoi") ? "Đội thi" : `MSSV ${text(result, "MSSV") || "—"}`)}</small><span>{text(result, "TenGiaiThuong") || text(result, "TenGiai") || "Chưa gán giải"}{award?.TienThuong != null ? ` · ${Number(award.TienThuong).toLocaleString("vi-VN")} ₫` : ""}</span></div>
+                      <strong className={s.resultsWinnerScore}>{text(result, "Diem") || "—"}</strong>
+                      {Boolean(selected.canOrganize) && statusValue === "Dự thảo" && <button className={s.resultsPublishButton} disabled={busy} onClick={() => void act(`/competition-workflow/results/${text(result, "MaKQ")}/publish`)}>Công bố</button>}
+                    </article>;
+                  })}</div> : <div className={s.resultsEmpty}><span>🏆</span><strong>Chưa có đội đạt giải</strong><p>Kết quả chung kết sẽ hiện tại đây sau khi có bài thi được chấm và lập giải.</p></div>}
+                  <div className={s.resultsWinnersFooter}><span>{rows(competition.awards).length} hạng mục giải thưởng</span><span>{competitionResultRows.length} kết quả</span></div>
+                </aside>
+              </div>
+
+              {Boolean(selected.canOrganize) && <details className={s.resultsCreatePanel}>
+                <summary><span><strong>Ghi nhận đội hoặc thí sinh đạt giải</strong><small>Lập kết quả từ bài thi đã được chấm</small></span><b>＋</b></summary>
+                <ActionForm
+                  title="Thông tin kết quả"
+                  busy={busy}
+                  fields={[
+                    { name: "maBai", label: "Mã bài thi đã chấm", type: "number" },
+                    { name: "maGT", label: "Giải thưởng", optional: true, options: options(rows(competition.awards), "MaGT", "TenGT") },
+                    { name: "xepHang", label: "Thứ hạng", type: "number" },
+                    { name: "ghiChu", label: "Ghi chú", optional: true },
+                  ]}
+                  onSave={(value) => act(`${base}/${competition.MaCThi}/results`, "POST", value)}
+                />
+              </details>}
+            </>
+          ) : <>
           <h2>{text(competition, "TenCuocThi")}</h2>
-          <h3>Đề tài dự thi</h3>
+          <div className={s.topicManagementStats}>
+            <div><span>Tổng đội thi</span><strong>{teamTopicRows.length}</strong></div>
+            <div><span>Đã khai báo đề tài</span><strong>{teamTopicRows.filter((team) => Boolean(text(team, "TenDeTai"))).length}</strong></div>
+            <div><span>Chưa khai báo đề tài</span><strong>{teamTopicRows.filter((team) => !text(team, "TenDeTai")).length}</strong></div>
+          </div>
           {user.roles.includes("SINHVIEN") && Boolean(selected.registration) && (
             <ActionForm
               title="Đăng ký đề tài"
@@ -1353,28 +1566,40 @@ export default function OrganizationPanel({
               onSave={(value) => act(`${base}/${competition.MaCThi}/topics`, "POST", value)}
             />
           )}
-          {!rows(selected.topics).length && <p>Chưa có đề tài đăng ký.</p>}
-          {rows(selected.topics).map(topic => (
-            <article className={s.planCommittee} key={text(topic, "MaDeTai")}>
-              <h4>{text(topic, "TenDeTai")}</h4>
-              <p>{text(topic, "TenDoi") || text(topic, "HoTen")} · {text(topic, "LinhVuc")} · {text(topic, "TrangThai")}</p>
-              <p className={s.planTask}>{text(topic, "MoTa")}</p>
-              <p>Giảng viên hướng dẫn: {text(topic, "GVHD") || "Chưa cập nhật"}</p>
-              {Boolean(selected.canOrganize) && (
-                <ActionForm
-                  title="Cập nhật trạng thái đề tài"
-                  busy={busy}
-                  defaults={{ trangThai: topic.TrangThai }}
-                  fields={[
-                    { name: "trangThai", label: "Trạng thái đề tài", options: ["Đang thực hiện", "Đã hoàn thành", "Không đạt", "Đã rút"].map(value => ({ value, label: value })) },
-                  ]}
-                  onSave={(value) => act(`/competition-workflow/topics/${topic.MaDeTai}/status`, "PATCH", value)}
-                />
-              )}
-            </article>
-          ))}
+          <div className={s.topicManagementToolbar}>
+            <label><span>⌕</span><input value={topicSearch} onChange={(event) => setTopicSearch(event.target.value)} placeholder="Tìm đội thi, đề tài, thành viên hoặc GVHD…" /></label>
+            <select aria-label="Lọc trạng thái đề tài" value={topicStatusFilter} onChange={(event) => setTopicStatusFilter(event.target.value)}>
+              <option value="all">Tất cả trạng thái</option>
+              {[...new Set(teamTopicRows.map((team) => text(team, "TrangThai")).filter(Boolean))].map((status) => <option key={status} value={status}>{status}</option>)}
+            </select>
+          </div>
+          {selected.canOrganize ? (
+            <div className={s.topicTeamsTableWrap}>
+              {visibleTeamTopics.length ? <table className={s.topicTeamsTable}>
+                <thead><tr><th>Đội thi</th><th>Tên đề tài</th><th>Giảng viên hướng dẫn</th><th>Thành viên</th><th>Trạng thái đề tài</th></tr></thead>
+                <tbody>{visibleTeamTopics.map((team) => <tr key={text(team, "MaDoi")}>
+                  <td><strong>{text(team, "TenDoi")}</strong><small>Đội #{text(team, "MaDoi")}</small></td>
+                  <td>{text(team, "TenDeTai") || <span className={s.topicTeamMissing}>Chưa khai báo đề tài</span>}</td>
+                  <td>{text(team, "GVHD") || <span className={s.topicTeamMissing}>Chưa cập nhật</span>}</td>
+                  <td><div className={s.topicMemberLines}>{text(team, "ThanhVien") ? text(team, "ThanhVien").split("|").map((member) => <span key={member}>{member}</span>) : <span>Chưa có thành viên</span>}</div></td>
+                  <td>{Boolean(team.MaDeTai) ? <ActionForm
+                    submitLabel="Lưu"
+                    busy={busy}
+                    defaults={{ trangThai: team.TrangThai }}
+                    fields={[{ name: "trangThai", label: "Trạng thái", options: ["Đang thực hiện", "Đã hoàn thành", "Không đạt", "Đã rút"].map((value) => ({ value, label: value })) }]}
+                    onSave={(value) => act(`/competition-workflow/topics/${team.MaDeTai}/status`, "PATCH", value)}
+                  /> : <span className={s.topicManagementStatus}>{text(team, "TrangThai") || "Chưa có đề tài"}</span>}</td>
+                </tr>)}</tbody>
+              </table> : <div className={s.topicManagementEmpty}><strong>{teamTopicRows.length ? "Không tìm thấy đội thi phù hợp" : "Cuộc thi chưa có đội đăng ký"}</strong><span>{teamTopicRows.length ? "Thử đổi từ khóa hoặc trạng thái lọc." : "Danh sách đội sẽ xuất hiện khi sinh viên đăng ký theo đội."}</span></div>}
+            </div>
+          ) : (
+            <div className={s.topicManagementTableWrap}>
+              {visibleTopics.length ? <table className={s.topicManagementTable}><thead><tr><th>Đề tài</th><th>Thí sinh</th><th>GV hướng dẫn</th><th>Trạng thái</th></tr></thead><tbody>{visibleTopics.map((topic) => <tr key={text(topic, "MaDeTai")}><td><strong>{text(topic, "TenDeTai")}</strong><small>{text(topic, "MoTa")}</small></td><td>{text(topic, "HoTen")}</td><td>{text(topic, "GVHD")}</td><td>{text(topic, "TrangThai")}</td></tr>)}</tbody></table> : <div className={s.topicManagementEmpty}><strong>Chưa có đề tài đăng ký</strong></div>}
+            </div>
+          )}
           {Boolean(selected.canOrganize) && (
             <>
+              {!managementView && <>
               <ActionForm
                 title="Tạo vòng thi"
                 busy={busy}
@@ -1397,7 +1622,8 @@ export default function OrganizationPanel({
                 ]}
                 onSave={(v) => act(`${base}/${competition.MaCThi}/awards`, "POST", v)}
               />
-              <ActionForm
+              </>}
+              {managementView !== "topics" && <ActionForm
                 title="Lập kết quả từ bài đã chấm"
                 busy={busy}
                 fields={[
@@ -1406,9 +1632,10 @@ export default function OrganizationPanel({
                   { name: "xepHang", label: "Xếp hạng", type: "number" },
                 ]}
                 onSave={(v) => act(`${base}/${competition.MaCThi}/results`, "POST", v)}
-              />
+              />}
             </>
           )}
+          {!managementView && <>
           <h3>Các vòng thi</h3>
           {rows(selected.rounds).map(r => (
             <p key={text(r, "MaVong")}>
@@ -1416,6 +1643,8 @@ export default function OrganizationPanel({
               <button onClick={() => void openRound(text(r, "MaVong"))}>Mở vòng</button>
             </p>
           ))}
+          </>}
+          {managementView !== "topics" && <>
           <h3>Kết quả và giải thưởng</h3>
           {rows(selected.results).map(r => (
             <p key={text(r, "MaKQ")}>
@@ -1427,6 +1656,8 @@ export default function OrganizationPanel({
               )}
             </p>
           ))}
+          </>}
+          </>}
         </section>
       )}
 
@@ -1436,15 +1667,26 @@ export default function OrganizationPanel({
           <p>{text(currentRound, "TrangThai")} · Hạn nộp: {date(currentRound.HanNopBai)}</p>
           {Boolean(round.canOrganize) && (
             <>
-              <ActionForm
-                title="Phân công ra đề / chấm thi"
-                busy={busy}
-                fields={[
-                  { name: "maTK", label: "Giảng viên", options: options(rows(selected?.staff), "MaTK", "HoTen") },
-                  { name: "vaiTro", label: "Nhiệm vụ", options: [{ value: "RA_DE", label: "Ra đề" }, { value: "CHAM_THI", label: "Chấm thi" }] },
-                ]}
-                onSave={(v) => act(`${roundPath}/assignments`, "POST", v)}
-              />
+              <div className={s.businessForm}>
+                <h3>Phân công theo ban trong kế hoạch chi tiết</h3>
+                {([
+                  { type: "DE_THI" as const, role: "RA_DE", title: "Ban đề thi", task: "Ra đề" },
+                  { type: "CHAM_THI" as const, role: "CHAM_THI", title: "Ban giám khảo", task: "Chấm thi" },
+                ]).map(({ type, role, title, task }) => {
+                  const committee = planCommittee(type);
+                  const members = committeeMemberOptions(type);
+                  return <section key={type} style={{ border: "1px solid #dbe5f2", borderRadius: 10, padding: 14, marginTop: 12 }}>
+                    <h4 style={{ margin: "0 0 4px", color: "#15375b" }}>{title}</h4>
+                    <p style={{ margin: "0 0 12px", color: "#64748b", fontSize: 13 }}>{committee ? `Thành viên lấy từ ${text(committee, "tenBan") || title} của kế hoạch chi tiết · Nhiệm vụ: ${task}` : `Kế hoạch chi tiết chưa khai báo ${title}. Hãy bổ sung ban và trình ký lại trước khi phân công.`}</p>
+                    {members.length ? <ActionForm
+                      submitLabel={`Phân công ${task.toLocaleLowerCase("vi")}`}
+                      busy={busy}
+                      fields={[{ name: "maTK", label: `Giảng viên thuộc ${title}`, options: members }]}
+                      onSave={(v) => act(`${roundPath}/assignments`, "POST", { ...v, vaiTro: role })}
+                    /> : <p role="status" style={{ margin: 0, color: "#b45309", fontSize: 13 }}>{committee ? `${title} chưa có giảng viên được phân công trong kế hoạch chi tiết.` : ""}</p>}
+                  </section>;
+                })}
+              </div>
               <button disabled={busy} onClick={() => void act(`${roundPath}/status`, "PATCH", { trangThai: currentRound.TrangThai === "Chưa mở" ? "Đang mở" : "Đã đóng" })}>
                 {currentRound.TrangThai === "Chưa mở" ? "Mở vòng thi" : "Đóng vòng thi"}
               </button>

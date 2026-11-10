@@ -3,7 +3,10 @@ import {
   Controller,
   Get,
   HttpCode,
+  HttpException,
+  InternalServerErrorException,
   Inject,
+  Logger,
   Param,
   ParseIntPipe,
   Patch,
@@ -29,6 +32,8 @@ import {
 @Controller('registrations')
 @UseGuards(SessionGuard)
 export class RegistrationController {
+  private readonly logger = new Logger(RegistrationController.name);
+
   constructor(
     @Inject(RegistrationService)
     private readonly service: RegistrationService,
@@ -58,7 +63,28 @@ export class RegistrationController {
     @Req() request: AuthRequest,
     @Body() dto: RegisterTeamDto,
   ) {
-    return this.service.registerTeam(request.auth!.userId, dto);
+    return this.service.registerTeam(request.auth!.userId, dto).catch((error: unknown) => {
+      if (error instanceof HttpException) throw error;
+
+      const failure = error as {
+        message?: string;
+        code?: string;
+        originalError?: { message?: string };
+      };
+      const detail = failure.originalError?.message ?? failure.message ?? "Unknown database error";
+      this.logger.error(`POST /registrations/team failed (${failure.code ?? "unknown"}): ${detail}`);
+
+      if (process.env.NODE_ENV !== "production") {
+        throw new InternalServerErrorException(`Đăng ký đội thất bại (${failure.code ?? "SQL"}): ${detail}`);
+      }
+      throw error;
+    });
+  }
+
+  @Get('students/:mssv')
+  @ApiOperation({ summary: 'Tra cứu tên và lớp sinh viên theo MSSV để lập đội thi' })
+  getStudentForTeam(@Param('mssv') mssv: string) {
+    return this.service.getStudentForTeam(mssv);
   }
 
   @Post('team/join')
@@ -73,6 +99,13 @@ export class RegistrationController {
   @ApiResponse({ status: 200, description: 'Danh sách các lượt đăng ký của sinh viên hiện tại' })
   getMyRegistrations(@Req() request: AuthRequest) {
     return this.service.getMyRegistrations(request.auth!.userId);
+  }
+
+  @Get('manage')
+  @ApiOperation({ summary: 'Cán bộ xem tất cả đăng ký của sinh viên theo các hoạt động' })
+  @ApiResponse({ status: 200, description: 'Danh sách đăng ký sinh viên trên toàn khoa' })
+  getAllRegistrations(@Req() request: AuthRequest) {
+    return this.service.getAllRegistrations(request.auth!);
   }
 
   @Get('manage/:activityId')

@@ -1,11 +1,16 @@
 import { BadRequestException, Inject, Injectable, NotFoundException } from '@nestjs/common';
+import sql from 'mssql';
 import { DatabaseService } from '../../data/database.service';
+import { FeaturesRepository } from '../../data/repositories/features/features.repository';
 import type { SessionContext } from '../auth/auth.types';
 import type { NewsDto } from '../../presentation/workflow/news.controller';
 
 @Injectable()
 export class NewsService {
-  constructor(@Inject(DatabaseService) private readonly db: DatabaseService) {}
+  constructor(
+    @Inject(DatabaseService) private readonly db: DatabaseService,
+    @Inject(FeaturesRepository) private readonly features: FeaturesRepository,
+  ) {}
 
   activities(_context: SessionContext) {
     return this.db.query(`SELECT h.MaHD,h.TenHoatDong,h.LoaiHoatDong,h.TrangThai AS TrangThaiHoatDong,d.TrangThai,
@@ -22,6 +27,17 @@ export class NewsService {
       ORDER BY COALESCE(n.CongBoLuc,n.NgayTao) DESC,n.MaTin DESC`);
   }
 
+  async latestPublishedAnnouncement(activityId: number) {
+    const [article] = await this.db.query<{ TieuDe: string; NoiDung: string }>(
+      `SELECT TOP (1) TieuDe,NoiDung
+       FROM TINTUCHOCTHUAT
+       WHERE MaHD=@p1 AND TrangThai=N'Đã công bố'
+       ORDER BY COALESCE(CongBoLuc,NgayTao) DESC,MaTin DESC`,
+      [activityId],
+    );
+    return article ?? null;
+  }
+
   async save(context: SessionContext, dto: NewsDto, id?: number) {
     if (!dto.tieuDe?.trim() || !dto.noiDung?.trim()) throw new BadRequestException('Cần nhập tiêu đề và nội dung tin');
     const maHD = dto.maHD ? Number(dto.maHD) : null;
@@ -36,17 +52,40 @@ export class NewsService {
   }
 
   async status(_context: SessionContext, id: number, status: 'Đã công bố' | 'Đã ẩn') {
-    const news = (await this.db.query<{MaHD:number|null}>('SELECT MaHD FROM TINTUCHOCTHUAT WHERE MaTin=@p1',[id]))[0];
-    if (!news) throw new NotFoundException('Không tìm thấy tin');
-    return (await this.db.query(`SET XACT_ABORT ON; BEGIN TRAN;
-      UPDATE TINTUCHOCTHUAT SET TrangThai=@p2,NgayCapNhat=SYSDATETIMEOFFSET(),
-        CongBoLuc=CASE WHEN @p2=N'Đã công bố' THEN SYSDATETIMEOFFSET() ELSE CongBoLuc END WHERE MaTin=@p1;
-      IF @p2=N'Đã công bố'
-        INSERT INTO THONGBAO(MaTK,MaHD,Loai,TieuDe,NoiDung)
-        SELECT DISTINCT t.MaTK,n.MaHD,CONCAT(N'Tin học thuật #',n.MaTin),n.TieuDe,n.NoiDung
-        FROM TINTUCHOCTHUAT n CROSS JOIN TAIKHOAN t
-        WHERE n.MaTin=@p1 AND t.TrangThai=N'Hoạt động' AND NOT EXISTS(SELECT 1 FROM THONGBAO old
-          WHERE old.MaTK=t.MaTK AND old.Loai=CONCAT(N'Tin học thuật #',n.MaTin));
-      SELECT * FROM TINTUCHOCTHUAT WHERE MaTin=@p1; COMMIT;`,[id,status]))[0];
+    const transaction = new sql.Transaction(this.db.pool);
+    await transaction.begin();
+    let updated: { MaHD: number | null };
+    try {
+      const result = await new sql.Request(transaction)
+        .input('id', sql.BigInt, id)
+        .input('status', sql.NVarChar(30), status)
+        .query<typeof updated>(`UPDATE TINTUCHOCTHUAT
+          SET TrangThai=@status,NgayCapNhat=SYSDATETIMEOFFSET(),
+            CongBoLuc=CASE WHEN @status=N'Đã công bố' THEN SYSDATETIMEOFFSET() ELSE CongBoLuc END
+          OUTPUT INSERTED.* WHERE MaTin=@id`);
+      updated = result.recordset[0];
+      if (!updated) throw new NotFoundException('Không tìm thấy tin');
+      if (status === 'Đã công bố' && updated.MaHD !== null) {
+        await this.features.includeAnnouncedSeminar(updated.MaHD, transaction);
+      }
+      await transaction.commit();
+    } catch (error) {
+      await transaction.rollback();
+      throw error;
+    }
+
+    if (status === 'Đã công bố') {
+      try {
+        await this.db.query(`INSERT INTO THONGBAO(MaTK,MaHD,Loai,TieuDe,NoiDung)
+          SELECT DISTINCT t.MaTK,n.MaHD,CONCAT(N'Tin học thuật #',n.MaTin),n.TieuDe,n.NoiDung
+          FROM TINTUCHOCTHUAT n CROSS JOIN TAIKHOAN t
+          WHERE n.MaTin=@p1 AND t.TrangThai=N'Hoạt động' AND NOT EXISTS(
+            SELECT 1 FROM THONGBAO old WHERE old.MaTK=t.MaTK AND old.Loai=CONCAT(N'Tin học thuật #',n.MaTin)
+          )`, [id]);
+      } catch (error) {
+        console.error(`Tin học thuật #${id} đã xuất bản nhưng không gửi được thông báo:`, error);
+      }
+    }
+    return updated;
   }
 }

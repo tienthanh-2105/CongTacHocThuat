@@ -53,6 +53,8 @@ a:focus-visible {
 }
 .login-card {
   min-width: 0;
+  position: relative;
+  isolation: isolate;
   display: grid;
   grid-template-columns: 1fr 1fr;
   min-height: 650px;
@@ -63,9 +65,7 @@ a:focus-visible {
 }
 .visual-panel {
   position: relative;
-  isolation: isolate;
   overflow: hidden;
-  background: linear-gradient(137deg, #6547b2 0%, #3c66c7 48%, #0896e5 100%);
   color: white;
   text-align: center;
   padding: 110px 40px 40px;
@@ -180,9 +180,9 @@ a:focus-visible {
 }
 .login-form > label {
   font-size: 14px;
-  font-weight: 500;
+  font-weight: 700;
   margin-bottom: 7px;
-  color: #536078;
+  color: #000;
 }
 .input-wrap {
   position: relative;
@@ -343,8 +343,14 @@ a:focus-visible {
   box-shadow: 0 28px 80px #18355b1a, 0 4px 14px #18355b0b;
 }
 .visual-panel {
-  background: linear-gradient(145deg, #10294b 0%, #174e94 55%, #117e9d 100%);
   padding: 96px 44px 42px;
+}
+.visual-panel::before {
+  content: "";
+  position: absolute;
+  inset: 0;
+  z-index: -2;
+  background: linear-gradient(145deg, #10294b 0%, #174e94 55%, #117e9d 100%);
 }
 .visual-heading h1 { font-size: 31px; line-height: 1.3; letter-spacing: -0.8px; }
 .visual-heading p { color: #d7e8ff; font-size: 14px; }
@@ -358,7 +364,6 @@ a:focus-visible {
 .faculty-brand > svg { width: 62px; height: 62px; color: #2b62da; }
 .form-heading { margin-bottom: 30px; }
 .form-heading h2 { color: #172b46; font-size: 25px; letter-spacing: -0.45px; }
-.login-form > label { color: #40516a; font-weight: 600; }
 .input-wrap input {
   height: 50px;
   border-color: #d9e1ec;
@@ -406,23 +411,16 @@ a:focus-visible {
 }
 .heritage-pattern {
   position: absolute;
-  width: min(1380px, 120vw, calc(100svh * 1.25));
-  height: auto;
-  aspect-ratio: 790 / 703;
-  left: 50%;
   top: 50%;
+  left: 50%;
+  width: min(100%, 760px);
+  aspect-ratio: 790 / 703;
   transform: translate(-50%, -50%);
+  z-index: -1;
   background: url("/images/trong-dong-vang.png") center / contain no-repeat;
+  mask-image: radial-gradient(circle closest-side, #000 0%, #000d 32%, #0007 65%, transparent 94%);
   mix-blend-mode: multiply;
-  mask-image: radial-gradient(
-    circle closest-side,
-    #000 15%,
-    #000e 38%,
-    #0009 62%,
-    #0004 82%,
-    transparent 100%
-  );
-  opacity: 1;
+  opacity: 0.24;
   pointer-events: none;
 }
 .welcome {
@@ -501,11 +499,6 @@ a:focus-visible {
   }
   .secure-note {
     padding-top: 23px;
-  }
-  .heritage-pattern {
-    top: 50%;
-    width: 760px;
-    height: auto;
   }
   .login-shell > footer {
     font-size: 10px;

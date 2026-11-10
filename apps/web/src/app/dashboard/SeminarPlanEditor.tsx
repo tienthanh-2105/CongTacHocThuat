@@ -234,7 +234,6 @@ export function SeminarPlanEditor({
     value.thoiGianBatDau = startObj.toISOString();
     value.thoiGianKetThuc = new Date(startObj.getTime() + 2 * 3600 * 1000).toISOString();
     value.diaDiem = value.diaDiem || "Hội trường A";
-    value.diemRenLuyen = 5;
 
     value.trangThai = "Chờ phân công thực hiện";
 

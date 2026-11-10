@@ -29,15 +29,61 @@ export class AuthOriginGuard implements CanActivate {
 @Injectable()
 export class LoginRateGuard implements CanActivate {
   private readonly attempts = new Map<string, { count: number; expiresAt: number }>();
+
   canActivate(context: ExecutionContext) {
     const request = context.switchToHttp().getRequest<AuthRequest>();
+    this.removeExpiredAttempts();
+    const username = this.usernameKey(request);
+    const ipEntry = this.attempts.get(this.ipKey(request));
+    const accountEntry = username ? this.attempts.get(this.accountIpKey(request, username)) : undefined;
+    if ((ipEntry && ipEntry.count >= 300) || (accountEntry && accountEntry.count >= 10)) {
+      throw new HttpException('Quá nhiều lần đăng nhập thất bại. Vui lòng thử lại sau 15 phút.', HttpStatus.TOO_MANY_REQUESTS);
+    }
+    return true;
+  }
+
+  recordFailure(request: AuthRequest, username: string) {
+    this.removeExpiredAttempts();
+    this.increment(this.ipKey(request));
+    const normalizedUsername = username.trim().toLocaleLowerCase('vi');
+    if (normalizedUsername) this.increment(this.accountIpKey(request, normalizedUsername));
+  }
+
+  clearAccountIpFailures(request: AuthRequest, username: string) {
+    const normalizedUsername = username.trim().toLocaleLowerCase('vi');
+    if (normalizedUsername) this.attempts.delete(this.accountIpKey(request, normalizedUsername));
+  }
+
+  private usernameKey(request: AuthRequest) {
+    const body = (request as AuthRequest & { body?: { username?: unknown } }).body;
+    return typeof body?.username === 'string' ? body.username.trim().toLocaleLowerCase('vi') : '';
+  }
+
+  private ipKey(request: AuthRequest) {
+    return `ip:${request.ip ?? request.socket.remoteAddress ?? 'unknown'}`;
+  }
+
+  private accountIpKey(request: AuthRequest, username: string) {
+    return `account-ip:${request.ip ?? request.socket.remoteAddress ?? 'unknown'}:${username}`;
+  }
+
+  private increment(key: string) {
+    const now = Date.now();
+    const existing = this.attempts.get(key);
+    if (existing && existing.expiresAt > now) {
+      existing.count++;
+      return;
+    }
+    this.attempts.set(key, { count: 1, expiresAt: now + 15 * 60 * 1000 });
+    while (this.attempts.size > 20_000) {
+      const oldest = this.attempts.keys().next().value;
+      if (!oldest) break;
+      this.attempts.delete(oldest);
+    }
+  }
+
+  private removeExpiredAttempts() {
     const now = Date.now();
     for (const [key, entry] of this.attempts) if (entry.expiresAt <= now) this.attempts.delete(key);
-    const key = request.ip ?? request.socket.remoteAddress ?? 'unknown';
-    const entry = this.attempts.get(key) ?? { count: 0, expiresAt: now + 15 * 60 * 1000 };
-    if (entry.count >= 20 || (!this.attempts.has(key) && this.attempts.size >= 10000)) throw new HttpException('Quá nhiều lần thử đăng nhập, vui lòng thử lại sau', HttpStatus.TOO_MANY_REQUESTS);
-    entry.count++;
-    this.attempts.set(key, entry);
-    return true;
   }
 }

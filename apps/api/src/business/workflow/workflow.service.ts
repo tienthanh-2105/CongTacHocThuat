@@ -4,7 +4,7 @@ import { hash } from 'bcryptjs';
 import sql from 'mssql';
 import { DatabaseService } from '../../data/database.service';
 import type { SessionContext } from '../auth/auth.types';
-import { ActivityChangeDto, AdjustTrainingPointDto, CompetitionResultDto, CreatePlanActivityDto, CreatePlanDto, CreateRoundDto, ReviewPlanDto, ScoreWorkDto, SubmitWorkDto, AwardTrainingPointDto, CreateStudentAccountDto, CreateStudentProfileDto, CreateLinkedStudentProfileDto, SeminarMaterialDto, UpdateStudentRecordDto, CreateClassDto, UpdateClassDto, UpdateStaffRecordDto, CreateStaffRecordDto, CreateStaffAccountDto, CreateAcademicActivityDto, UpdateAcademicActivityDto, CreateCommitteeMemberDto, CreateActivityBudgetDto, CreateBudgetEstimateDto, ReviewActivityBudgetDto } from '../../presentation/workflow/workflow.dto';
+import { ActivityChangeDto, AdjustTrainingPointDto, CompetitionResultDto, CreatePlanActivityDto, CreatePlanDto, CreateRoundDto, ReviewPlanDto, ScoreWorkDto, SubmitWorkDto, AwardTrainingPointDto, CreateStudentAccountDto, CreateStudentProfileDto, CreateLinkedStudentProfileDto, SeminarMaterialDto, UpdateStudentRecordDto, CreateClassDto, UpdateClassDto, UpdateStaffRecordDto, CreateStaffRecordDto, CreateStaffAccountDto, CreateAcademicActivityDto, UpdateAcademicActivityDto, CreateCommitteeMemberDto, CreateActivityBudgetDto, CreateBudgetEstimateDto, ReviewActivityBudgetDto, AddBudgetEstimateLinesDto } from '../../presentation/workflow/workflow.dto';
 
 const key = (text: string) => text.normalize('NFD').replace(/[\u0300-\u036f]/g, '').toUpperCase().replace(/[^A-Z0-9]/g, '');
 const planReaderRoles = ['ADMIN','CAN_BO_KHOA','CANBOKHOA','GIANG_VIEN','GIANGVIEN','TRUONG_BO_MON','TRUONGBOMON','TRUONGKHOA','PHONG_KHCN','PHONGKHCN','HIEU_TRUONG','HIEUTRUONG'];
@@ -572,6 +572,10 @@ export class WorkflowService {
       }
       if (cleanMssv) {
         await this.db.query(`UPDATE SINHVIEN SET MSSV=@p1 WHERE MaSV=@p2`, [cleanMssv, maSV]);
+        await this.db.query(
+          `UPDATE TAIKHOAN SET TenDangNhap=@p1, PBMatKhau=PBMatKhau+1 WHERE MaNgDung=@p2`,
+          [cleanMssv, student.MaNgDung],
+        );
       }
       await this.db.query(
         `UPDATE NGUOIDUNG SET 
@@ -1565,6 +1569,7 @@ export class WorkflowService {
     return this.db.query(`
       SELECT d.MaDiem, d.MaSV, s.MSSV, nd.HoTen AS TenSinhVien, l.TenLop,
              d.MaHD, h.TenHoatDong, h.LoaiHoatDong,
+             participation.HinhThuc AS HinhThucThamGia,
              d.HocKy, d.NamHoc, d.SoDiem, d.LyDo, d.TrangThai,
              d.NguoiGhi, d.GhiLuc,
              d.NguoiDuyet, COALESCE(ndDuyet.HoTen, ndGhi.HoTen, N'ThS. Lê Hoàng Phúc') AS TenNguoiDuyet, d.DuyetLuc
@@ -1573,12 +1578,27 @@ export class WorkflowService {
       JOIN NGUOIDUNG nd ON nd.MaNgDung = s.MaNgDung
       LEFT JOIN LOP l ON l.MaLop = s.MaLop
       LEFT JOIN HOATDONGHOCTHUAT h ON h.MaHD = d.MaHD
+      OUTER APPLY (SELECT TOP (1) dk.HinhThuc FROM DKTHAMGIA dk
+        WHERE dk.MaSV=d.MaSV AND dk.MaHD=d.MaHD AND dk.TrangThai NOT IN(N'Đã hủy',N'Từ chối')
+        ORDER BY dk.NgayDK DESC,dk.MaDK DESC) participation
       LEFT JOIN TAIKHOAN tkDuyet ON tkDuyet.MaTK = d.NguoiDuyet
       LEFT JOIN NGUOIDUNG ndDuyet ON ndDuyet.MaNgDung = tkDuyet.MaNgDung
       LEFT JOIN TAIKHOAN tkGhi ON tkGhi.MaTK = d.NguoiGhi
       LEFT JOIN NGUOIDUNG ndGhi ON ndGhi.MaNgDung = tkGhi.MaNgDung
       ORDER BY COALESCE(d.DuyetLuc, d.GhiLuc) DESC, d.MaDiem DESC
     `);
+  }
+  async listTrainingPointRegistrations(context: SessionContext, activityId: number) {
+    this.require(context, ['ADMIN','CANBOKHOA','CAN_BO_KHOA','GIANGVIEN','GIANG_VIEN','PHONG_CTSV','PHONGCTSV','CONG_TAC_SINH_VIEN','CAN_BO_CTSV','TRUONGKHOA']);
+    return this.db.query(`
+      SELECT DISTINCT s.MaSV,s.MSSV,n.HoTen,l.TenLop
+      FROM DKTHAMGIA dk
+      JOIN SINHVIEN s ON s.MaSV=dk.MaSV
+      JOIN NGUOIDUNG n ON n.MaNgDung=s.MaNgDung
+      LEFT JOIN LOP l ON l.MaLop=s.MaLop
+      WHERE dk.MaHD=@p1 AND dk.TrangThai IN(N'Đã đăng ký',N'Đã xác nhận')
+      ORDER BY s.MSSV,n.HoTen
+    `,[activityId]);
   }
   async listBroadcasts(context: SessionContext) {
     this.require(context, ['ADMIN','CANBOKHOA','CAN_BO_KHOA','GIANGVIEN','GIANG_VIEN','PHONG_CTSV','PHONGCTSV','TRUONGKHOA']);
@@ -1598,45 +1618,67 @@ export class WorkflowService {
         MAX(t.GuiLuc) AS GuiLuc,
         MAX(t.Loai) AS Loai
       FROM THONGBAO t
-      GROUP BY t.TieuDe
+      WHERE t.Loai=N'Nhắc lịch hoạt động' AND t.MaHD IS NOT NULL
+      GROUP BY t.MaHD,t.TieuDe
       ORDER BY MAX(t.GuiLuc) DESC
     `);
     return rows.map((r) => {
-      const tieuDe = r.TieuDe || "";
-      let doiTuong = "Toàn khoa";
-      if (/seminar/i.test(tieuDe)) doiTuong = "186 sinh viên";
-      else if (/cổ vũ|olympic/i.test(tieuDe)) doiTuong = "4 lớp K24";
-      else if (/vòng loại|ui\/ux|cuộc thi/i.test(tieuDe)) doiTuong = "120 sinh viên";
-      else if (/workshop|devsecops/i.test(tieuDe)) doiTuong = "Toàn khoa";
-
       const pct = r.TongNhan > 0 ? Math.round((r.DaDoc / r.TongNhan) * 100) : 0;
-      let daDocStr = pct > 0 ? `${pct}%` : "—";
-      if (/seminar/i.test(tieuDe)) daDocStr = "92%";
-      else if (/cổ vũ|olympic/i.test(tieuDe)) daDocStr = "84%";
-      else if (/workshop|devsecops/i.test(tieuDe)) daDocStr = "78%";
+      const daDocStr = r.TongNhan > 0 ? `${pct}%` : "—";
 
       return {
         id: r.id,
         tieuDe: r.TieuDe,
-        doiTuong,
+        doiTuong: `${r.TongNhan} sinh viên đã đăng ký`,
         guiLuc: r.GuiLuc,
         daDoc: daDocStr,
         tongNhan: r.TongNhan,
+        tyLeDoc: pct,
       };
     });
   }
-  async sendBroadcast(context: SessionContext, dto: { tieuDe: string; noiDung: string; doiTuong?: string; kenh?: string[] }) {
+  async sendBroadcast(context: SessionContext, dto: { maHD: number }) {
     this.require(context, ['ADMIN','CANBOKHOA','CAN_BO_KHOA','GIANGVIEN','GIANG_VIEN','PHONG_CTSV','PHONGCTSV','TRUONGKHOA']);
-    if (!dto.tieuDe?.trim() || !dto.noiDung?.trim()) {
-      throw new BadRequestException('Tiêu đề và nội dung thông báo không được để trống');
+    const transaction = new sql.Transaction(this.db.pool);
+    await transaction.begin(sql.ISOLATION_LEVEL.SERIALIZABLE);
+    try {
+      const rows = await new sql.Request(transaction).input('activityId', sql.BigInt, dto.maHD).query<{
+        MaHD: number; TenHoatDong: string; ThoiGianBatDau: Date | null; DiaDiem: string | null; TrangThai: string; SapDienRa: boolean;
+      }>(`SELECT h.MaHD,h.TenHoatDong,d.ThoiGianBatDau,COALESCE(d.DiaDiem,h.DiaDiem) AS DiaDiem,h.TrangThai,
+          CAST(CASE WHEN d.ThoiGianBatDau>SYSUTCDATETIME() THEN 1 ELSE 0 END AS BIT) AS SapDienRa
+        FROM HOATDONGHOCTHUAT h WITH(UPDLOCK,HOLDLOCK)
+        LEFT JOIN KEHOACHTOCHUC d WITH(UPDLOCK,HOLDLOCK) ON d.MaHD=h.MaHD
+        WHERE h.MaHD=@activityId`);
+      const activity = rows.recordset[0];
+      if (!activity) throw new NotFoundException('Không tìm thấy hoạt động cần nhắc lịch');
+      if (activity.TrangThai !== 'Đã công bố' || !activity.SapDienRa || !activity.ThoiGianBatDau) {
+        throw new BadRequestException('Chỉ gửi nhắc lịch cho hoạt động đã công bố và chưa diễn ra');
+      }
+
+      const scheduledAt = new Date(activity.ThoiGianBatDau).toLocaleString('vi-VN', {
+        timeZone: 'Asia/Ho_Chi_Minh', hour: '2-digit', minute: '2-digit', day: '2-digit', month: '2-digit', year: 'numeric',
+      });
+      const title = `Nhắc lịch: ${activity.TenHoatDong}`;
+      const message = `Hoạt động ${activity.TenHoatDong} sẽ diễn ra lúc ${scheduledAt} tại ${activity.DiaDiem || 'địa điểm theo kế hoạch hoạt động'}.`;
+      const sent = await new sql.Request(transaction)
+        .input('activityId', sql.BigInt, activity.MaHD)
+        .input('title', sql.NVarChar(250), title)
+        .input('message', sql.NVarChar(sql.MAX), message)
+        .query<{ MaThongBao: number }>(`INSERT INTO THONGBAO(MaTK,MaHD,Loai,TieuDe,NoiDung)
+          OUTPUT INSERTED.MaThongBao
+          SELECT DISTINCT t.MaTK,h.MaHD,N'Nhắc lịch hoạt động',@title,@message
+          FROM HOATDONGHOCTHUAT h
+          JOIN DKTHAMGIA dk ON dk.MaHD=h.MaHD AND dk.TrangThai IN(N'Đã đăng ký',N'Đã xác nhận')
+          JOIN SINHVIEN sv ON sv.MaSV=dk.MaSV
+          JOIN TAIKHOAN t ON t.MaNgDung=sv.MaNgDung AND t.TrangThai=N'Hoạt động'
+          WHERE h.MaHD=@activityId AND h.TrangThai=N'Đã công bố'`);
+      if (!sent.recordset.length) throw new BadRequestException('Hoạt động chưa có sinh viên đăng ký nhận nhắc lịch');
+      await transaction.commit();
+      return { success: true, message: `Đã gửi nhắc lịch cho ${sent.recordset.length} sinh viên đã đăng ký.`, recipients: sent.recordset.length };
+    } catch (error) {
+      await transaction.rollback().catch(() => undefined);
+      throw error;
     }
-    await this.db.query(`
-      INSERT INTO THONGBAO(MaTK, Loai, TieuDe, NoiDung, GuiLuc)
-      SELECT t.MaTK, N'Thông báo quản lý', @p1, @p2, SYSDATETIMEOFFSET()
-      FROM TAIKHOAN t
-      WHERE t.TrangThai = N'Hoạt động'
-    `, [dto.tieuDe.trim(), dto.noiDung.trim()]);
-    return { success: true, message: 'Đã gửi thông báo thành công' };
   }
   async awardPoint(context:SessionContext,dto:AwardTrainingPointDto) {
     this.require(context,['ADMIN','CANBOKHOA','CAN_BO_KHOA','GIANGVIEN','GIANG_VIEN','PHONG_CTSV','PHONGCTSV','CONG_TAC_SINH_VIEN','CAN_BO_CTSV','TRUONGKHOA']);
@@ -1666,12 +1708,14 @@ export class WorkflowService {
       [original.MaSV,original.MaHD,original.HocKy,original.NamHoc,dto.diemMoi,dto.lyDo,pointId,context.userId]);
     return rows[0];
   }
-  async createAttendanceCode(context:SessionContext,activityId:number,expiresAt:string) {
+  async createAttendanceCode(context:SessionContext,activityId:number,startsAt:string,endsAt:string) {
     this.require(context,['ADMIN','CAN_BO_KHOA','CANBOKHOA','GIANG_VIEN','GIANGVIEN']);
-    if(!Number.isFinite(Date.parse(expiresAt)) || Date.parse(expiresAt)<=Date.now()) throw new BadRequestException('Thời điểm hết hạn QR phải nằm trong tương lai');
+    const startsAtMs=Date.parse(startsAt),endsAtMs=Date.parse(endsAt);
+    if(!Number.isFinite(startsAtMs)||!Number.isFinite(endsAtMs)||endsAtMs<=startsAtMs) throw new BadRequestException('Thời gian kết thúc phải sau thời gian bắt đầu');
+    if(endsAtMs<=Date.now()) throw new BadRequestException('Thời gian kết thúc mã QR phải nằm trong tương lai');
     if(!(await this.db.query(`SELECT 1 AS found FROM HOATDONGHOCTHUAT WHERE MaHD=@p1`,[activityId])).length) throw new NotFoundException('Không tìm thấy hoạt động');
     const token=randomBytes(24).toString('hex');
-    const rows=await this.db.query(`INSERT INTO MAQR(MaHD,MaQRCode,TGMo,TGHetHan,TrangThai) OUTPUT INSERTED.MaQR,INSERTED.TGHetHan VALUES(@p1,@p2,SYSDATETIMEOFFSET(),@p3,N'Hoạt động')`,[activityId,token,expiresAt]);
+    const rows=await this.db.query(`INSERT INTO MAQR(MaHD,MaQRCode,TGMo,TGHetHan,TrangThai) OUTPUT INSERTED.MaQR,INSERTED.TGMo,INSERTED.TGHetHan VALUES(@p1,@p2,@p3,@p4,N'Hoạt động')`,[activityId,token,startsAt,endsAt]);
     if(!rows[0]) throw new NotFoundException('Không tìm thấy hoạt động'); return { ...rows[0], maQRCode:token };
   }
   async checkIn(context:SessionContext,token:string) {
@@ -1800,7 +1844,7 @@ export class WorkflowService {
   }
   async listWaitlist(context:SessionContext,activityId:number) {
     this.require(context,['ADMIN','CAN_BO_KHOA','CANBOKHOA','GIANG_VIEN','GIANGVIEN']);
-    return this.db.query(`SELECT q.MaCho,q.MaHD,q.MaSV,s.MSSV,n.HoTen,l.TenLop,q.DangKyLuc,q.TrangThai,
+    return this.db.query(`SELECT q.MaCho,q.MaHD,q.MaSV,s.MSSV,n.HoTen,l.TenLop,q.DangKyLuc,q.TrangThai,q.TenDeTai,q.GVHD,
       ROW_NUMBER() OVER(ORDER BY q.DangKyLuc,q.MaCho) AS ViTri
       FROM HANGDOICHODANGKY q JOIN SINHVIEN s ON s.MaSV=q.MaSV JOIN NGUOIDUNG n ON n.MaNgDung=s.MaNgDung JOIN LOP l ON l.MaLop=s.MaLop
       WHERE q.MaHD=@p1 AND q.TrangThai IN(N'Đang chờ',N'Đã mời') ORDER BY q.DangKyLuc,q.MaCho`,[activityId]);
@@ -1811,7 +1855,8 @@ export class WorkflowService {
     try {
       await new sql.Request(tx).input('id',sql.BigInt,activityId).query(`SELECT MaHD FROM HOATDONGHOCTHUAT WITH(UPDLOCK,HOLDLOCK) WHERE MaHD=@id`);
       const candidate=await new sql.Request(tx).input('id',sql.BigInt,activityId).query(`
-        SELECT TOP(1) q.MaCho,q.MaSV,q.MaHD,h.SLSVDuKien,
+        SELECT TOP(1) q.MaCho,q.MaSV,q.MaHD,q.TenDeTai,q.GVHD,h.SLSVDuKien,
+          TRY_CONVERT(INT,NULLIF(h.SLSVDuKien,N'')) AS SLToiDa,
           (SELECT COUNT(*) FROM DKTHAMGIA d WHERE d.MaHD=h.MaHD AND d.TrangThai NOT IN(N'Đã hủy',N'Từ chối')) AS SoLuong,
           CASE WHEN EXISTS(SELECT 1 FROM CUOCTHI c WHERE c.MaHD=h.MaHD) THEN N'Dự thi' ELSE N'Tham gia' END AS HinhThuc
         FROM HANGDOICHODANGKY q WITH(UPDLOCK,READPAST,ROWLOCK) JOIN HOATDONGHOCTHUAT h ON h.MaHD=q.MaHD
@@ -1821,6 +1866,10 @@ export class WorkflowService {
       if(item.SLToiDa && item.SoLuong>=item.SLToiDa){await tx.rollback();throw new BadRequestException('Hoạt động vẫn đủ chỉ tiêu, chưa thể nhận người từ danh sách chờ');}
       const created=await new sql.Request(tx).input('hd',sql.BigInt,activityId).input('sv',sql.BigInt,item.MaSV).input('type',sql.NVarChar(30),item.HinhThuc)
         .query(`INSERT INTO DKTHAMGIA(MaHD,MaSV,NgayDK,HinhThuc,NguonDK,TrangThai) OUTPUT INSERTED.MaDK,INSERTED.NgayDK VALUES(@hd,@sv,SYSDATETIME(),@type,N'Khoa',N'Đã đăng ký')`);
+      if(item.TenDeTai && item.GVHD) await new sql.Request(tx).input('competitionActivity',sql.BigInt,activityId).input('registration',sql.BigInt,created.recordset[0].MaDK)
+        .input('title',sql.NVarChar(250),item.TenDeTai).input('advisor',sql.NVarChar(150),item.GVHD)
+        .query(`INSERT INTO DETAI(MaCThi,MaDK,TenDeTai,GVHD,TrangThai)
+          SELECT c.MaCThi,@registration,@title,@advisor,N'Đang thực hiện' FROM CUOCTHI c WHERE c.MaHD=@competitionActivity`);
       await new sql.Request(tx).input('id',sql.BigInt,item.MaCho).query(`UPDATE HANGDOICHODANGKY SET TrangThai=N'Đã đăng ký' WHERE MaCho=@id`);
       await new sql.Request(tx).input('sv',sql.BigInt,item.MaSV).input('hd',sql.BigInt,activityId).query(`
         INSERT INTO THONGBAO(MaTK,MaHD,Loai,TieuDe,NoiDung)
@@ -1835,20 +1884,21 @@ export class WorkflowService {
     if (!/^https?:\/\//i.test(dto.urlTep)) throw new BadRequestException('Tài liệu phải có đường dẫn http hoặc https');
     if (!context.user.roles.some(role => key(role)==='ADMIN')) {
       const assigned = await this.db.query(`SELECT 1 AS ok FROM SEMINAR s WHERE s.MaSeminar=@p1 AND (
-        EXISTS(SELECT 1 FROM BANTOCHUC b JOIN TAIKHOAN t ON t.MaNgDung=b.MaNgDung WHERE b.MaHD=s.MaHD AND t.MaTK=@p2)
+        (s.TaoTuQuanLy=1 AND EXISTS(SELECT 1 FROM HOATDONGHOCTHUAT h WHERE h.MaHD=s.MaHD AND h.NguoiLap=@p2))
+        OR EXISTS(SELECT 1 FROM BANTOCHUC b JOIN TAIKHOAN t ON t.MaNgDung=b.MaNgDung WHERE b.MaHD=s.MaHD AND t.MaTK=@p2)
         OR EXISTS(SELECT 1 FROM KEHOACHTOCHUC d CROSS APPLY OPENJSON(d.CacBan) WITH(loaiBan VARCHAR(30),thanhVien NVARCHAR(MAX) AS JSON) b
           CROSS APPLY OPENJSON(b.thanhVien) WITH(maTK BIGINT) m WHERE d.MaHD=s.MaHD AND b.loaiBan='TO_CHUC' AND m.maTK=@p2))`,[seminarId,context.userId]);
-      if (!assigned.length) throw new ForbiddenException('Chỉ Ban tổ chức được phân công seminar này được thêm tài liệu');
+      if (!assigned.length) throw new ForbiddenException('Chỉ người lập hoặc Ban tổ chức được phân công seminar này được thêm tài liệu');
     }
     const rows=await this.db.query(`INSERT INTO TEPSEMINAR(MaSeminar,TenTep,UrlTep,LoaiTep) OUTPUT INSERTED.MaTep,INSERTED.TenTep,INSERTED.UrlTep,INSERTED.LoaiTep VALUES(@p1,@p2,@p3,@p4)`,[seminarId,dto.tenTep,dto.urlTep,dto.loaiTep??null]);
     if(!rows[0]) throw new NotFoundException('Không tìm thấy seminar'); return rows[0];
   }
   async reportSummary(context:SessionContext,from?:string,to?:string) {
     this.require(context,['ADMIN','CAN_BO_KHOA','CANBOKHOA','GIANG_VIEN','GIANGVIEN','PHONG_CTSV','PHONGCTSV']);
-    return this.db.query(`SELECT h.MaHD,h.TenHoatDong,h.TgDuKien,h.TrangThai,k.TenKhoa,bm.TenBM,
+    return this.db.query(`SELECT h.MaHD,h.TenHoatDong,h.TgDuKien,h.NamHoc,COALESCE(h.LoaiHoatDong,N'Khác') AS LoaiHoatDong,h.TrangThai,k.TenKhoa,bm.TenBM,
       (SELECT COUNT(*) FROM DKTHAMGIA d WHERE d.MaHD=h.MaHD AND d.TrangThai NOT IN(N'Đã hủy',N'Từ chối')) SoLuotDangKy,
       (SELECT COUNT(*) FROM DKTHAMGIA d JOIN DIEMDANH dd ON dd.MaDK=d.MaDK WHERE d.MaHD=h.MaHD AND dd.TrangThai IN(N'Đã điểm danh',N'Đã xác nhận')) SoLuotThamDu,
-      (SELECT COALESCE(SUM(c.SoTien),0) FROM CHIPHITHUCTE c WHERE c.MaHD=h.MaHD) TongChiPhi
+      (SELECT COALESCE(SUM(c.SoTien),0) FROM CHIPHITHUCTE c JOIN HOSOQUYETTOAN hs ON hs.MaHS=c.MaHS WHERE c.MaHD=h.MaHD AND hs.TrangThai=N'Đã duyệt') TongChiPhi
       FROM HOATDONGHOCTHUAT h LEFT JOIN KEHOACHHOCTHUAT p ON p.MaKeHoach=COALESCE(h.MaKeHoachKhoa,h.MaKeHoach) LEFT JOIN KHOA k ON k.MaKhoa=p.MaKhoa LEFT JOIN BOMON bm ON bm.MaBM=h.MaBM
       WHERE (@p1 IS NULL OR TRY_CONVERT(date,h.TgDuKien,23)>=@p1)
         AND (@p2 IS NULL OR TRY_CONVERT(date,h.TgDuKien,23)<DATEADD(DAY,1,@p2)) ORDER BY h.TgDuKien DESC`,[from??null,to??null]);
@@ -1879,7 +1929,7 @@ export class WorkflowService {
         COALESCE(activityBm.TenBM,ownerBm.TenBM,bm.TenBM) AS TenBM,
         COALESCE(activityBm.MaKhoa,ownerBm.MaKhoa,bm.MaKhoa,ownerCb.MaKhoa) AS MaKhoa,
         h.TenHoatDong,h.LoaiHoatDong,h.NoiDung,CONVERT(NVARCHAR(225),h.TgDuKien) AS TgDuKien,
-        h.DiaDiem,h.TienDoTH,h.DoiTuongThamDu,h.SLSVDuKien,h.TrangThai,
+        h.DiaDiem,h.TienDoTH,h.DoiTuongThamDu,h.ThanhPhanTD,h.SLSVDuKien,h.BanThamGia,h.TrangThai,
         departmentProposal.TrangThai AS TrangThaiDeXuatBoMon,
         departmentProposal.GhiChuDuyet AS GhiChuDeXuatBoMon,
         departmentPlan.TrangThai AS TrangThaiKeHoachKhoa,
@@ -1917,10 +1967,10 @@ export class WorkflowService {
     const tenHoatDong = dto.tenHoatDong.trim();
     const rows = await this.db.query(`
       INSERT INTO HOATDONGHOCTHUAT (
-        HocKy, NamHoc, CapTC, TgBatDau, TgKetThuc, MaBM, TenHoatDong, LoaiHoatDong, NoiDung, TgDuKien, DiaDiem, TienDoTH, DoiTuongThamDu, SLSVDuKien, TrangThai, NguoiLap
+        HocKy, NamHoc, CapTC, TgBatDau, TgKetThuc, MaBM, TenHoatDong, LoaiHoatDong, NoiDung, TgDuKien, DiaDiem, TienDoTH, DoiTuongThamDu, ThanhPhanTD, SLSVDuKien, BanThamGia, TrangThai, NguoiLap
       )
       OUTPUT INSERTED.*
-      VALUES (@p1, @p2, @p3, @p4, @p5, @p6, @p7, @p8, @p9, @p10, @p11, @p12, @p13, @p14, N'Dự thảo', @p15)
+      VALUES (@p1, @p2, @p3, @p4, @p5, @p6, @p7, @p8, @p9, @p10, @p11, @p12, @p13, @p14, @p15, @p16, N'Dự thảo', @p17)
     `, [
       dto.hocKy?.trim() || null,
       dto.namHoc?.trim() || null,
@@ -1935,7 +1985,9 @@ export class WorkflowService {
       dto.diaDiem?.trim() || null,
       dto.tienDoTH?.trim() || null,
       dto.doiTuongThamDu.trim(),
+      dto.thanhPhanTD?.trim() || null,
       dto.slsvDuKien?.trim() ?? '0',
+      JSON.stringify(dto.banThamGia ?? []),
       context.userId ? parseInt(context.userId, 10) : null
     ]);
     return rows[0];
@@ -1988,9 +2040,6 @@ export class WorkflowService {
           .query(`UPDATE DUTRUKINHPHI SET TongKinhPhi=(SELECT COALESCE(SUM(SoTien),0) FROM KINHPHIHOATDONG WHERE MaDuTruKP=@proposalId)
             WHERE MaDuTruKP=@proposalId`);
       }
-      await new sql.Request(transaction).input('activityId', sql.BigInt, activityId)
-        .query(`UPDATE HOATDONGHOCTHUAT SET KinhPhiDuTru=(SELECT COALESCE(SUM(SoTien),0) FROM KINHPHIHOATDONG WHERE MaHD=@activityId)
-          WHERE MaHD=@activityId`);
       await transaction.commit();
       return inserted.recordset[0];
     } catch (error) {
@@ -2019,7 +2068,18 @@ export class WorkflowService {
       LEFT JOIN DUTRUKINHPHI d ON d.MaDuTruKP = k.MaDuTruKP
       LEFT JOIN KEHOACHHOCTHUAT kh ON kh.MaKeHoach=h.MaKeHoachKhoa
       OUTER APPLY (SELECT TOP (1) p.TrangThai FROM KEHOACHCUOCTHIBOMON p WHERE p.MaHD=h.MaHD ORDER BY p.MaDeXuat DESC) departmentProposal
-      WHERE (@p1 = 1 OR h.NguoiLap = CAST(@p2 AS INT))
+      WHERE (@p1 = 1 OR h.NguoiLap = CAST(@p2 AS INT) OR EXISTS (
+        SELECT 1 FROM PHANCONGTHUCHIEN task
+        JOIN TAIKHOAN account ON account.MaNgDung=task.MaNgDung
+        JOIN KEHOACHTOCHUC assignedPlan ON assignedPlan.MaHD=task.MaHD
+        JOIN DUTRUKINHPHI approvedBudget ON approvedBudget.MaHD=task.MaHD AND approvedBudget.TrangThai=N'Đã duyệt'
+        WHERE task.MaHD=h.MaHD AND account.MaTK=CAST(@p2 AS INT)
+          AND assignedPlan.NguoiKyKhoa IS NOT NULL AND assignedPlan.NgayKyKhoa IS NOT NULL
+          AND assignedPlan.TrangThai IN (N'Đã duyệt',N'Chờ CTSV ký')
+          AND (task.NoiDung LIKE N'%kinh phí%' OR task.NoiDung LIKE N'%quyết toán%'
+            OR task.NoiDung LIKE N'%thanh toán%' OR task.NoiDung LIKE N'%chi phí%'
+            OR task.NoiDung LIKE N'%hồ sơ%')
+      ))
       ORDER BY COALESCE(d.NamHoc,h.NamHoc) DESC,h.TenHoatDong,k.MaKPHD
     `, [canViewAll ? 1 : 0, context.userId]);
   }
@@ -2057,8 +2117,15 @@ export class WorkflowService {
   async getBudgetEstimate(context: SessionContext, estimateId: number) {
     this.requireBudgetEstimateReader(context);
     const header = (await this.db.query(`
-      SELECT d.MaDuTruKP,d.TenTieuDe,d.NamHoc,d.NgayLap,d.NguoiLap,d.NguoiDuyet,d.NgayDuyet,d.TrangThai,d.TongKinhPhi,d.GhiChuDuyet
-      FROM DUTRUKINHPHI d WHERE d.MaDuTruKP=@p1
+      SELECT d.MaDuTruKP,d.TenTieuDe,d.NamHoc,d.NgayLap,d.NguoiLap,d.NguoiDuyet,d.NgayDuyet,d.TrangThai,d.TongKinhPhi,d.GhiChuDuyet,
+        COALESCE(creator.HoTen,creatorAccount.TenDangNhap,N'') AS TenNguoiLap,
+        COALESCE(reviewer.HoTen,reviewerAccount.TenDangNhap,N'') AS TenNguoiDuyet
+      FROM DUTRUKINHPHI d
+      LEFT JOIN TAIKHOAN creatorAccount ON creatorAccount.MaTK=d.NguoiLap
+      LEFT JOIN NGUOIDUNG creator ON creator.MaNgDung=creatorAccount.MaNgDung
+      LEFT JOIN TAIKHOAN reviewerAccount ON reviewerAccount.MaTK=d.NguoiDuyet
+      LEFT JOIN NGUOIDUNG reviewer ON reviewer.MaNgDung=reviewerAccount.MaNgDung
+      WHERE d.MaDuTruKP=@p1
         AND EXISTS(SELECT 1 FROM DUTRUKINHPHI_HOATDONG x WHERE x.MaDuTruKP=d.MaDuTruKP)
     `, [estimateId]))[0];
     if (!header) throw new NotFoundException('Không tìm thấy hồ sơ dự trù tổng hợp');
@@ -2072,27 +2139,102 @@ export class WorkflowService {
     return { header, lines };
   }
 
+  async listAvailableBudgetEstimateLines(context: SessionContext, estimateId: number) {
+    this.requireBudgetEstimateCreator(context);
+    const header = (await this.db.query<{ NguoiLap: number; NamHoc: string; TrangThai: string }>(
+      'SELECT NguoiLap,NamHoc,TrangThai FROM DUTRUKINHPHI WHERE MaDuTruKP=@p1 AND MaHD IS NULL', [estimateId],
+    ))[0];
+    if (!header) throw new NotFoundException('Không tìm thấy hồ sơ dự trù tổng hợp');
+    if (String(header.NguoiLap) !== String(context.userId) && !context.user.roles.some((role) => key(role) === 'ADMIN')) throw new ForbiddenException('Chỉ người lập hoặc quản trị viên được bổ sung khoản kinh phí vào hồ sơ này');
+    if (header.TrangThai !== 'Cần bổ sung') throw new BadRequestException('Chỉ hồ sơ được yêu cầu bổ sung mới chọn thêm kinh phí hoạt động');
+    const yearKey = header.NamHoc.replace(/\s+/g, '').replace(/[–—]/g, '-');
+    const normalizedYearSql = (column: string) => `REPLACE(REPLACE(REPLACE(REPLACE(REPLACE(${column},N' ',N''),NCHAR(9),N''),NCHAR(8211),N'-'),NCHAR(8212),N'-'),NCHAR(8209),N'-')`;
+    return this.db.query(`
+      SELECT line.MaKPHD,line.MaHD,line.NoiDung,line.SoLuong,line.DonViTinh,line.DonGia,line.SoTien,line.ThuyetMinh,line.NguonKinhPhi,line.GhiChu,
+        h.TenHoatDong,h.LoaiHoatDong,h.NamHoc AS NamHocHoatDong,h.SLSVDuKien AS SLSVDuKienHoatDong
+      FROM KINHPHIHOATDONG line
+      JOIN HOATDONGHOCTHUAT h ON h.MaHD=line.MaHD
+      OUTER APPLY (SELECT TOP (1) p.TrangThai FROM KEHOACHCUOCTHIBOMON p WHERE p.MaHD=h.MaHD ORDER BY p.MaDeXuat DESC) departmentProposal
+      WHERE ${normalizedYearSql('h.NamHoc')}=@p1
+        AND h.TrangThai IN(N'Chờ duyệt',N'Đã duyệt',N'Đã công bố')
+        AND (departmentProposal.TrangThai IN(N'Chờ khoa',N'Đã duyệt')
+          OR (departmentProposal.TrangThai IS NULL AND h.TrangThai IN(N'Đã duyệt',N'Đã công bố')))
+        AND NOT EXISTS(SELECT 1 FROM DUTRUKINHPHI_HOATDONG link WHERE link.MaKPHD=line.MaKPHD)
+      ORDER BY h.MaHD,line.MaKPHD
+    `, [yearKey]);
+  }
+
+  async addBudgetEstimateLines(context: SessionContext, estimateId: number, dto: AddBudgetEstimateLinesDto) {
+    this.requireBudgetEstimateCreator(context);
+    const lineIds = [...new Set(dto.maKPHDs.map(Number))];
+    if (!lineIds.length) throw new BadRequestException('Hãy chọn ít nhất một khoản kinh phí hoạt động');
+    const tx = new sql.Transaction(this.db.pool);
+    await tx.begin();
+    try {
+      const header = (await new sql.Request(tx).input('estimateId', sql.BigInt, estimateId)
+        .query<{ NguoiLap: number; NamHoc: string; TrangThai: string }>(`SELECT NguoiLap,NamHoc,TrangThai FROM DUTRUKINHPHI WITH(UPDLOCK,HOLDLOCK)
+          WHERE MaDuTruKP=@estimateId AND MaHD IS NULL`)).recordset[0];
+      if (!header) throw new NotFoundException('Không tìm thấy hồ sơ dự trù tổng hợp');
+      if (String(header.NguoiLap) !== String(context.userId) && !context.user.roles.some((role) => key(role) === 'ADMIN')) throw new ForbiddenException('Chỉ người lập hoặc quản trị viên được bổ sung khoản kinh phí vào hồ sơ này');
+      if (header.TrangThai !== 'Cần bổ sung') throw new BadRequestException('Chỉ hồ sơ được yêu cầu bổ sung mới chọn thêm kinh phí hoạt động');
+
+      const yearKey = header.NamHoc.replace(/\s+/g, '').replace(/[–—]/g, '-');
+      const normalizedYearSql = (column: string) => `REPLACE(REPLACE(REPLACE(REPLACE(REPLACE(${column},N' ',N''),NCHAR(9),N''),NCHAR(8211),N'-'),NCHAR(8212),N'-'),NCHAR(8209),N'-')`;
+      const lineParams = lineIds.map((_, index) => `@line${index}`).join(',');
+      const request = new sql.Request(tx).input('estimateId', sql.BigInt, estimateId).input('yearKey', sql.NVarChar(20), yearKey);
+      lineIds.forEach((lineId, index) => request.input(`line${index}`, sql.BigInt, lineId));
+      const inserted = await request.query(`
+        INSERT INTO DUTRUKINHPHI_HOATDONG(MaDuTruKP,MaKPHD)
+        OUTPUT INSERTED.MaKPHD
+        SELECT @estimateId,line.MaKPHD
+        FROM KINHPHIHOATDONG line
+        JOIN HOATDONGHOCTHUAT h ON h.MaHD=line.MaHD
+        OUTER APPLY (SELECT TOP (1) p.TrangThai FROM KEHOACHCUOCTHIBOMON p WHERE p.MaHD=h.MaHD ORDER BY p.MaDeXuat DESC) departmentProposal
+        WHERE line.MaKPHD IN(${lineParams})
+          AND ${normalizedYearSql('h.NamHoc')}=@yearKey
+          AND h.TrangThai IN(N'Chờ duyệt',N'Đã duyệt',N'Đã công bố')
+          AND (departmentProposal.TrangThai IN(N'Chờ khoa',N'Đã duyệt')
+            OR (departmentProposal.TrangThai IS NULL AND h.TrangThai IN(N'Đã duyệt',N'Đã công bố')))
+          AND NOT EXISTS(SELECT 1 FROM DUTRUKINHPHI_HOATDONG existing WHERE existing.MaKPHD=line.MaKPHD)
+      `);
+      if (inserted.recordset.length !== lineIds.length) throw new BadRequestException('Có khoản kinh phí đã được tổng hợp hoặc không còn đủ điều kiện bổ sung. Hãy tải lại danh sách.');
+      await new sql.Request(tx).input('estimateId', sql.BigInt, estimateId).query(`
+        UPDATE DUTRUKINHPHI SET TongKinhPhi=(
+          SELECT COALESCE(SUM(line.SoTien),0)
+          FROM DUTRUKINHPHI_HOATDONG link JOIN KINHPHIHOATDONG line ON line.MaKPHD=link.MaKPHD
+          WHERE link.MaDuTruKP=@estimateId
+        ) WHERE MaDuTruKP=@estimateId
+      `);
+      const total = (await new sql.Request(tx).input('estimateId', sql.BigInt, estimateId)
+        .query<{ TongKinhPhi: number }>('SELECT TongKinhPhi FROM DUTRUKINHPHI WHERE MaDuTruKP=@estimateId')).recordset[0];
+      await tx.commit();
+      return { success: true, soKhoanBoSung: lineIds.length, tongKinhPhi: total?.TongKinhPhi ?? 0 };
+    } catch (error) { await tx.rollback().catch(() => undefined); throw error; }
+  }
+
   async createBudgetEstimate(context: SessionContext, dto: CreateBudgetEstimateDto) {
     this.requireBudgetEstimateCreator(context);
     const year = dto.namHoc.trim();
+    const yearKey = year.replace(/\s+/g, '').replace(/[–—]/g, '-');
+    const normalizedYearSql = (column: string) => `REPLACE(REPLACE(REPLACE(REPLACE(REPLACE(${column},N' ',N''),NCHAR(9),N''),NCHAR(8211),N'-'),NCHAR(8212),N'-'),NCHAR(8209),N'-')`;
     const title = dto.tenTieuDe.trim();
     const createdAt = dto.ngayLap ? new Date(`${dto.ngayLap}T00:00:00.000Z`) : new Date();
     if (!year || !title) throw new BadRequestException('Cần nhập tên hồ sơ và năm học');
     const tx = new sql.Transaction(this.db.pool);
     await tx.begin();
     try {
-      const existing = (await new sql.Request(tx).input('year', sql.NVarChar(20), year)
+      const existing = (await new sql.Request(tx).input('yearKey', sql.NVarChar(20), yearKey)
         .query(`SELECT TOP(1) d.MaDuTruKP FROM DUTRUKINHPHI d WITH(UPDLOCK,HOLDLOCK)
           JOIN DUTRUKINHPHI_HOATDONG link ON link.MaDuTruKP=d.MaDuTruKP
-          WHERE d.NamHoc=@year AND d.TrangThai IN(N'Dự thảo',N'Chờ duyệt',N'Cần bổ sung',N'Đã duyệt',N'Từ chối')`)).recordset[0];
+          WHERE ${normalizedYearSql('d.NamHoc')}=@yearKey AND d.TrangThai IN(N'Dự thảo',N'Chờ duyệt',N'Cần bổ sung',N'Đã duyệt',N'Từ chối')`)).recordset[0];
       if (existing) throw new ConflictException(`Năm học ${year} đã có hồ sơ dự trù tổng hợp. Hãy mở hồ sơ đó để gửi hoặc xem trạng thái.`);
-      const eligible = (await new sql.Request(tx).input('year', sql.NVarChar(20), year)
+      const eligible = (await new sql.Request(tx).input('yearKey', sql.NVarChar(20), yearKey)
         .query<{ SoKhoan: number; TongKinhPhi: number }>(`
           SELECT COUNT(*) AS SoKhoan,COALESCE(SUM(line.SoTien),0) AS TongKinhPhi
           FROM KINHPHIHOATDONG line WITH(UPDLOCK,HOLDLOCK)
           JOIN HOATDONGHOCTHUAT h ON h.MaHD=line.MaHD
           OUTER APPLY (SELECT TOP (1) p.TrangThai FROM KEHOACHCUOCTHIBOMON p WHERE p.MaHD=h.MaHD ORDER BY p.MaDeXuat DESC) departmentProposal
-          WHERE h.NamHoc=@year
+          WHERE ${normalizedYearSql('h.NamHoc')}=@yearKey
             AND h.TrangThai IN(N'Chờ duyệt',N'Đã duyệt',N'Đã công bố')
             AND (departmentProposal.TrangThai IN(N'Chờ khoa',N'Đã duyệt')
               OR (departmentProposal.TrangThai IS NULL AND h.TrangThai IN(N'Đã duyệt',N'Đã công bố')))
@@ -2105,13 +2247,13 @@ export class WorkflowService {
         .input('total', sql.Decimal(18, 2), eligible.TongKinhPhi).input('owner', sql.BigInt, Number(context.userId))
         .query<{ MaDuTruKP: number }>(`INSERT INTO DUTRUKINHPHI(MaHD,TenTieuDe,NamHoc,NgayLap,TongKinhPhi,NguoiLap,TrangThai)
           OUTPUT INSERTED.MaDuTruKP VALUES(NULL,@title,@year,@createdAt,@total,@owner,N'Dự thảo')`)).recordset[0];
-      await new sql.Request(tx).input('estimateId', sql.BigInt, header.MaDuTruKP).input('year', sql.NVarChar(20), year)
+      await new sql.Request(tx).input('estimateId', sql.BigInt, header.MaDuTruKP).input('yearKey', sql.NVarChar(20), yearKey)
         .query(`INSERT INTO DUTRUKINHPHI_HOATDONG(MaDuTruKP,MaKPHD)
           SELECT @estimateId,line.MaKPHD
           FROM KINHPHIHOATDONG line
           JOIN HOATDONGHOCTHUAT h ON h.MaHD=line.MaHD
           OUTER APPLY (SELECT TOP (1) p.TrangThai FROM KEHOACHCUOCTHIBOMON p WHERE p.MaHD=h.MaHD ORDER BY p.MaDeXuat DESC) departmentProposal
-          WHERE h.NamHoc=@year
+          WHERE ${normalizedYearSql('h.NamHoc')}=@yearKey
             AND h.TrangThai IN(N'Chờ duyệt',N'Đã duyệt',N'Đã công bố')
             AND (departmentProposal.TrangThai IN(N'Chờ khoa',N'Đã duyệt')
               OR (departmentProposal.TrangThai IS NULL AND h.TrangThai IN(N'Đã duyệt',N'Đã công bố')))
@@ -2126,9 +2268,10 @@ export class WorkflowService {
     const rows = await this.db.query(`UPDATE d SET TrangThai=N'Chờ duyệt',NguoiDuyet=NULL,NgayDuyet=NULL,GhiChuDuyet=NULL
       OUTPUT INSERTED.MaDuTruKP,INSERTED.TenTieuDe,INSERTED.NamHoc,INSERTED.TrangThai
       FROM DUTRUKINHPHI d WHERE d.MaDuTruKP=@p1 AND d.MaHD IS NULL
+        AND d.NguoiLap=@p2
         AND d.TrangThai IN(N'Dự thảo',N'Cần bổ sung',N'Từ chối')
-        AND EXISTS(SELECT 1 FROM DUTRUKINHPHI_HOATDONG link WHERE link.MaDuTruKP=d.MaDuTruKP)`, [estimateId]);
-    if (!rows[0]) throw new BadRequestException('Chỉ hồ sơ dự trù tổng hợp ở trạng thái nháp, cần bổ sung hoặc từ chối mới được gửi');
+        AND EXISTS(SELECT 1 FROM DUTRUKINHPHI_HOATDONG link WHERE link.MaDuTruKP=d.MaDuTruKP)`, [estimateId, context.userId]);
+    if (!rows[0]) throw new BadRequestException('Chỉ người lập được gửi lại hồ sơ dự trù ở trạng thái nháp, cần bổ sung hoặc từ chối');
     return rows[0];
   }
 
@@ -2141,8 +2284,14 @@ export class WorkflowService {
         AND EXISTS(SELECT 1 FROM DUTRUKINHPHI_HOATDONG link WHERE link.MaDuTruKP=d.MaDuTruKP)`,
       [status, context.userId, dto.ghiChu?.trim() || null, estimateId]);
     if (!rows[0]) throw new NotFoundException('Không tìm thấy hồ sơ dự trù tổng hợp đang chờ duyệt');
-    await this.db.query(`INSERT INTO THONGBAO(MaTK,MaHD,Loai,TieuDe,NoiDung)
-      VALUES(@p1,NULL,N'Dự trù kinh phí',@p2,@p3)`, [rows[0].NguoiLap, `Hồ sơ dự trù ${status.toLowerCase()}`, dto.ghiChu?.trim() || `Hồ sơ “${rows[0].TenTieuDe}” đã được ${status.toLowerCase()}.`]);
+    if (rows[0].NguoiLap) {
+      try {
+        await this.db.query(`INSERT INTO THONGBAO(MaTK,MaHD,Loai,TieuDe,NoiDung)
+          VALUES(@p1,NULL,N'Dự trù kinh phí',@p2,@p3)`, [rows[0].NguoiLap, `Hồ sơ dự trù ${status.toLowerCase()}`, dto.ghiChu?.trim() || `Hồ sơ “${rows[0].TenTieuDe}” đã được ${status.toLowerCase()}.`]);
+      } catch (error) {
+        console.error('Không gửi được thông báo kết quả duyệt hồ sơ dự trù:', error);
+      }
+    }
     return rows[0];
   }
 
@@ -2158,7 +2307,6 @@ export class WorkflowService {
     await this.db.query(`UPDATE KINHPHIHOATDONG SET NoiDung=@p1,SoLuong=@p2,DonViTinh=@p3,DonGia=@p4,SoTien=@p5,ThuyetMinh=@p6,NguonKinhPhi=@p7,GhiChu=@p8,TrangThai=N'Dự thảo' WHERE MaKPHD=@p9`, [dto.noiDung.trim(),dto.soLuong??null,dto.donViTinh?.trim()||null,dto.donGia??null,dto.soTien,dto.thuyetMinh?.trim()||null,dto.nguonKinhPhi?.trim()||'Kinh phí học thuật',dto.ghiChu?.trim()||null,lineId]);
     await this.refreshActivityBudgetSummary(line.MaHD);
     if (line.MaDuTruKP) await this.db.query(`UPDATE DUTRUKINHPHI SET TrangThai=N'Dự thảo',NguoiDuyet=NULL,NgayDuyet=NULL,GhiChuDuyet=NULL,TongKinhPhi=(SELECT COALESCE(SUM(SoTien),0) FROM KINHPHIHOATDONG WHERE MaDuTruKP=@p1) WHERE MaDuTruKP=@p1`, [line.MaDuTruKP]);
-    await this.db.query(`UPDATE HOATDONGHOCTHUAT SET KinhPhiDuTru=(SELECT COALESCE(SUM(SoTien),0) FROM KINHPHIHOATDONG WHERE MaHD=@p1) WHERE MaHD=@p1`, [line.MaHD]);
     return {updated:true,maKPHD:lineId};
   }
 
@@ -2180,8 +2328,6 @@ export class WorkflowService {
       await this.db.query(`UPDATE DUTRUKINHPHI SET TrangThai=N'Dự thảo',NguoiDuyet=NULL,NgayDuyet=NULL,GhiChuDuyet=NULL,
         TongKinhPhi=(SELECT COALESCE(SUM(SoTien),0) FROM KINHPHIHOATDONG WHERE MaDuTruKP=@p1) WHERE MaDuTruKP=@p1`, [line.MaDuTruKP]);
     }
-    await this.db.query(`UPDATE HOATDONGHOCTHUAT SET KinhPhiDuTru=(SELECT COALESCE(SUM(SoTien),0) FROM KINHPHIHOATDONG WHERE MaHD=@p1)
-      WHERE MaHD=@p1`, [line.MaHD]);
     return {deleted:true,maKPHD:lineId};
   }
 
@@ -2192,7 +2338,6 @@ export class WorkflowService {
     if (String(proposal.NguoiLap)!==String(context.userId)) throw new ForbiddenException('Chỉ người lập hoạt động được xóa hồ sơ dự trù');
     if (!['Dự thảo','Từ chối'].includes(proposal.ActivityStatus) || !['Dự thảo','Từ chối'].includes(proposal.BudgetStatus)) throw new BadRequestException('Chỉ được xóa dự trù còn ở trạng thái dự thảo hoặc bị từ chối');
     await this.db.query('DELETE FROM DUTRUKINHPHI WHERE MaDuTruKP=@p1',[proposalId]);
-    await this.db.query(`UPDATE HOATDONGHOCTHUAT SET KinhPhiDuTru=(SELECT COALESCE(SUM(SoTien),0) FROM KINHPHIHOATDONG WHERE MaHD=@p1) WHERE MaHD=@p1`,[proposal.MaHD]);
     return {deleted:true,maDuTruKP:proposalId};
   }
 
@@ -2240,7 +2385,7 @@ export class WorkflowService {
       const event=JSON.stringify({action:'submit',userId:context.userId,at:new Date().toISOString(),maDuTruKP:proposal.MaDuTruKP});
       const rows=await new sql.Request(tx).input('activityId',sql.BigInt,activityId).input('account',sql.BigInt,context.userId)
         .input('total',sql.Decimal(18,2),totals.TongKinhPhi).input('event',sql.NVarChar(sql.MAX),event)
-        .query(`UPDATE HOATDONGHOCTHUAT SET TrangThai=N'Chờ Trưởng bộ môn',KinhPhiDuTru=@total,NguoiDuyetDeXuat=NULL,NgayDuyetDeXuat=NULL,
+        .query(`UPDATE HOATDONGHOCTHUAT SET TrangThai=N'Chờ Trưởng bộ môn',NguoiDuyetDeXuat=NULL,NgayDuyetDeXuat=NULL,
           LichSuDuyetDeXuat=JSON_MODIFY(COALESCE(LichSuDuyetDeXuat,N'[]'),'append $',JSON_QUERY(@event))
           OUTPUT INSERTED.MaHD,INSERTED.TrangThai WHERE MaHD=@activityId AND NguoiLap=@account AND TrangThai IN(N'Dự thảo',N'Từ chối')`);
       if(!rows.recordset[0]) throw new ConflictException('Đề xuất vừa thay đổi');
@@ -2297,9 +2442,11 @@ export class WorkflowService {
         DiaDiem = @p11,
         TienDoTH = @p12,
         DoiTuongThamDu = COALESCE(@p13, DoiTuongThamDu),
-        SLSVDuKien = COALESCE(@p14, SLSVDuKien),
-        TrangThai = COALESCE(@p15, TrangThai)
-      WHERE MaHD = @p16 AND NguoiLap = @p17
+        ThanhPhanTD = COALESCE(@p14, ThanhPhanTD),
+        SLSVDuKien = COALESCE(@p15, SLSVDuKien),
+        BanThamGia = COALESCE(@p16, BanThamGia),
+        TrangThai = COALESCE(@p17, TrangThai)
+      WHERE MaHD = @p18 AND NguoiLap = @p19
     `, [
       dto.hocKy?.trim() || null,
       dto.namHoc?.trim() || null,
@@ -2314,7 +2461,9 @@ export class WorkflowService {
       dto.diaDiem !== undefined ? (dto.diaDiem ? dto.diaDiem.trim() : null) : null,
       dto.tienDoTH !== undefined ? (dto.tienDoTH ? dto.tienDoTH.trim() : null) : null,
       dto.doiTuongThamDu ? dto.doiTuongThamDu.trim() : null,
+      dto.thanhPhanTD !== undefined ? dto.thanhPhanTD.trim() || null : null,
       dto.slsvDuKien !== undefined ? dto.slsvDuKien.trim() : null,
+      dto.banThamGia !== undefined ? JSON.stringify(dto.banThamGia) : null,
       dto.trangThai || null,
       id,
       context.userId

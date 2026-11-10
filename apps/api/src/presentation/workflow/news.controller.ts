@@ -20,6 +20,10 @@ export class NewsController {
   constructor(@Inject(NewsService) private readonly service: NewsService) {}
   @Get() list(@Req() request: AuthRequest) { return this.service.list(request.auth!); }
   @Get('activities') activities(@Req() request: AuthRequest) { return this.service.activities(request.auth!); }
+  @Get('activities/:activityId/announcement')
+  latestPublishedAnnouncement(@Param('activityId', ParseIntPipe) activityId: number) {
+    return this.service.latestPublishedAnnouncement(activityId);
+  }
   @Post() create(@Req() request: AuthRequest, @Body() dto: NewsDto) { return this.service.save(request.auth!, dto); }
   @Put(':id') update(@Req() request: AuthRequest, @Param('id', ParseIntPipe) id: number, @Body() dto: NewsDto) { return this.service.save(request.auth!, dto, id); }
   @Patch(':id/status') status(@Req() request: AuthRequest, @Param('id', ParseIntPipe) id: number, @Body() dto: NewsStatusDto) { return this.service.status(request.auth!, id, dto.trangThai); }

@@ -3,7 +3,7 @@ import sql from 'mssql';
 import { DatabaseService } from '../../data/database.service';
 import type { SessionContext } from '../auth/auth.types';
 import type { ReviewDetailedPlanDto, SaveDetailedPlanDto } from '../../presentation/detailed-plans/detailed-plans.dto';
-import { readPlanCommittees, validatePlanCommittees } from './plan-committees';
+import { mergeLegacyJudgeCommittee, readPlanCommittees, validatePlanCommittees } from './plan-committees';
 
 const normalize = (value: string) => value.normalize('NFD').replace(/[\u0300-\u036f]/g, '').toUpperCase().replace(/[^A-Z0-9]/g, '');
 const readerRoles = ['ADMIN','GIANGVIEN','TRUONGBOMON','CANBOKHOA','TRUONGKHOA','PHONGCTSV','PHONGKHCN','HIEUTRUONG','BANTOCHUC'];
@@ -56,7 +56,7 @@ type ReviewAction = ReviewDetailedPlanDto['action'];
 type Faculty = { MaKhoa: number; TenKhoa: string };
 type DetailedPlan = {
   MaHD: number; TenHoatDong: string; LoaiHoatDong: string; NamHoc: string | null;
-  MaBM: number | null; TenBM: string | null; MaKhoa: number; MaKeHoach: number; TenKeHoachNam: string;
+  MaBM: number | null; TenBM: string | null; MaKhoa: number; MaKeHoach: number; TenKeHoachNam: string; SoKeHoach: string | null;
   TrangThaiHoatDong: string; NoiDungHoatDong: string | null; DoiTuongThamDu: string | null; SLSVDuKien: number | null;
   MaKHToChuc: number | null; TenKeHoach: string | null; NoiDung: string | null; TheLe: string | null; TieuChiCham: string | null;
   HinhThucThi: string | null; ThoiGianBatDau: Date | null; ThoiGianKetThuc: Date | null; HanDangKy: Date | null;
@@ -65,6 +65,14 @@ type DetailedPlan = {
   LichSuDuyet: string | null; CongBoLuc: Date | null; MaCThi: number | null; MaSeminar: number | null;
   TongDuToan: number; TrangThaiDuTru: string | null; CacBan: string | null;
 };
+
+function effectiveDetailedPlanStatus(row: Pick<DetailedPlan, 'TrangThai' | 'NguoiKyKhoa' | 'NgayKyKhoa' | 'NguoiKyCTSV' | 'NgayKyCTSV' | 'CongBoLuc'>) {
+  const facultySigned = Boolean(row.NguoiKyKhoa && row.NgayKyKhoa);
+  const studentAffairsSigned = Boolean(row.NguoiKyCTSV && row.NgayKyCTSV);
+  if (facultySigned && !studentAffairsSigned && !row.CongBoLuc) return 'Chờ CTSV ký';
+  if (facultySigned && studentAffairsSigned) return 'Đã duyệt';
+  return row.TrangThai;
+}
 
 export function detailedPlanReviewStage(status: string, roles: string[], action: ReviewAction) {
   const roleKeys = roles.map(normalize);
@@ -77,7 +85,7 @@ export function detailedPlanReviewStage(status: string, roles: string[], action:
   if (!['approve','request_changes','reject'].includes(action)) throw new BadRequestException('Thao tác duyệt không hợp lệ');
   return {
     stage,
-    status: action === 'approve' ? (status === 'Chờ khoa xét duyệt' ? 'Đã duyệt' : (stage === 'faculty' ? 'Chờ CTSV ký' : 'Đã duyệt')) : action === 'request_changes' ? 'Cần bổ sung' : 'Từ chối',
+    status: action === 'approve' ? 'Đã duyệt' : action === 'request_changes' ? 'Cần bổ sung' : 'Từ chối',
   };
 }
 
@@ -155,17 +163,17 @@ export class DetailedPlansService {
       h.TrangThai AS TrangThaiHoatDong,h.NoiDung AS NoiDungHoatDong,h.DoiTuongThamDu,
       TRY_CONVERT(INT,NULLIF(h.SLSVDuKien,N'')) AS SLSVDuKien,
       d.MaKHToChuc,d.TenKeHoach,d.NoiDung,d.TheLe,d.TieuChiCham,d.HinhThucThi,
-      d.ThoiGianBatDau,d.ThoiGianKetThuc,d.HanDangKy,d.DiaDiem,d.DiemRenLuyen,d.TrangThai,d.NguoiLap,d.CacBan,
+      d.ThoiGianBatDau,d.ThoiGianKetThuc,d.HanDangKy,d.DiaDiem,COALESCE(d.DiemRenLuyen,s.DiemRenLuyenDeXuat) AS DiemRenLuyen,d.TrangThai,d.NguoiLap,d.CacBan,
       d.NguoiKyKhoa,d.NgayKyKhoa,d.NguoiKyCTSV,d.NgayKyCTSV,d.LichSuDuyet,d.CongBoLuc,
-      c.MaCThi,s.MaSeminar,COALESCE(budget.TongKinhPhi,0) AS TongDuToan,budget.TrangThai AS TrangThaiDuTru
+      c.MaCThi,s.MaSeminar,COALESCE(s.SoKeHoach,c.SoKeHoach) AS SoKeHoach,COALESCE(budget.TongKinhPhi,0) AS TongDuToan,budget.TrangThai AS TrangThaiDuTru
       FROM HOATDONGHOCTHUAT h ${hint}
       JOIN KEHOACHHOCTHUAT p ${hint} ON p.MaKeHoach=COALESCE(h.MaKeHoachKhoa,h.MaKeHoach)
       LEFT JOIN TAIKHOAN owner ON owner.MaTK=h.NguoiLap
       LEFT JOIN GIANGVIEN gv ON gv.MaNgDung=owner.MaNgDung
       LEFT JOIN BOMON bm ON bm.MaBM=COALESCE(h.MaBM,gv.MaBM)
       LEFT JOIN KEHOACHTOCHUC d ${hint} ON d.MaHD=h.MaHD
-      OUTER APPLY(SELECT TOP(1) MaCThi FROM CUOCTHI WHERE MaHD=h.MaHD ORDER BY MaCThi) c
-      OUTER APPLY(SELECT TOP(1) MaSeminar FROM SEMINAR WHERE MaHD=h.MaHD ORDER BY MaSeminar) s
+      OUTER APPLY(SELECT TOP(1) MaCThi,SoKeHoach FROM CUOCTHI WHERE MaHD=h.MaHD ORDER BY MaCThi) c
+      OUTER APPLY(SELECT TOP(1) MaSeminar,SoKeHoach,DiemRenLuyenDeXuat FROM SEMINAR WHERE MaHD=h.MaHD ORDER BY MaSeminar) s
       OUTER APPLY(SELECT TOP(1) TongKinhPhi,TrangThai FROM DUTRUKINHPHI WHERE MaHD=h.MaHD ORDER BY MaDuTruKP DESC) budget
       WHERE p.MaKhoa=@p1 AND p.TrangThai=N'Đã duyệt' AND p.LoaiKeHoach IN(N'KHOA',N'Khoa')
         AND h.TrangThai IN(N'Đã duyệt',N'Đã công bố')`;
@@ -220,7 +228,7 @@ export class DetailedPlansService {
         d.MaKHToChuc,d.TenKeHoach,d.NoiDung,d.TheLe,d.TieuChiCham,d.HinhThucThi,
         d.ThoiGianBatDau,d.ThoiGianKetThuc,d.HanDangKy,d.DiaDiem,d.DiemRenLuyen,d.TrangThai,d.NguoiLap,d.CacBan,
         d.NguoiKyKhoa,d.NgayKyKhoa,d.NguoiKyCTSV,d.NgayKyCTSV,d.LichSuDuyet,d.CongBoLuc,
-        c.MaCThi,s.MaSeminar,COALESCE(budget.TongKinhPhi,0) AS TongDuToan,budget.TrangThai AS TrangThaiDuTru,
+        c.MaCThi,s.MaSeminar,COALESCE(s.SoKeHoach,c.SoKeHoach) AS SoKeHoach,COALESCE(budget.TongKinhPhi,0) AS TongDuToan,budget.TrangThai AS TrangThaiDuTru,
         CASE WHEN @p2 = 1
           OR COALESCE(h.MaBM, gv.MaBM) IN (
             SELECT gv0.MaBM FROM GIANGVIEN gv0 JOIN TAIKHOAN t0 ON t0.MaNgDung=gv0.MaNgDung WHERE t0.MaTK=@p3 AND gv0.MaBM IS NOT NULL
@@ -245,15 +253,15 @@ export class DetailedPlansService {
         LEFT JOIN GIANGVIEN gv ON gv.MaNgDung=owner.MaNgDung
         LEFT JOIN BOMON bm ON bm.MaBM=COALESCE(h.MaBM,gv.MaBM)
         LEFT JOIN KEHOACHTOCHUC d ON d.MaHD=h.MaHD
-        OUTER APPLY(SELECT TOP(1) MaCThi FROM CUOCTHI WHERE MaHD=h.MaHD ORDER BY MaCThi) c
-        OUTER APPLY(SELECT TOP(1) MaSeminar FROM SEMINAR WHERE MaHD=h.MaHD ORDER BY MaSeminar) s
+        OUTER APPLY(SELECT TOP(1) MaCThi,SoKeHoach FROM CUOCTHI WHERE MaHD=h.MaHD ORDER BY MaCThi) c
+        OUTER APPLY(SELECT TOP(1) MaSeminar,SoKeHoach FROM SEMINAR WHERE MaHD=h.MaHD ORDER BY MaSeminar) s
         OUTER APPLY(SELECT TOP(1) TongKinhPhi,TrangThai FROM DUTRUKINHPHI WHERE MaHD=h.MaHD ORDER BY MaDuTruKP DESC) budget
         WHERE p.MaKhoa=@p1 AND p.TrangThai=N'Đã duyệt' AND p.LoaiKeHoach IN(N'KHOA',N'Khoa')
           AND h.TrangThai IN(N'Đã duyệt',N'Đã công bố')
         ORDER BY h.NamHoc DESC,h.MaHD DESC`,
       [faculty.MaKhoa, isFacultyWide ? 1 : 0, context.userId],
     );
-    return rows.map((r) => ({ ...r, canManage: Boolean(r.canManage) }));
+    return rows.map((r) => ({ ...r, TrangThai: effectiveDetailedPlanStatus(r), canManage: Boolean(r.canManage) }));
   }
   async get(context: SessionContext, activityId: number) {
     this.requireRole(context, readerRoles);
@@ -384,6 +392,7 @@ export class DetailedPlansService {
 
     return {
       ...row,
+      TrangThai: effectiveDetailedPlanStatus(row),
       cacBan,
       noiDungThucHien,
       staff,
@@ -593,22 +602,37 @@ export class DetailedPlansService {
         }
       }
       if (isCompetition || dto.tenCuocThi || dto.vongThi) {
-        const cthiSoKeHoach = dto.soKeHoach?.trim() || `KH-CT-${activityId}/${new Date().getFullYear()}`;
-        const cthiTen = dto.tenCuocThi?.trim() || dto.tenKeHoach?.trim() || dates.name;
-        const cthiVongThi = dto.vongThi?.trim() || null;
-        const cthiCanCu = dto.canCu?.trim() || null;
-        const cthiMucDich = dto.mucDich?.trim() || null;
-        const cthiYeuCau = dto.yeuCau?.trim() || null;
-        const cthiThoiGian = dto.thoiGian?.trim() || (dates.start ? dates.start.toISOString() : null);
-        const cthiDiaDiem = dto.diaDiem?.trim() || row.DiaDiem || null;
-        const cthiDoiTuongTG = dto.doiTuongTG?.trim() || row.DoiTuongThamDu || null;
-        const cthiSlsv = dto.slsvDuKien ?? (row.SLSVDuKien ? Number(row.SLSVDuKien) : null);
-        const cthiCapTC = dto.capToChuc?.trim() || 'Cấp Khoa';
-        const cthiTheLe = dto.theLe?.trim() || row.TheLe || null;
-        const cthiTieuChiCham = dto.tieuChiCham?.trim() || row.TieuChiCham || null;
-        const cthiHinhThuc = dto.hinhThucThi || row.HinhThucThi || 'Cá nhân';
-        const cthiDsBanGiamKhao = dto.dsBanGiamKhao?.trim() || null;
-        const cthiGiaiThuong = dto.giaiThuong?.trim() || null;
+        const existingCthiRows = await this.query<Record<string, unknown>>(
+          'SELECT * FROM CUOCTHI WHERE MaHD=@p1', [activityId], transaction,
+        );
+        const existingCthi = existingCthiRows[0];
+        const currentText = (column: string) => {
+          const value = existingCthi?.[column];
+          return value == null ? null : String(value);
+        };
+        const textField = (input: string | undefined, column: string, fallback: string | null = null) =>
+          input !== undefined ? (input.trim() || null) : (currentText(column) ?? fallback);
+        const cthiNameInput = dto.tenCuocThi !== undefined ? dto.tenCuocThi : dto.tenKeHoach;
+        const cthiSoKeHoach = textField(dto.soKeHoach, 'SoKeHoach', `KH-CT-${activityId}/${new Date().getFullYear()}`)!;
+        const cthiTen = textField(cthiNameInput, 'TenCuocThi', dates.name)!;
+        const cthiVongThi = textField(dto.vongThi, 'VongThi');
+        const cthiCanCu = textField(dto.canCu, 'CanCu');
+        const cthiMucDich = textField(dto.mucDich, 'MucDich', row.NoiDung || null);
+        const cthiYeuCau = textField(dto.yeuCau, 'YeuCau');
+        const cthiThoiGian = textField(dto.thoiGian, 'ThoiGian', dates.start ? dates.start.toISOString() : null);
+        const cthiDiaDiem = textField(dto.diaDiem, 'DiaDiem', row.DiaDiem || null);
+        const cthiDoiTuongTG = textField(dto.doiTuongTG, 'DoiTuongTG', row.DoiTuongThamDu || null);
+        const cthiSlsv = dto.slsvDuKien !== undefined
+          ? dto.slsvDuKien
+          : (existingCthi?.SLSVDuKien != null ? Number(existingCthi.SLSVDuKien) : (row.SLSVDuKien ? Number(row.SLSVDuKien) : null));
+        const cthiCapTC = textField(dto.capToChuc, 'CapToChuc', 'Cấp Khoa')!;
+        const cthiTheLe = textField(dto.theLe, 'TheLe', row.TheLe || null);
+        const cthiTieuChiCham = textField(dto.tieuChiCham, 'TieuChiCham', row.TieuChiCham || null);
+        const cthiHinhThuc = dto.hinhThucThi !== undefined
+          ? dto.hinhThucThi
+          : (currentText('HinhThucThi') ?? row.HinhThucThi ?? 'Cá nhân');
+        const cthiDsBanGiamKhao = textField(dto.dsBanGiamKhao, 'DSBanGiamKhao');
+        const cthiGiaiThuong = textField(dto.giaiThuong, 'GiaiThuong');
 
         await this.query(`
           IF EXISTS (SELECT 1 FROM CUOCTHI WHERE MaHD = @p1)
@@ -666,7 +690,15 @@ export class DetailedPlansService {
         throw new BadRequestException('Kế hoạch đang ở trạng thái Chờ phân công thực hiện. Vui lòng hoàn tất phân công thực hiện trước khi trình khoa xét duyệt.');
       }
       this.assertEditable(row);
-      validatePlanCommittees(readPlanCommittees(row.CacBan), (await this.staff(faculty.MaKhoa, transaction)).map(staff => Number(staff.MaTK)), true, row.LoaiHoatDong === 'Cuộc thi');
+      const planStaff = await this.staff(faculty.MaKhoa, transaction);
+      const committees = readPlanCommittees(row.CacBan);
+      const legacyJudges = row.LoaiHoatDong === 'Cuộc thi'
+        ? (await this.query<{ DSBanGiamKhao: string | null }>('SELECT DSBanGiamKhao FROM CUOCTHI WHERE MaHD=@p1', [activityId], transaction))[0]?.DSBanGiamKhao
+        : null;
+      validatePlanCommittees(
+        mergeLegacyJudgeCommittee(committees, legacyJudges, planStaff.map(person => ({ MaTK: Number(person.MaTK), HoTen: person.HoTen }))),
+        planStaff.map(person => Number(person.MaTK)), true, row.LoaiHoatDong === 'Cuộc thi',
+      );
       const event = JSON.stringify({action:'submit',userId:context.userId,at:new Date().toISOString()});
       const changed = await this.query<{ MaHD: number }>(`UPDATE KEHOACHTOCHUC SET TrangThai=N'Chờ khoa xét duyệt',
         NguoiKyKhoa=NULL,NgayKyKhoa=NULL,NguoiKyCTSV=NULL,NgayKyCTSV=NULL,
@@ -710,19 +742,20 @@ export class DetailedPlansService {
         throw new BadRequestException('Kế hoạch đang ở trạng thái Chờ phân công thực hiện. Vui lòng hoàn tất phân công thực hiện trước khi trình khoa xét duyệt.');
       }
       if (row.CongBoLuc || row.TrangThaiHoatDong === 'Đã công bố') throw new BadRequestException('Không thể thay đổi kế hoạch đã công bố');
-      const next = detailedPlanReviewStage(row.TrangThai ?? '', context.user.roles, dto.action);
+      const next = detailedPlanReviewStage(effectiveDetailedPlanStatus(row) ?? '', context.user.roles, dto.action);
       if (next.stage === 'faculty' && !this.hasRole(context, ['ADMIN'])) {
         const scoped = await this.query<{ ok: number }>(`SELECT TOP(1) 1 AS ok FROM TAIKHOAN t
           JOIN CANBOKHOA cb ON cb.MaNgDung=t.MaNgDung WHERE t.MaTK=@p1 AND cb.MaKhoa=@p2`, [context.userId,faculty.MaKhoa], transaction);
         if (!scoped.length) throw new ForbiddenException('Trưởng khoa chỉ được ký kế hoạch của khoa mình');
       }
       if (next.stage === 'student-affairs' && (!row.NguoiKyKhoa || !row.NgayKyKhoa)) throw new BadRequestException('Kế hoạch chưa có chữ ký của Trưởng khoa');
-      const event = JSON.stringify({action:dto.action,stage:next.stage,userId:context.userId,roles:context.user.roles,note:dto.ghiChu?.trim() || null,signed:dto.action==='approve',at:new Date().toISOString()});
+      const autoApprovedStudentAffairs = dto.action === 'approve' && next.stage === 'faculty';
+      const event = JSON.stringify({action:dto.action,stage:next.stage,autoApprovedStages:autoApprovedStudentAffairs?['student-affairs']:[],userId:context.userId,roles:context.user.roles,note:dto.ghiChu?.trim() || null,signed:dto.action==='approve',at:new Date().toISOString()});
       const changed = await this.query<{ MaHD: number }>(`UPDATE KEHOACHTOCHUC SET TrangThai=@p2,
         NguoiKyKhoa=CASE WHEN @p5<>N'approve' THEN NULL WHEN @p6=N'faculty' THEN @p3 ELSE NguoiKyKhoa END,
         NgayKyKhoa=CASE WHEN @p5<>N'approve' THEN NULL WHEN @p6=N'faculty' THEN SYSDATETIMEOFFSET() ELSE NgayKyKhoa END,
-        NguoiKyCTSV=CASE WHEN @p5=N'approve' AND @p6=N'student-affairs' THEN @p3 ELSE NULL END,
-        NgayKyCTSV=CASE WHEN @p5=N'approve' AND @p6=N'student-affairs' THEN SYSDATETIMEOFFSET() ELSE NULL END,
+        NguoiKyCTSV=CASE WHEN @p5=N'approve' AND (@p6=N'student-affairs' OR @p6=N'faculty') THEN @p3 ELSE NULL END,
+        NgayKyCTSV=CASE WHEN @p5=N'approve' AND (@p6=N'student-affairs' OR @p6=N'faculty') THEN SYSDATETIMEOFFSET() ELSE NULL END,
         LichSuDuyet=JSON_MODIFY(LichSuDuyet,'append $',JSON_QUERY(@p4)) OUTPUT INSERTED.MaHD
         WHERE MaHD=@p1 AND TrangThai=@p7 AND CongBoLuc IS NULL`, [activityId,next.status,Number(context.userId),event,dto.action,next.stage,row.TrangThai], transaction);
       if (!changed.length) throw new ConflictException('Bước ký vừa thay đổi, hãy tải lại');
@@ -753,9 +786,9 @@ export class DetailedPlansService {
           UNION ALL SELECT TOP(1) 1 AS ok FROM PHANCONGTHUCHIEN p JOIN TAIKHOAN t ON t.MaNgDung=p.MaNgDung WHERE p.MaHD=@p1 AND p.LoaiBan='TO_CHUC' AND t.MaTK=@p2`, [activityId,context.userId], transaction);
         if (!organizers.length) throw new ForbiddenException('Chỉ Ban tổ chức được phân công hoạt động này mới được công bố');
       }
-      if (row.TrangThai !== 'Đã duyệt' || !row.NguoiKyKhoa || !row.NgayKyKhoa) {
-        throw new BadRequestException('Kế hoạch chi tiết phải được khoa duyệt trước khi công bố');
-      }
+      if (!row.NguoiKyKhoa || !row.NgayKyKhoa) throw new BadRequestException('Kế hoạch chi tiết phải được Trưởng khoa ký duyệt trước khi công bố');
+      if (!row.NguoiKyCTSV || !row.NgayKyCTSV) throw new BadRequestException('Kế hoạch chi tiết phải được Phòng CTSV ký duyệt trước khi công bố');
+      if (effectiveDetailedPlanStatus(row) !== 'Đã duyệt') throw new BadRequestException('Kế hoạch chi tiết chưa hoàn tất quy trình ký duyệt');
       if (row.TrangThaiDuTru !== 'Đã duyệt') throw new BadRequestException('Dự trù kinh phí của hoạt động chưa được khoa duyệt');
       if (row.CongBoLuc && row.TrangThaiHoatDong === 'Đã công bố') return;
       if (row.TrangThaiHoatDong !== 'Đã duyệt') throw new BadRequestException('Hoạt động chưa được khoa duyệt');
@@ -770,13 +803,13 @@ export class DetailedPlansService {
             ThoiGian=@p7,DiaDiem=@p10,DoiTuongTG=@p12,SLSVDuKien=@p11 WHERE MaHD=@p1;`, params, transaction);
       } else {
         await this.query(`IF NOT EXISTS(SELECT 1 FROM SEMINAR WHERE MaHD=@p1)
-          INSERT INTO SEMINAR(MaHD,ChuDe,CanCu,NoiDung,ThoiGian,DiaDiem,SLSVDuKien)
-          VALUES(@p1,@p2,N'Kế hoạch tổ chức đã được khoa và Phòng CTSV ký',@p3,@p7,@p10,@p11);
-          ELSE UPDATE SEMINAR SET ChuDe=@p2,NoiDung=@p3,ThoiGian=@p7,DiaDiem=@p10,SLSVDuKien=@p11 WHERE MaHD=@p1;`, params, transaction);
+          INSERT INTO SEMINAR(MaHD,ChuDe,CanCu,NoiDung,ThoiGian,DiaDiem,SLSVDuKien,DaDangThongBao)
+          VALUES(@p1,@p2,N'Kế hoạch tổ chức đã được khoa và Phòng CTSV ký',@p3,@p7,@p10,@p11,1);
+          ELSE UPDATE SEMINAR SET ChuDe=@p2,NoiDung=@p3,ThoiGian=@p7,DiaDiem=@p10,SLSVDuKien=@p11,DaDangThongBao=1 WHERE MaHD=@p1;`, params, transaction);
       }
       const changed = await this.query<{ MaHD: number }>(`UPDATE HOATDONGHOCTHUAT SET TgDuKien=CAST(@p2 AS DATE),
         TgBatDau=CAST(@p2 AS TIME),TgKetThuc=CAST(@p3 AS TIME),HanDangKy=@p4,DiaDiem=@p5,
-        SLToiDa=TRY_CONVERT(INT,NULLIF(SLSVDuKien,N'')),TrangThai=N'Đã công bố' OUTPUT INSERTED.MaHD WHERE MaHD=@p1 AND TrangThai=N'Đã duyệt'`,
+        TrangThai=N'Đã công bố' OUTPUT INSERTED.MaHD WHERE MaHD=@p1 AND TrangThai=N'Đã duyệt'`,
       [activityId,row.ThoiGianBatDau,row.ThoiGianKetThuc,row.HanDangKy,row.DiaDiem], transaction);
       if (!changed.length) throw new ConflictException('Trạng thái hoạt động vừa thay đổi, hãy tải lại');
       await this.query(`UPDATE KEHOACHTOCHUC SET CongBoLuc=SYSDATETIMEOFFSET() WHERE MaHD=@p1 AND CongBoLuc IS NULL`, [activityId], transaction);

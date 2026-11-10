@@ -1,34 +1,16 @@
 "use client";
 
 import { useEffect, useState, useRef, useMemo, type FormEvent } from "react";
+import { useSearchParams } from "next/navigation";
 import Link from "next/link";
 import { workflowRequest } from "@/services/workflow";
 import type { AuthUser } from "@/services/auth";
 import NoticeDialog from "./NoticeDialog";
+import { parseArticleContent } from "./newsContent";
 import s from "./dashboard.module.css";
 
 type Row = Record<string, unknown>;
 const text = (row: Row | null | undefined, key: string) => String(row?.[key] ?? "");
-
-function parseArticleContent(raw: string): { text: string; pdfData?: string; pdfName?: string; pdfSize?: number; image?: string } {
-  if (!raw) return { text: "" };
-  const trimmed = raw.trim();
-  if (trimmed.startsWith("{") && (trimmed.includes('"pdfData"') || trimmed.includes('"image"') || trimmed.includes('"isPdf"'))) {
-    try {
-      const obj = JSON.parse(trimmed);
-      return {
-        text: obj.text || "",
-        pdfData: obj.pdfData,
-        pdfName: obj.pdfName || "tai-lieu.pdf",
-        pdfSize: obj.pdfSize,
-        image: obj.image,
-      };
-    } catch {
-      // not json
-    }
-  }
-  return { text: raw };
-}
 
 function formatFileSize(bytes?: number): string {
   if (!bytes || isNaN(bytes)) return "";
@@ -48,6 +30,37 @@ function formatDateVn(val: unknown): string {
   return `${day}/${month}/${year}`;
 }
 
+function eventScheduleDisplay(activity: Row) {
+  const seminarSchedule = text(activity, "ThoiGianSeminar").trim();
+  const hasExplicitZone = /(?:Z|[+-]\d{2}:?\d{2})$/i.test(seminarSchedule);
+  const dateValue = seminarSchedule || String(activity.ThoiGianBatDau || activity.TgDuKien || "");
+  const parsedDate = dateValue ? new Date(dateValue) : null;
+  const validDate = Boolean(parsedDate && !Number.isNaN(parsedDate.getTime()));
+  const vietnamDateParts = validDate
+    ? new Intl.DateTimeFormat("en-GB", { day: "2-digit", month: "2-digit", timeZone: "Asia/Ho_Chi_Minh" }).formatToParts(parsedDate!)
+    : [];
+  const part = (type: string) => vietnamDateParts.find((item) => item.type === type)?.value || "";
+  const viDateMatch = seminarSchedule.match(/(?:^|\D)(\d{1,2})\/(\d{1,2})\/(\d{4})(?:\D|$)/);
+  const textTimeMatch = !hasExplicitZone && seminarSchedule.match(/(?:^|\D)([01]?\d|2[0-3]):([0-5]\d)(?:\D|$)/);
+  const fallbackDate = String(activity.ThoiGianBatDau || activity.TgDuKien || "");
+  const fallbackParsedDate = fallbackDate ? new Date(fallbackDate) : null;
+  const fallbackValidDate = Boolean(fallbackParsedDate && !Number.isNaN(fallbackParsedDate.getTime()));
+  const timeParts = fallbackValidDate
+    ? new Intl.DateTimeFormat("en-GB", { hour: "2-digit", minute: "2-digit", hourCycle: "h23", timeZone: "Asia/Ho_Chi_Minh" }).formatToParts(fallbackParsedDate!)
+    : [];
+  const time = textTimeMatch
+    ? `${textTimeMatch[1].padStart(2, "0")}:${textTimeMatch[2]}`
+    : fallbackValidDate
+      ? `${timeParts.find((item) => item.type === "hour")?.value || "00"}:${timeParts.find((item) => item.type === "minute")?.value || "00"}`
+      : "Chưa cập nhật";
+
+  return {
+    ngay: viDateMatch ? viDateMatch[1].padStart(2, "0") : validDate ? part("day") : "—",
+    thang: viDateMatch ? `Th${Number(viDateMatch[2])}` : validDate ? `Th${Number(part("month"))}` : "—",
+    thoiGian: time,
+  };
+}
+
 const readNews = () =>
   Promise.all([
     workflowRequest<Row[]>("/news").catch(() => []),
@@ -64,6 +77,8 @@ export interface NewsPanelProps {
 }
 
 export default function NewsPanel({ manage = false, user, onNavigate }: NewsPanelProps) {
+  const searchParams = useSearchParams();
+  const shouldComposeOnOpen = manage && searchParams.get("compose") === "1";
   const isStudent = user?.roles?.includes("SINHVIEN");
   const [apiNews, setApiNews] = useState<Row[]>([]);
   const [activities, setActivities] = useState<Row[]>([]);
@@ -188,12 +203,15 @@ export default function NewsPanel({ manage = false, user, onNavigate }: NewsPane
         if (active) setError(cause instanceof Error ? cause.message : "Không tải được tin");
       })
       .finally(() => {
-        if (active) setLoading(false);
+        if (active) {
+          setLoading(false);
+          if (shouldComposeOnOpen) openEditor();
+        }
       });
     return () => {
       active = false;
     };
-  }, []);
+  }, [shouldComposeOnOpen]);
 
   async function handleQuickRegister(maHD: number) {
     if (!maHD) return;
@@ -265,7 +283,7 @@ export default function NewsPanel({ manage = false, user, onNavigate }: NewsPane
   const realEvents = allActivities
     .filter(
       (a) =>
-        Boolean(a.ThoiGianBatDau || a.TgDuKien) &&
+        Boolean(a.ThoiGianSeminar || a.ThoiGianBatDau || a.TgDuKien) &&
         Boolean(a.MaKeHoach) &&
         (a.TrangThaiKeHoach === "Đã duyệt" ||
           a.TrangThaiKeHoach === "Đã công bố" ||
@@ -274,16 +292,13 @@ export default function NewsPanel({ manage = false, user, onNavigate }: NewsPane
     )
     .slice(0, 4)
     .map((a) => {
-      const d = new Date(String(a.ThoiGianBatDau || a.TgDuKien));
-      const isValid = !isNaN(d.getTime());
+      const schedule = eventScheduleDisplay(a);
       return {
         id: String(a.MaHD),
-        ngay: isValid ? String(d.getDate()).padStart(2, "0") : "—",
-        thang: isValid ? `Th${d.getMonth() + 1}` : "—",
+        ngay: schedule.ngay,
+        thang: schedule.thang,
         tieuDe: text(a, "TenHoatDong"),
-        thoiGian: isValid
-          ? `${String(d.getHours()).padStart(2, "0")}:${String(d.getMinutes()).padStart(2, "0")}`
-          : "Chưa cập nhật",
+        thoiGian: schedule.thoiGian,
         diaDiem: text(a, "DiaDiem") || "Khoa CNTT",
         loai: text(a, "LoaiHoatDong") || "Học thuật",
       };
@@ -343,6 +358,7 @@ export default function NewsPanel({ manage = false, user, onNavigate }: NewsPane
 
       let contentPayload = "";
       if (inputMode === "pdf" && pdfDataUrl) {
+        const originalContent = parseArticleContent(text(editor, "NoiDung"));
         contentPayload = JSON.stringify({
           isPdf: true,
           pdfName: pdfFileName || "tai-lieu.pdf",
@@ -350,6 +366,7 @@ export default function NewsPanel({ manage = false, user, onNavigate }: NewsPane
           pdfData: pdfDataUrl,
           text: manualText.trim(),
           image: customImage || undefined,
+          seminarSection: originalContent.pdfData === pdfDataUrl ? originalContent.seminarSection : undefined,
         });
       } else {
         if (!manualText.trim()) {
@@ -735,7 +752,10 @@ export default function NewsPanel({ manage = false, user, onNavigate }: NewsPane
                             border: "1px solid #fde68a",
                           }}
                         >
-                          ⭐ {isCompetition ? "+5 Điểm rèn luyện" : "+3 Điểm rèn luyện"}
+                          ⭐ {isCompetition ? "+5 Điểm rèn luyện" :
+                            text(linkedAct, "MaSeminar") || text(linkedAct, "LoaiHoatDong").includes("Seminar")
+                              ? text(linkedAct, "DiemRenLuyen") ? `+${text(linkedAct, "DiemRenLuyen")} Điểm rèn luyện` : "Chưa cập nhật điểm rèn luyện"
+                              : "+3 Điểm rèn luyện"}
                         </span>
                       </div>
 
@@ -1757,7 +1777,7 @@ export default function NewsPanel({ manage = false, user, onNavigate }: NewsPane
                     name="maHD"
                     value={selectedMaHD}
                     onChange={(e) => setSelectedMaHD(e.target.value)}
-                    disabled={busy || Boolean(editor?.MaTin)}
+                    disabled={busy || Boolean(editor?.MaHD)}
                     style={{ fontSize: "13.5px", padding: "10px 14px", borderRadius: "8px" }}
                   >
                     <option value="">-- Không gắn hoạt động cụ thể (Tin tức &amp; thông báo chung) --</option>
@@ -1767,6 +1787,9 @@ export default function NewsPanel({ manage = false, user, onNavigate }: NewsPane
                       </option>
                     ))}
                   </select>
+                  <small style={{ color: "#64748b" }}>
+                    Gắn hoạt động Seminar để khi đăng tin, hồ sơ tự xuất hiện trong Quản lý Seminar học thuật.
+                  </small>
                 </label>
 
                 {/* Title */}

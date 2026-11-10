@@ -54,6 +54,6 @@ export class DatabaseService implements OnModuleInit, OnModuleDestroy {
       request.input(`p${index + 1}`, param);
     });
     const result = await request.query<T>(sqlText);
-    return result.recordset;
+    return result.recordset ?? ([] as unknown as IRecordSet<T>);
   }
 }

@@ -7,7 +7,8 @@ import { requireOpenRegistration } from '../../../business/registration/registra
 const approvedRegistrationSql = `EXISTS (SELECT 1 FROM KEHOACHTOCHUC p
   JOIN KEHOACHHOCTHUAT annual ON annual.MaKeHoach=p.MaKeHoach
   WHERE p.MaHD=h.MaHD AND p.TrangThai=N'Đã duyệt'
-    AND p.NguoiKyKhoa IS NOT NULL AND p.NguoiKyCTSV IS NOT NULL AND annual.TrangThai=N'Đã duyệt')`;
+    AND p.NguoiKyKhoa IS NOT NULL AND (p.NguoiKyCTSV IS NOT NULL OR @p2=1)
+    AND annual.TrangThai=N'Đã duyệt')`;
 
 export interface StudentInfo {
   MaSV: number;
@@ -51,6 +52,7 @@ export interface RegistrationRecord {
   NgayDK: Date;
   HinhThuc: string;
   TrangThai: string;
+  MaDoi: number | null;
   TenDoi: string | null;
   VaiTroDoi: string | null;
 }
@@ -58,6 +60,7 @@ export interface RegistrationRecord {
 export interface ActivityRegistrationDetail {
   MaDK: number;
   MaHD: number;
+  TenHoatDong: string;
   MaSV: number;
   MSSV: string;
   HoTen: string;
@@ -70,6 +73,8 @@ export interface ActivityRegistrationDetail {
   TrangThai: string;
   TenDoi: string | null;
   VaiTroDoi: string | null;
+  TenDeTai: string | null;
+  GVHD: string | null;
 }
 
 export interface SupportAssignmentRecord {
@@ -89,7 +94,9 @@ export class RegistrationRepository {
   constructor(@Inject(DatabaseService) private readonly db: DatabaseService) {}
 
   private async lockOpenActivity(transaction: sql.Transaction, activityId: number) {
-    const activity = (await new sql.Request(transaction).input('hd', sql.BigInt, activityId).query<{
+    const allowAfterDeadline = process.env.REGISTRATION_OPEN_OVERRIDE?.trim().toLowerCase() === 'true';
+    const activity = (await new sql.Request(transaction).input('hd', sql.BigInt, activityId)
+      .input('p2', sql.Bit, allowAfterDeadline ? 1 : 0).query<{
       SLToiDa: number | null; Total: number; TrangThai: string; CoSoDuyet: number; HanDangKy: Date | null;
     }>(`SELECT TRY_CONVERT(INT,NULLIF(h.SLSVDuKien,N'')) AS SLToiDa,h.TrangThai,h.HanDangKy,
       CASE WHEN ${approvedRegistrationSql} THEN 1 ELSE 0 END AS CoSoDuyet,
@@ -130,7 +137,7 @@ export class RegistrationRepository {
       `SELECT h.MaHD,h.TenHoatDong,h.TgBatDau,h.TgKetThuc,h.HanDangKy,h.DiaDiem,TRY_CONVERT(INT,NULLIF(h.SLSVDuKien,N'')) AS SLToiDa,h.TrangThai,
          CASE WHEN ${approvedRegistrationSql} THEN 1 ELSE 0 END AS CoSoDuyet
        FROM HOATDONGHOCTHUAT h WHERE h.MaHD = @p1`,
-      [maHD],
+      [maHD, process.env.REGISTRATION_OPEN_OVERRIDE?.trim().toLowerCase() === 'true' ? 1 : 0],
     );
     return rows[0] ?? null;
   }
@@ -142,7 +149,7 @@ export class RegistrationRepository {
        FROM CUOCTHI c
        JOIN HOATDONGHOCTHUAT h ON h.MaHD = c.MaHD
        WHERE c.MaCThi = @p1`,
-      [maCThi],
+      [maCThi, process.env.REGISTRATION_OPEN_OVERRIDE?.trim().toLowerCase() === 'true' ? 1 : 0],
     );
     return rows[0] ?? null;
   }
@@ -204,7 +211,7 @@ export class RegistrationRepository {
       WHERE dk.MaDK=@p1`,[maDK]);
   }
 
-  async registerIndividualWithinCapacity(maHD:number,maSV:number,hinhThuc:string):Promise<{waitlisted:true;MaCho:number;ViTri:number}|{waitlisted:false;MaDK:number;NgayDK:Date}|null> {
+  async registerIndividualWithinCapacity(maHD:number,maSV:number,hinhThuc:string,tenDeTai?:string,gvhd?:string):Promise<{waitlisted:true;MaCho:number;ViTri:number}|{waitlisted:false;MaDK:number;NgayDK:Date}|null> {
     const tx=new sql.Transaction(this.db.pool); await tx.begin();
     try {
       const activity=await this.lockOpenActivity(tx,maHD);
@@ -216,8 +223,8 @@ export class RegistrationRepository {
       if(activity.SLToiDa && activity.SLToiDa>0 && count>=activity.SLToiDa) {
         const existing=(await new sql.Request(tx).input('hd',sql.BigInt,maHD).input('sv',sql.BigInt,maSV).query<{MaCho:number;TrangThai:string}>(`SELECT MaCho,TrangThai FROM HANGDOICHODANGKY WITH(UPDLOCK,HOLDLOCK) WHERE MaHD=@hd AND MaSV=@sv`)).recordset[0];
         let id=existing?.MaCho;
-        if(existing && existing.TrangThai==='Đã hủy') await new sql.Request(tx).input('id',sql.BigInt,id).query(`UPDATE HANGDOICHODANGKY SET TrangThai=N'Đang chờ',DangKyLuc=SYSDATETIMEOFFSET() WHERE MaCho=@id`);
-        else if(!existing) id=(await new sql.Request(tx).input('hd',sql.BigInt,maHD).input('sv',sql.BigInt,maSV).query<{MaCho:number}>(`INSERT INTO HANGDOICHODANGKY(MaHD,MaSV) OUTPUT INSERTED.MaCho VALUES(@hd,@sv)`)).recordset[0].MaCho;
+        if(existing) await new sql.Request(tx).input('id',sql.BigInt,id).input('title',sql.NVarChar(250),tenDeTai?.trim()||null).input('advisor',sql.NVarChar(150),gvhd?.trim()||null).query(`UPDATE HANGDOICHODANGKY SET TrangThai=CASE WHEN TrangThai=N'Đã hủy' THEN N'Đang chờ' ELSE TrangThai END,DangKyLuc=CASE WHEN TrangThai=N'Đã hủy' THEN SYSDATETIMEOFFSET() ELSE DangKyLuc END,TenDeTai=@title,GVHD=@advisor WHERE MaCho=@id`);
+        else if(!existing) id=(await new sql.Request(tx).input('hd',sql.BigInt,maHD).input('sv',sql.BigInt,maSV).input('title',sql.NVarChar(250),tenDeTai?.trim()||null).input('advisor',sql.NVarChar(150),gvhd?.trim()||null).query<{MaCho:number}>(`INSERT INTO HANGDOICHODANGKY(MaHD,MaSV,TenDeTai,GVHD) OUTPUT INSERTED.MaCho VALUES(@hd,@sv,@title,@advisor)`)).recordset[0].MaCho;
         const rank=(await new sql.Request(tx).input('hd',sql.BigInt,maHD).input('id',sql.BigInt,id).query<{ViTri:number}>(`SELECT COUNT(*) ViTri FROM HANGDOICHODANGKY WHERE MaHD=@hd AND TrangThai=N'Đang chờ' AND MaCho<=@id`)).recordset[0].ViTri;
         await tx.commit(); return {waitlisted:true,MaCho:id,ViTri:rank};
       }
@@ -226,6 +233,14 @@ export class RegistrationRepository {
           UPDATE DKTHAMGIA SET NgayDK=SYSDATETIME(),HinhThuc=@type,NguonDK=N'Sinh viên',TrangThai=N'Đã đăng ký'
             OUTPUT INSERTED.MaDK,INSERTED.NgayDK WHERE MaHD=@hd AND MaSV=@sv;
           ELSE INSERT INTO DKTHAMGIA(MaHD,MaSV,NgayDK,HinhThuc,NguonDK,TrangThai) OUTPUT INSERTED.MaDK,INSERTED.NgayDK VALUES(@hd,@sv,SYSDATETIME(),@type,N'Sinh viên',N'Đã đăng ký')`);
+      if(tenDeTai?.trim() && gvhd?.trim()) {
+        await new sql.Request(tx).input('registration',sql.BigInt,created.recordset[0].MaDK).input('activity',sql.BigInt,maHD)
+          .input('title',sql.NVarChar(250),tenDeTai.trim()).input('advisor',sql.NVarChar(150),gvhd.trim())
+          .query(`IF EXISTS(SELECT 1 FROM DETAI WHERE MaDK=@registration)
+            UPDATE DETAI SET TenDeTai=@title,GVHD=@advisor WHERE MaDK=@registration;
+          ELSE INSERT INTO DETAI(MaCThi,MaDK,TenDeTai,GVHD,TrangThai)
+            SELECT c.MaCThi,@registration,@title,@advisor,N'Đang thực hiện' FROM CUOCTHI c WHERE c.MaHD=@activity`);
+      }
       await tx.commit(); return {waitlisted:false,...created.recordset[0]};
     } catch(error) {try{await tx.rollback();}catch{/* already rolled back */} throw error;}
   }
@@ -249,13 +264,15 @@ export class RegistrationRepository {
     } catch(error) {try{await tx.rollback();}catch{/* already rolled back */} throw error;}
   }
 
-  async createWaitlistedTeam(maCThi:number,maHD:number,teamName:string,captainId:number,memberIds:number[]):Promise<{maDoi:number;queue:Array<{MaCho:number;ViTri:number;MaSV:number}>}|null> {
+  async createWaitlistedTeam(maCThi:number,maHD:number,teamName:string,captainId:number,memberIds:number[],tenDeTai:string,gvhd:string):Promise<{maDoi:number;queue:Array<{MaCho:number;ViTri:number;MaSV:number}>}|null> {
     const tx=new sql.Transaction(this.db.pool); await tx.begin();
     try {
       const capacity=await this.lockOpenActivity(tx,maHD);
       if(!capacity){await tx.rollback();return null;}
       if(!capacity.SLToiDa || capacity.Total+memberIds.length+1<=capacity.SLToiDa){await tx.rollback();return null;}
       const team=(await new sql.Request(tx).input('competition',sql.BigInt,maCThi).input('name',sql.NVarChar(150),teamName).query<{MaDoi:number}>(`INSERT INTO DOITHI(MaCThi,TenDoi) OUTPUT INSERTED.MaDoi VALUES(@competition,@name)`)).recordset[0];
+      await new sql.Request(tx).input('competition',sql.BigInt,maCThi).input('team',sql.BigInt,team.MaDoi).input('title',sql.NVarChar(250),tenDeTai).input('advisor',sql.NVarChar(150),gvhd)
+        .query(`INSERT INTO DETAI(MaCThi,MaDoi,TenDeTai,GVHD,TrangThai) VALUES(@competition,@team,@title,@advisor,N'Đang thực hiện')`);
       const people=[captainId,...memberIds];
       for(let index=0;index<people.length;index++) {
         const student=people[index];
@@ -288,7 +305,7 @@ export class RegistrationRepository {
        JOIN CUOCTHI c ON c.MaCThi = d.MaCThi
        JOIN HOATDONGHOCTHUAT h ON h.MaHD = c.MaHD
        WHERE d.MaDoi = @p1`,
-      [maDoi],
+      [maDoi, process.env.REGISTRATION_OPEN_OVERRIDE?.trim().toLowerCase() === 'true' ? 1 : 0],
     );
     return rows[0] ?? null;
   }
@@ -354,6 +371,8 @@ export class RegistrationRepository {
     tenDoi: string,
     captainMaSV: number,
     memberMaSVs: number[],
+    tenDeTai: string,
+    gvhd: string,
   ): Promise<{ maDoi: number; tenDoi: string; totalMembers: number }> {
     const transaction = new sql.Transaction(this.db.pool);
     await transaction.begin();
@@ -371,6 +390,9 @@ export class RegistrationRepository {
          VALUES(@maCThi, @tenDoi)`,
       );
       const maDoi = teamRes.recordset[0].MaDoi;
+
+      await new sql.Request(transaction).input('competition',sql.BigInt,maCThi).input('team',sql.BigInt,maDoi).input('title',sql.NVarChar(250),tenDeTai).input('advisor',sql.NVarChar(150),gvhd)
+        .query(`INSERT INTO DETAI(MaCThi,MaDoi,TenDeTai,GVHD,TrangThai) VALUES(@competition,@team,@title,@advisor,N'Đang thực hiện')`);
 
       // 2. Insert Captain into THANHVIENDOI
       const capReq = new sql.Request(transaction);
@@ -441,13 +463,15 @@ export class RegistrationRepository {
         dk.NgayDK, 
         dk.HinhThuc, 
         dk.TrangThai, 
+        d.MaDoi,
         d.TenDoi, 
         tv.VaiTro AS VaiTroDoi
       FROM DKTHAMGIA dk
       JOIN HOATDONGHOCTHUAT h ON h.MaHD = dk.MaHD
       LEFT JOIN CUOCTHI c ON c.MaHD = h.MaHD
-      LEFT JOIN THANHVIENDOI tv ON tv.MaSV = dk.MaSV
-      LEFT JOIN DOITHI d ON d.MaDoi = tv.MaDoi AND d.MaCThi = c.MaCThi
+      LEFT JOIN DOITHI d ON d.MaCThi = c.MaCThi
+        AND EXISTS (SELECT 1 FROM THANHVIENDOI member WHERE member.MaDoi=d.MaDoi AND member.MaSV=dk.MaSV)
+      LEFT JOIN THANHVIENDOI tv ON tv.MaDoi = d.MaDoi AND tv.MaSV = dk.MaSV
       WHERE dk.MaSV = @p1
       ORDER BY dk.NgayDK DESC`,
       [maSV],
@@ -455,11 +479,12 @@ export class RegistrationRepository {
     return rows;
   }
 
-  async getRegistrationsByActivity(maHD: number): Promise<ActivityRegistrationDetail[]> {
+  async getRegistrationsByActivity(maHD?: number): Promise<ActivityRegistrationDetail[]> {
     const rows = await this.db.query<ActivityRegistrationDetail>(
       `SELECT 
         dk.MaDK,
         dk.MaHD,
+        h.TenHoatDong,
         dk.MaSV,
         s.MSSV,
         n.HoTen,
@@ -471,17 +496,24 @@ export class RegistrationRepository {
         dk.NguonDK,
         dk.TrangThai,
         d.TenDoi,
-        tv.VaiTro AS VaiTroDoi
+        tv.VaiTro AS VaiTroDoi,
+        topic.TenDeTai,
+        topic.GVHD
       FROM DKTHAMGIA dk
+      JOIN HOATDONGHOCTHUAT h ON h.MaHD = dk.MaHD
       JOIN SINHVIEN s ON s.MaSV = dk.MaSV
       JOIN NGUOIDUNG n ON n.MaNgDung = s.MaNgDung
       JOIN LOP l ON l.MaLop = s.MaLop
       LEFT JOIN CUOCTHI c ON c.MaHD = dk.MaHD
-      LEFT JOIN THANHVIENDOI tv ON tv.MaSV = s.MaSV
-      LEFT JOIN DOITHI d ON d.MaDoi = tv.MaDoi AND d.MaCThi = c.MaCThi
-      WHERE dk.MaHD = @p1
-      ORDER BY dk.NgayDK DESC`,
-      [maHD],
+      LEFT JOIN DOITHI d ON d.MaCThi = c.MaCThi
+        AND EXISTS (SELECT 1 FROM THANHVIENDOI member WHERE member.MaDoi=d.MaDoi AND member.MaSV=s.MaSV)
+      LEFT JOIN THANHVIENDOI tv ON tv.MaDoi = d.MaDoi AND tv.MaSV = s.MaSV
+      OUTER APPLY (SELECT TOP (1) dt.TenDeTai,dt.GVHD FROM DETAI dt
+        WHERE dt.MaDK=dk.MaDK OR (d.MaDoi IS NOT NULL AND dt.MaDoi=d.MaDoi)
+        ORDER BY CASE WHEN dt.MaDK=dk.MaDK THEN 0 ELSE 1 END,dt.MaDeTai DESC) topic
+      ${maHD === undefined ? '' : 'WHERE dk.MaHD = @p1'}
+      ORDER BY dk.NgayDK DESC, dk.MaDK DESC`,
+      maHD === undefined ? [] : [maHD],
     );
     return rows;
   }
@@ -489,17 +521,19 @@ export class RegistrationRepository {
   async updateRegistrationStatus(maDK: number, trangThai: string): Promise<boolean> {
     const tx = new sql.Transaction(this.db.pool); await tx.begin();
     try {
+      const allowAfterDeadline = process.env.REGISTRATION_OPEN_OVERRIDE?.trim().toLowerCase() === 'true';
       const result = await new sql.Request(tx).input('maDK', sql.BigInt, maDK).input('trangThai', sql.NVarChar(30), trangThai)
         .query<{MaHD:number;MaSV:number}>(`UPDATE DKTHAMGIA SET TrangThai=@trangThai OUTPUT INSERTED.MaHD,INSERTED.MaSV WHERE MaDK=@maDK`);
       const row=result.recordset[0];
       if(!row){await tx.rollback();return false;}
       if(trangThai==='Đã hủy') {
         await new sql.Request(tx).input('hd',sql.BigInt,row.MaHD).input('sv',sql.BigInt,row.MaSV).query(`UPDATE HANGDOICHODANGKY SET TrangThai=N'Đã hủy' WHERE MaHD=@hd AND MaSV=@sv AND TrangThai=N'Đã đăng ký'`);
-        const activity=(await new sql.Request(tx).input('hd',sql.BigInt,row.MaHD).query<{SLToiDa:number|null;Total:number;Type:string}>(
+        const activity=(await new sql.Request(tx).input('hd',sql.BigInt,row.MaHD).input('p2',sql.Bit,allowAfterDeadline ? 1 : 0).query<{SLToiDa:number|null;Total:number;Type:string}>(
           `SELECT TRY_CONVERT(INT,NULLIF(h.SLSVDuKien,N'')) AS SLToiDa,(SELECT COUNT(*) FROM DKTHAMGIA d WHERE d.MaHD=h.MaHD AND d.TrangThai NOT IN(N'Đã hủy',N'Từ chối')) Total,
             CASE WHEN EXISTS(SELECT 1 FROM CUOCTHI c WHERE c.MaHD=h.MaHD) THEN N'Dự thi' ELSE N'Tham gia' END Type
-           FROM HOATDONGHOCTHUAT h WITH(UPDLOCK,HOLDLOCK) WHERE h.MaHD=@hd AND h.TrangThai=N'Đã công bố'
-             AND (h.HanDangKy IS NULL OR h.HanDangKy>SYSDATETIME()) AND ${approvedRegistrationSql}`)).recordset[0];
+           FROM HOATDONGHOCTHUAT h WITH(UPDLOCK,HOLDLOCK) WHERE h.MaHD=@hd
+             AND (h.TrangThai=N'Đã công bố' OR (@p2=1 AND h.TrangThai=N'Đã duyệt'))
+             AND (@p2=1 OR h.HanDangKy IS NULL OR h.HanDangKy>SYSDATETIME()) AND ${approvedRegistrationSql}`)).recordset[0];
         if(activity && (!activity.SLToiDa || activity.Total<activity.SLToiDa)) {
           const next=(await new sql.Request(tx).input('hd',sql.BigInt,row.MaHD).query<{MaCho:number;MaSV:number}>(`SELECT TOP(1) MaCho,MaSV FROM HANGDOICHODANGKY WITH(UPDLOCK,READPAST,ROWLOCK) WHERE MaHD=@hd AND TrangThai=N'Đang chờ' ORDER BY DangKyLuc,MaCho`)).recordset[0];
           if(next) {

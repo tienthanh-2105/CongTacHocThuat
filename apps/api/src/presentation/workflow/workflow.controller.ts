@@ -4,7 +4,7 @@ import { ApiBearerAuth, ApiCookieAuth, ApiOperation, ApiTags } from '@nestjs/swa
 import { SessionGuard } from '../auth/auth.guards';
 import type { AuthRequest } from '../auth/auth.http';
 import { WorkflowService } from '../../business/workflow/workflow.service';
-import { ActivityChangeDto, AdjustTrainingPointDto, AwardTrainingPointDto, BroadcastNotificationDto, CheckInDto, CompetitionResultDto, CreateAttendanceCodeDto, CreatePlanActivityDto, CreatePlanDto, CreateRoundDto, ReviewPlanDto, SelectPlanActivitiesDto, ScoreWorkDto, SubmitWorkDto, SeminarMaterialDto, CreateAccountDto, CreateStudentAccountDto, CreateStudentProfileDto, CreateLinkedStudentProfileDto, UpdateStudentRecordDto, ChangeAccountRoleDto, LinkAccountStudentProfileDto, ResetAccountPasswordDto, SetAccountStatusDto, ManualAttendanceDto, CreateClassDto, UpdateClassDto, UpdateStaffRecordDto, CreateStaffRecordDto, CreateStaffAccountDto, CreateAcademicActivityDto, UpdateAcademicActivityDto, CreateCommitteeMemberDto, UpdateCommitteeMemberDto, CreateActivityBudgetDto, CreateBudgetEstimateDto, ReviewActivityBudgetDto } from './workflow.dto';
+import { ActivityChangeDto, AdjustTrainingPointDto, AwardTrainingPointDto, BroadcastNotificationDto, CheckInDto, CompetitionResultDto, CreateAttendanceCodeDto, CreatePlanActivityDto, CreatePlanDto, CreateRoundDto, ReviewPlanDto, SelectPlanActivitiesDto, ScoreWorkDto, SubmitWorkDto, SeminarMaterialDto, CreateAccountDto, CreateStudentAccountDto, CreateStudentProfileDto, CreateLinkedStudentProfileDto, UpdateStudentRecordDto, ChangeAccountRoleDto, LinkAccountStudentProfileDto, ResetAccountPasswordDto, SetAccountStatusDto, ManualAttendanceDto, CreateClassDto, UpdateClassDto, UpdateStaffRecordDto, CreateStaffRecordDto, CreateStaffAccountDto, CreateAcademicActivityDto, UpdateAcademicActivityDto, CreateCommitteeMemberDto, UpdateCommitteeMemberDto, CreateActivityBudgetDto, CreateBudgetEstimateDto, ReviewActivityBudgetDto, AddBudgetEstimateLinesDto } from './workflow.dto';
 
 @ApiTags('admin-accounts') @ApiBearerAuth() @ApiCookieAuth() @UseGuards(SessionGuard)
 @Controller('admin/accounts')
@@ -91,6 +91,7 @@ export class CompetitionResultsController {
 @Controller('training-points')
 export class TrainingPointsController {
   constructor(@Inject(WorkflowService) private readonly service:WorkflowService){}
+  @Get('activities/:activityId/registrations') registrations(@Req() r:AuthRequest,@Param('activityId',ParseIntPipe) id:number){return this.service.listTrainingPointRegistrations(r.auth!,id);}
   @Get() list(@Req() r:AuthRequest){return this.service.listTrainingPoints(r.auth!);}
   @Get('broadcasts') listBroadcasts(@Req() r:AuthRequest){return this.service.listBroadcasts(r.auth!);}
   @Post('broadcasts') sendBroadcast(@Req() r:AuthRequest,@Body() dto:BroadcastNotificationDto){return this.service.sendBroadcast(r.auth!,dto);}
@@ -104,7 +105,7 @@ export class TrainingPointsController {
 @Controller('attendance')
 export class AttendanceController {
   constructor(@Inject(WorkflowService) private readonly service:WorkflowService){}
-  @Post('activities/:activityId/qr') create(@Req() r:AuthRequest,@Param('activityId',ParseIntPipe) id:number,@Body() dto:CreateAttendanceCodeDto){return this.service.createAttendanceCode(r.auth!,id,dto.expiresAt);}
+  @Post('activities/:activityId/qr') create(@Req() r:AuthRequest,@Param('activityId',ParseIntPipe) id:number,@Body() dto:CreateAttendanceCodeDto){return this.service.createAttendanceCode(r.auth!,id,dto.startsAt,dto.endsAt);}
   @Post('check-in') checkIn(@Req() r:AuthRequest,@Body() dto:CheckInDto){return this.service.checkIn(r.auth!,dto.code);}
   @Post('manual') manual(@Req() r:AuthRequest,@Body() dto:ManualAttendanceDto){return this.service.manualAttendance(r.auth!,dto.maDK);}
 }
@@ -180,6 +181,16 @@ export class AcademicActivitiesController {
   @Get('budget-estimates/:id')
   getBudgetEstimate(@Req() r: AuthRequest, @Param('id', ParseIntPipe) id: number) {
     return this.service.getBudgetEstimate(r.auth!, id);
+  }
+
+  @Get('budget-estimates/:id/available-lines')
+  listAvailableBudgetEstimateLines(@Req() r: AuthRequest, @Param('id', ParseIntPipe) id: number) {
+    return this.service.listAvailableBudgetEstimateLines(r.auth!, id);
+  }
+
+  @Patch('budget-estimates/:id/lines')
+  addBudgetEstimateLines(@Req() r: AuthRequest, @Param('id', ParseIntPipe) id: number, @Body() dto: AddBudgetEstimateLinesDto) {
+    return this.service.addBudgetEstimateLines(r.auth!, id, dto);
   }
 
   @Post('budget-estimates')

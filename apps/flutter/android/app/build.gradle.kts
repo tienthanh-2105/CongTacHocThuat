@@ -12,7 +12,7 @@ if (file("google-services.json").exists()) {
 android {
     namespace = "vn.edu.cong_tac_hoc_thuat"
     compileSdk = flutter.compileSdkVersion
-    ndkVersion = flutter.ndkVersion
+    ndkVersion = "30.0.14904198"
     compileOptions {
         isCoreLibraryDesugaringEnabled = true
         sourceCompatibility = JavaVersion.VERSION_17

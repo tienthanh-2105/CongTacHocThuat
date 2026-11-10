@@ -1,0 +1,20 @@
+IF EXISTS (
+  SELECT 1
+  FROM sys.check_constraints
+  WHERE parent_object_id = OBJECT_ID(N'dbo.DUTRUKINHPHI')
+    AND name = N'CK_DUTRU_TRANGTHAI'
+)
+BEGIN
+  ALTER TABLE dbo.DUTRUKINHPHI DROP CONSTRAINT CK_DUTRU_TRANGTHAI;
+END;
+
+IF NOT EXISTS (
+  SELECT 1
+  FROM sys.check_constraints
+  WHERE parent_object_id = OBJECT_ID(N'dbo.DUTRUKINHPHI')
+    AND name = N'CK_DUTRUKINHPHI_TRANGTHAI'
+)
+BEGIN
+  ALTER TABLE dbo.DUTRUKINHPHI ADD CONSTRAINT CK_DUTRUKINHPHI_TRANGTHAI
+    CHECK (TrangThai IN (N'Dự thảo',N'Chờ duyệt',N'Cần bổ sung',N'Đã duyệt',N'Từ chối'));
+END;

@@ -986,8 +986,9 @@ export default function StudentProfilesPanel() {
                   <input
                     value={newMssv}
                     onChange={(e) => {
-                      setNewMssv(e.target.value);
-                      if (!newUsername) setNewUsername(e.target.value);
+                      const val = e.target.value;
+                      setNewMssv(val);
+                      if (!newUsername || newUsername === newMssv) setNewUsername(val);
                     }}
                     required
                     placeholder="ví dụ: 2001220001"
@@ -1170,7 +1171,7 @@ export default function StudentProfilesPanel() {
                       checked={newCreateAccount}
                       onChange={(e) => {
                         setNewCreateAccount(e.target.checked);
-                        if (e.target.checked && !newUsername) {
+                        if (e.target.checked && (!newUsername || newUsername === newMssv)) {
                           setNewUsername(newMssv);
                         }
                       }}

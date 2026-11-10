@@ -74,13 +74,13 @@ export class AuthRepository {
   constructor(@Inject(DatabaseService) private readonly db: DatabaseService) {}
 
   async findUserByUsername(username: string) {
-    const rows = await this.db.query<AccountRow>(`${accountSelect} WHERE a.TenDangNhap = @p1`, [username]);
+    const rows = await this.db.query<AccountRow>(`${accountSelect} WHERE a.TenDangNhap = @p1 OR (sv.MSSV = @p1 AND sv.MaSV IS NOT NULL)`, [username]);
     return rows[0] ? account(rows[0]) : null;
   }
 
   async upgradeLegacyPasswordHash(userId: string, legacyHash: string, passwordHash: string): Promise<boolean> {
     const rows = await this.db.query(
-      'UPDATE TAIKHOAN SET MatKhau = @p3 WHERE MaTK = @p1 AND MatKhau = @p2',
+      'UPDATE TAIKHOAN SET MatKhau = @p3 OUTPUT INSERTED.MaTK WHERE MaTK = @p1 AND MatKhau = @p2',
       [userId, legacyHash, passwordHash],
     );
     return rows.length > 0;

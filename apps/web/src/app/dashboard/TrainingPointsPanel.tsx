@@ -15,6 +15,7 @@ interface BroadcastItem {
   guiLuc: string;
   daDoc: string;
   tongNhan?: number;
+  tyLeDoc?: number;
 }
 
 interface TrainingPointItem {
@@ -24,6 +25,7 @@ interface TrainingPointItem {
   TenSinhVien: string;
   TenLop?: string;
   MaHD?: number | string;
+  HinhThucThamGia?: string;
   TenHoatDong: string;
   HocKy: string;
   NamHoc: string;
@@ -35,99 +37,18 @@ interface TrainingPointItem {
   GhiLuc?: string;
 }
 
-const defaultBroadcasts: BroadcastItem[] = [
-  {
-    id: 1,
-    tieuDe: "Nhắc lịch Seminar Generative AI",
-    doiTuong: "186 sinh viên",
-    guiLuc: "10/10 · 08:00",
-    daDoc: "92%",
-  },
-  {
-    id: 2,
-    tieuDe: "Phân bổ cổ vũ Olympic Tin học",
-    doiTuong: "4 lớp K24",
-    guiLuc: "09/10 · 15:30",
-    daDoc: "84%",
-  },
-  {
-    id: 3,
-    tieuDe: "Mở đăng ký Workshop DevSecOps",
-    doiTuong: "Toàn khoa",
-    guiLuc: "08/10 · 09:00",
-    daDoc: "78%",
-  },
-  {
-    id: 4,
-    tieuDe: "Kết quả vòng loại UI/UX",
-    doiTuong: "120 sinh viên",
-    guiLuc: "11/10 · 16:00",
-    daDoc: "—",
-  },
-];
-
-const defaultHistory: TrainingPointItem[] = [
-  {
-    MaDiem: 101,
-    MaSV: 1,
-    MSSV: "SV240218",
-    TenSinhVien: "Phạm Ngọc Linh",
-    TenHoatDong: "Generative AI trong giáo dục",
-    HocKy: "HK1",
-    NamHoc: "2026-2027",
-    SoDiem: 5,
-    LyDo: "Tham gia seminar học thuật",
-    TrangThai: "Đã xác nhận",
-    TenNguoiDuyet: "ThS. Lê Hoàng Phúc",
-  },
-  {
-    MaDiem: 102,
-    MaSV: 2,
-    MSSV: "SV240119",
-    TenSinhVien: "Trần Gia Bảo",
-    TenHoatDong: "Olympic Tin học 2026",
-    HocKy: "HK1",
-    NamHoc: "2026-2027",
-    SoDiem: 3,
-    LyDo: "Cổ vũ cuộc thi cấp khoa",
-    TrangThai: "Chờ xác nhận",
-    TenNguoiDuyet: "ThS. Lê Hoàng Phúc",
-  },
-  {
-    MaDiem: 103,
-    MaSV: 3,
-    MSSV: "SV230119",
-    TenSinhVien: "Đỗ Minh Khang",
-    TenHoatDong: "Workshop Cloud Native",
-    HocKy: "HK1",
-    NamHoc: "2026-2027",
-    SoDiem: -2,
-    LyDo: "Vắng không phép",
-    TrangThai: "Đã xác nhận",
-    TenNguoiDuyet: "TS. Vũ Nhật Nam",
-  },
-];
-
 export default function TrainingPointsPanel({ user }: { user?: { roles: string[]; name?: string } }) {
-  const [broadcasts, setBroadcasts] = useState<BroadcastItem[]>(defaultBroadcasts);
-  const [pointsHistory, setPointsHistory] = useState<TrainingPointItem[]>(defaultHistory);
+  const [broadcasts, setBroadcasts] = useState<BroadcastItem[]>([]);
+  const [pointsHistory, setPointsHistory] = useState<TrainingPointItem[]>([]);
   const [activities, setActivities] = useState<Row[]>([]);
-  const [students, setStudents] = useState<Row[]>([]);
+  const [registeredStudents, setRegisteredStudents] = useState<Row[]>([]);
+  const [loadingRegistrations, setLoadingRegistrations] = useState(false);
 
   const [searchQuery, setSearchQuery] = useState("");
   const [selectedSemester, setSelectedSemester] = useState("Học kỳ 1 - 2026–2027");
-  const [selectedChannel, setSelectedChannel] = useState("Kênh gửi");
 
   // Soạn nhanh form state
-  const [quickTarget, setQuickTarget] = useState("Chọn người nhận");
-  const [quickContent, setQuickContent] = useState(
-    'Nhắc lịch: Seminar "Generative AI trong giáo dục" sẽ diễn ra lúc 08:00 ngày 12/10 tại Hội trường A.'
-  );
-  const [channels, setChannels] = useState<{ app: boolean; email: boolean; auto: boolean }>({
-    app: true,
-    email: false,
-    auto: true,
-  });
+  const [quickActivityId, setQuickActivityId] = useState("");
 
   // Modal dialog states
   const [isNoticeModalOpen, setIsNoticeModalOpen] = useState(false);
@@ -150,27 +71,21 @@ export default function TrainingPointsPanel({ user }: { user?: { roles: string[]
   async function loadData() {
     setLoading(true);
     try {
-      const [bcData, ptData, actData, stdData] = await Promise.all([
-        workflowRequest<BroadcastItem[]>("/training-points/broadcasts").catch(() => defaultBroadcasts),
-        workflowRequest<TrainingPointItem[]>("/training-points").catch(() => defaultHistory),
+      const [bcData, ptData, actData] = await Promise.all([
+        workflowRequest<BroadcastItem[]>("/training-points/broadcasts").catch(() => []),
+        workflowRequest<TrainingPointItem[]>("/training-points"),
         workflowRequest<Row[]>("/activities").catch(() => []),
-        workflowRequest<Row[]>("/admin/accounts/student-profiles").catch(() => []),
       ]);
 
-      if (Array.isArray(bcData) && bcData.length > 0) {
-        setBroadcasts(bcData);
-      }
-      if (Array.isArray(ptData) && ptData.length > 0) {
+      setBroadcasts(Array.isArray(bcData) ? bcData : []);
+      if (Array.isArray(ptData)) {
         setPointsHistory(ptData);
       }
       if (Array.isArray(actData)) {
         setActivities(actData);
       }
-      if (Array.isArray(stdData)) {
-        setStudents(stdData);
-      }
-    } catch {
-      // Fallback to initial mockup data
+    } catch (cause) {
+      setError(cause instanceof Error ? cause.message : "Không tải được dữ liệu điểm rèn luyện");
     } finally {
       setLoading(false);
     }
@@ -179,6 +94,30 @@ export default function TrainingPointsPanel({ user }: { user?: { roles: string[]
   useEffect(() => {
     void loadData();
   }, []);
+
+  const reminderActivities = useMemo(() => activities.filter((activity) => {
+    const startsAt = new Date(text(activity, "ThoiGianBatDau")).getTime();
+    return text(activity, "TrangThai") === "Đã công bố" && Number.isFinite(startsAt) && startsAt > Date.now();
+  }), [activities]);
+  const selectedReminderActivity = reminderActivities.find((activity) => text(activity, "MaHD") === quickActivityId);
+  const reminderSchedule = selectedReminderActivity
+    ? new Date(text(selectedReminderActivity, "ThoiGianBatDau")).toLocaleString("vi-VN", {
+        timeZone: "Asia/Ho_Chi_Minh", hour: "2-digit", minute: "2-digit", day: "2-digit", month: "2-digit", year: "numeric",
+      })
+    : "";
+  const reminderMessage = selectedReminderActivity
+    ? `Nhắc lịch: ${text(selectedReminderActivity, "TenHoatDong")} sẽ diễn ra lúc ${reminderSchedule} tại ${text(selectedReminderActivity, "DiaDiem") || "địa điểm theo kế hoạch hoạt động"}.`
+    : "Chọn hoạt động đã công bố và sắp diễn ra để tạo lời nhắc lịch.";
+
+  useEffect(() => {
+    if (!modalActivityId) return;
+    let cancelled = false;
+    workflowRequest<Row[]>(`/training-points/activities/${modalActivityId}/registrations`)
+      .then((rows) => { if (!cancelled) setRegisteredStudents(Array.isArray(rows) ? rows : []); })
+      .catch((cause) => { if (!cancelled) setError(cause instanceof Error ? cause.message : "Không tải được sinh viên đã đăng ký hoạt động."); })
+      .finally(() => { if (!cancelled) setLoadingRegistrations(false); });
+    return () => { cancelled = true; };
+  }, [modalActivityId]);
 
   // Filtered broadcast notifications
   const filteredBroadcasts = useMemo(() => {
@@ -190,38 +129,28 @@ export default function TrainingPointsPanel({ user }: { user?: { roles: string[]
       return matchQuery;
     });
   }, [broadcasts, searchQuery]);
+  const averageReadRate = broadcasts.length
+    ? (broadcasts.reduce((total, item) => total + (item.tyLeDoc ?? 0), 0) / broadcasts.length).toFixed(1).replace(".", ",")
+    : "0,0";
 
   // Handle quick send
   async function handleQuickSend(e: FormEvent) {
     e.preventDefault();
-    if (!quickContent.trim()) {
-      setError("Vui lòng nhập nội dung thông báo.");
+    if (!selectedReminderActivity) {
+      setError("Vui lòng chọn hoạt động đã công bố và sắp diễn ra.");
       return;
     }
     setBusy(true);
     setError("");
     try {
-      const title = quickContent.trim().split("\n")[0].slice(0, 60);
-      await workflowRequest("/training-points/broadcasts", {
+      const result = await workflowRequest<{ message: string; recipients: number }>("/training-points/broadcasts", {
         method: "POST",
-        body: {
-          tieuDe: title,
-          noiDung: quickContent.trim(),
-          doiTuong: quickTarget !== "Chọn người nhận" ? quickTarget : "Toàn khoa",
-          kenh: Object.keys(channels).filter((k) => channels[k as keyof typeof channels]),
-        },
-      }).catch(() => null);
-
-      const newItem: BroadcastItem = {
-        id: Date.now(),
-        tieuDe: title,
-        doiTuong: quickTarget !== "Chọn người nhận" ? quickTarget : "Toàn khoa",
-        guiLuc: "Vừa xong",
-        daDoc: "—",
-      };
-      setBroadcasts((prev) => [newItem, ...prev]);
-      setNotice("Đã lên lịch gửi thông báo thành công!");
-      setQuickContent("");
+        body: { maHD: Number(quickActivityId) },
+      });
+      setNotice(result.message || `Đã gửi lời nhắc lịch cho ${result.recipients} sinh viên đã đăng ký.`);
+      setQuickActivityId("");
+      const updatedBroadcasts = await workflowRequest<BroadcastItem[]>("/training-points/broadcasts").catch(() => null);
+      if (updatedBroadcasts) setBroadcasts(updatedBroadcasts);
     } catch (err) {
       setError(err instanceof Error ? err.message : "Không gửi được thông báo.");
     } finally {
@@ -273,11 +202,11 @@ export default function TrainingPointsPanel({ user }: { user?: { roles: string[]
     setBusy(true);
     setError("");
     try {
-      const selectedStudent = students.find((s) => text(s, "MaSV") === modalStudentId);
+      const selectedStudent = registeredStudents.find((s) => text(s, "MaSV") === modalStudentId);
       const selectedActivity = activities.find((a) => text(a, "MaHD") === modalActivityId);
       const pts = Number(modalPoints);
 
-      await workflowRequest("/training-points", {
+      const created = await workflowRequest<{ MaDiem?: number | string; TrangThai?: string }>("/training-points", {
         method: "POST",
         body: {
           maSV: Number(modalStudentId),
@@ -287,10 +216,10 @@ export default function TrainingPointsPanel({ user }: { user?: { roles: string[]
           hocKy: modalSemester,
           namHoc: modalYear,
         },
-      }).catch(() => null);
+      });
 
       const newItem: TrainingPointItem = {
-        MaDiem: Date.now(),
+        MaDiem: created.MaDiem ?? Date.now(),
         MaSV: modalStudentId,
         MSSV: text(selectedStudent, "MSSV") || "SV2024",
         TenSinhVien: text(selectedStudent, "HoTen") || "Sinh viên",
@@ -299,8 +228,8 @@ export default function TrainingPointsPanel({ user }: { user?: { roles: string[]
         NamHoc: modalYear,
         SoDiem: pts,
         LyDo: modalReason.trim(),
-        TrangThai: "Đã xác nhận",
-        TenNguoiDuyet: user?.name || "TS. Nguyễn Minh Anh",
+        TrangThai: created.TrangThai || "Chờ xác nhận",
+        TenNguoiDuyet: "",
       };
 
       setPointsHistory((prev) => [newItem, ...prev]);
@@ -339,7 +268,7 @@ export default function TrainingPointsPanel({ user }: { user?: { roles: string[]
       <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", flexWrap: "wrap", gap: "16px" }}>
         <div>
           <h1 style={{ fontSize: "24px", fontWeight: 800, color: "#0f172a", margin: "0 0 6px 0" }}>
-            Thông báo &amp; điểm rèn luyện
+            Quản lý điểm rèn luyện
           </h1>
           <p style={{ margin: 0, fontSize: "14px", color: "#64748b" }}>
             Gửi thông báo theo nhóm và quản lý cộng/trừ điểm rèn luyện minh bạch.
@@ -413,11 +342,11 @@ export default function TrainingPointsPanel({ user }: { user?: { roles: string[]
                     borderRadius: "999px",
                   }}
                 >
-                  12 bản nháp
+                  {broadcasts.length} lời nhắc lịch
                 </span>
               </div>
               <p style={{ margin: "4px 0 0 0", fontSize: "13px", color: "#64748b" }}>
-                Tỷ lệ đọc trung bình <strong>88,6%</strong>
+                Tỷ lệ đọc trung bình <strong>{averageReadRate}%</strong>
               </p>
             </div>
           </div>
@@ -519,46 +448,6 @@ export default function TrainingPointsPanel({ user }: { user?: { roles: string[]
               </svg>
             </div>
 
-            {/* Channel Filter */}
-            <div style={{ position: "relative" }}>
-              <select
-                value={selectedChannel}
-                onChange={(e) => setSelectedChannel(e.target.value)}
-                style={{
-                  padding: "7px 20px 7px 26px",
-                  fontSize: "12.5px",
-                  border: "1px solid #e2e8f0",
-                  borderRadius: "8px",
-                  background: "#f8fafc",
-                  color: "#334155",
-                  outline: "none",
-                  cursor: "pointer",
-                }}
-              >
-                <option>Kênh gửi</option>
-                <option>Ứng dụng</option>
-                <option>Email</option>
-                <option>Tự động nhắc</option>
-              </select>
-              <svg
-                style={{
-                  position: "absolute",
-                  left: "8px",
-                  top: "9px",
-                  width: "13px",
-                  height: "13px",
-                  color: "#64748b",
-                  pointerEvents: "none",
-                }}
-                viewBox="0 0 24 24"
-                fill="none"
-                stroke="currentColor"
-                strokeWidth="2"
-              >
-                <polygon points="22 3 2 3 10 12.46 10 19 14 21 14 12.46 22 3" />
-              </svg>
-            </div>
-
             {/* Export Button */}
             <button
               type="button"
@@ -625,6 +514,13 @@ export default function TrainingPointsPanel({ user }: { user?: { roles: string[]
                     </td>
                   </tr>
                 ))}
+                {filteredBroadcasts.length === 0 && (
+                  <tr>
+                    <td colSpan={4} style={{ padding: "24px 4px", textAlign: "center", color: "#64748b" }}>
+                      Chưa có lời nhắc lịch nào được gửi.
+                    </td>
+                  </tr>
+                )}
               </tbody>
             </table>
           </div>
@@ -644,19 +540,19 @@ export default function TrainingPointsPanel({ user }: { user?: { roles: string[]
         >
           <div style={{ marginBottom: "16px" }}>
             <h2 style={{ margin: 0, fontSize: "17px", fontWeight: 800, color: "#1e293b" }}>
-              Soạn nhanh
+              Nhắc lịch hoạt động
             </h2>
             <p style={{ margin: "4px 0 0 0", fontSize: "13px", color: "#64748b" }}>
-              Thông báo đa kênh
+              Gửi trong ứng dụng cho sinh viên đã đăng ký hoạt động.
             </p>
           </div>
 
           <form onSubmit={handleQuickSend} style={{ display: "flex", flexDirection: "column", gap: "14px", flex: 1 }}>
-            {/* Target Select */}
+            {/* Activity Select */}
             <div style={{ position: "relative" }}>
               <select
-                value={quickTarget}
-                onChange={(e) => setQuickTarget(e.target.value)}
+                value={quickActivityId}
+                onChange={(e) => setQuickActivityId(e.target.value)}
                 style={{
                   width: "100%",
                   padding: "9px 12px 9px 34px",
@@ -664,17 +560,17 @@ export default function TrainingPointsPanel({ user }: { user?: { roles: string[]
                   border: "1px solid #e2e8f0",
                   borderRadius: "8px",
                   background: "#f8fafc",
-                  color: quickTarget === "Chọn người nhận" ? "#94a3b8" : "#1e293b",
+                  color: quickActivityId ? "#1e293b" : "#94a3b8",
                   outline: "none",
                   cursor: "pointer",
                 }}
               >
-                <option>Chọn người nhận</option>
-                <option>Toàn khoa CNTT</option>
-                <option>4 lớp K24 (Cổ vũ)</option>
-                <option>Sinh viên dự thi (120 SV)</option>
-                <option>Sinh viên tham dự Seminar (186 SV)</option>
-                <option>Ban hỗ trợ &amp; Ban tổ chức</option>
+                <option value="">Chọn hoạt động sắp diễn ra</option>
+                {reminderActivities.map((activity) => (
+                  <option key={text(activity, "MaHD")} value={text(activity, "MaHD")}>
+                    {text(activity, "TenHoatDong")}
+                  </option>
+                ))}
               </select>
               <svg
                 style={{
@@ -698,12 +594,11 @@ export default function TrainingPointsPanel({ user }: { user?: { roles: string[]
               </svg>
             </div>
 
-            {/* Message Textarea */}
+            {/* Generated reminder content */}
             <textarea
               rows={4}
-              value={quickContent}
-              onChange={(e) => setQuickContent(e.target.value)}
-              placeholder='Nhắc lịch: Seminar "Generative AI trong giáo dục" sẽ diễn ra lúc 08:00 ngày 12/10 tại Hội trường A.'
+              value={reminderMessage}
+              readOnly
               style={{
                 width: "100%",
                 padding: "12px",
@@ -718,65 +613,17 @@ export default function TrainingPointsPanel({ user }: { user?: { roles: string[]
               }}
             />
 
-            {/* Channel Tags */}
-            <div style={{ display: "flex", gap: "8px", flexWrap: "wrap", alignItems: "center" }}>
-              <button
-                type="button"
-                onClick={() => setChannels((p) => ({ ...p, app: !p.app }))}
-                style={{
-                  padding: "4px 12px",
-                  borderRadius: "999px",
-                  fontSize: "12px",
-                  fontWeight: 600,
-                  cursor: "pointer",
-                  border: channels.app ? "1px solid #bfdbfe" : "1px solid #e2e8f0",
-                  background: channels.app ? "#eff6ff" : "#f8fafc",
-                  color: channels.app ? "#2563eb" : "#64748b",
-                  transition: "all 0.15s ease",
-                }}
-              >
+            <div style={{ display: "flex", alignItems: "center", gap: "8px", color: "#64748b", fontSize: "12px" }}>
+              <span>Kênh gửi</span>
+              <span style={{ padding: "4px 12px", borderRadius: "999px", fontWeight: 600, color: "#2563eb", background: "#eff6ff", border: "1px solid #bfdbfe" }}>
                 Ứng dụng
-              </button>
-              <button
-                type="button"
-                onClick={() => setChannels((p) => ({ ...p, email: !p.email }))}
-                style={{
-                  padding: "4px 12px",
-                  borderRadius: "999px",
-                  fontSize: "12px",
-                  fontWeight: 600,
-                  cursor: "pointer",
-                  border: channels.email ? "1px solid #bfdbfe" : "1px solid #e2e8f0",
-                  background: channels.email ? "#eff6ff" : "#f8fafc",
-                  color: channels.email ? "#2563eb" : "#64748b",
-                  transition: "all 0.15s ease",
-                }}
-              >
-                Email
-              </button>
-              <button
-                type="button"
-                onClick={() => setChannels((p) => ({ ...p, auto: !p.auto }))}
-                style={{
-                  padding: "4px 12px",
-                  borderRadius: "999px",
-                  fontSize: "12px",
-                  fontWeight: 600,
-                  cursor: "pointer",
-                  border: channels.auto ? "1px solid #bbf7d0" : "1px solid #e2e8f0",
-                  background: channels.auto ? "#f0fdf4" : "#f8fafc",
-                  color: channels.auto ? "#16a34a" : "#64748b",
-                  transition: "all 0.15s ease",
-                }}
-              >
-                Tự động nhắc
-              </button>
+              </span>
             </div>
 
             {/* Schedule/Send Button */}
             <button
               type="submit"
-              disabled={busy}
+              disabled={busy || !quickActivityId}
               style={{
                 marginTop: "auto",
                 display: "inline-flex",
@@ -790,7 +637,8 @@ export default function TrainingPointsPanel({ user }: { user?: { roles: string[]
                 padding: "10px 16px",
                 fontSize: "13.5px",
                 fontWeight: 600,
-                cursor: busy ? "not-allowed" : "pointer",
+                cursor: busy || !quickActivityId ? "not-allowed" : "pointer",
+                opacity: busy || !quickActivityId ? 0.6 : 1,
                 boxShadow: "0 2px 4px rgba(37,99,235,0.18)",
                 transition: "all 0.15s ease",
               }}
@@ -803,7 +651,7 @@ export default function TrainingPointsPanel({ user }: { user?: { roles: string[]
                 <line x1="8" y1="2" x2="8" y2="6" />
                 <line x1="3" y1="10" x2="21" y2="10" />
               </svg>
-              <span>Lên lịch gửi</span>
+              <span>Gửi nhắc lịch</span>
             </button>
           </form>
         </div>
@@ -878,7 +726,7 @@ export default function TrainingPointsPanel({ user }: { user?: { roles: string[]
               <tr style={{ borderBottom: "1px solid #e2e8f0", color: "#334155", fontSize: "12px", fontWeight: 800, textTransform: "uppercase", letterSpacing: "0.3px" }}>
                 <th style={{ textAlign: "left", padding: "11px 14px 11px 4px", whiteSpace: "nowrap", fontWeight: 800 }}>SINH VIÊN</th>
                 <th style={{ textAlign: "left", padding: "11px 14px", whiteSpace: "nowrap", fontWeight: 800 }}>NỘI DUNG</th>
-                <th style={{ textAlign: "left", padding: "11px 14px", whiteSpace: "nowrap", fontWeight: 800 }}>HOẠT ĐỘNG</th>
+                <th style={{ textAlign: "left", padding: "11px 14px", whiteSpace: "nowrap", fontWeight: 800 }}>HOẠT ĐỘNG / HÌNH THỨC</th>
                 <th style={{ textAlign: "left", padding: "11px 14px", whiteSpace: "nowrap", fontWeight: 800 }}>THAY ĐỔI</th>
                 <th style={{ textAlign: "left", padding: "11px 14px", whiteSpace: "nowrap", fontWeight: 800 }}>NGƯỜI DUYỆT</th>
                 <th style={{ textAlign: "left", padding: "11px 14px", whiteSpace: "nowrap", fontWeight: 800 }}>TRẠNG THÁI</th>
@@ -886,6 +734,7 @@ export default function TrainingPointsPanel({ user }: { user?: { roles: string[]
               </tr>
             </thead>
             <tbody>
+              {!loading && pointsHistory.length === 0 && <tr><td colSpan={7} style={{ padding: "24px 12px", textAlign: "center", color: "#64748b" }}>Chưa có phát sinh điểm rèn luyện.</td></tr>}
               {pointsHistory.map((item, index) => {
                 const isPositive = Number(item.SoDiem) > 0;
                 const isPending = item.TrangThai === "Chờ xác nhận" || item.TrangThai === "Chờ duyệt";
@@ -911,6 +760,9 @@ export default function TrainingPointsPanel({ user }: { user?: { roles: string[]
                     </td>
                     <td style={{ padding: "14px 14px", color: "#475569" }}>
                       {item.TenHoatDong}
+                      <span style={{ display: "block", marginTop: "3px", color: "#64748b", fontSize: "12px" }}>
+                        {item.HinhThucThamGia || (item.LyDo.toLowerCase().includes("cổ vũ") ? "Cổ vũ" : item.LyDo.toLowerCase().includes("hỗ trợ") ? "Hỗ trợ" : item.LyDo.toLowerCase().includes("dự thi") ? "Dự thi" : "Ghi nhận điểm")}
+                      </span>
                     </td>
                     <td style={{ padding: "14px 14px", whiteSpace: "nowrap" }}>
                       <span
@@ -1150,18 +1002,17 @@ export default function TrainingPointsPanel({ user }: { user?: { roles: string[]
                   value={modalStudentId}
                   onChange={(e) => setModalStudentId(e.target.value)}
                   required
+                  disabled={!modalActivityId || loadingRegistrations || registeredStudents.length === 0}
                   style={{ width: "100%", padding: "9px 12px", fontSize: "13px", border: "1px solid #cbd5e1", borderRadius: "8px" }}
                 >
-                  <option value="">-- Chọn sinh viên --</option>
-                  {students.map((st) => (
+                  <option value="">{!modalActivityId ? "-- Chọn hoạt động trước --" : "-- Chọn sinh viên đã đăng ký --"}</option>
+                  {registeredStudents.map((st) => (
                     <option key={text(st, "MaSV")} value={text(st, "MaSV")}>
                       {text(st, "MSSV")} · {text(st, "HoTen")} ({text(st, "TenLop") || "Lớp CNTT"})
                     </option>
                   ))}
-                  <option value="1">SV240218 · Phạm Ngọc Linh</option>
-                  <option value="2">SV240119 · Trần Gia Bảo</option>
-                  <option value="3">SV230119 · Đỗ Minh Khang</option>
                 </select>
+                {modalActivityId && <small style={{ color: "#64748b" }}>{loadingRegistrations ? "Đang tải sinh viên đã đăng ký…" : registeredStudents.length ? `${registeredStudents.length} sinh viên đã đăng ký` : "Hoạt động này chưa có sinh viên đăng ký hợp lệ."}</small>}
               </div>
 
               <div>
@@ -1170,7 +1021,12 @@ export default function TrainingPointsPanel({ user }: { user?: { roles: string[]
                 </label>
                 <select
                   value={modalActivityId}
-                  onChange={(e) => setModalActivityId(e.target.value)}
+                  onChange={(e) => {
+                    setModalStudentId("");
+                    setRegisteredStudents([]);
+                    setLoadingRegistrations(Boolean(e.target.value));
+                    setModalActivityId(e.target.value);
+                  }}
                   required
                   style={{ width: "100%", padding: "9px 12px", fontSize: "13px", border: "1px solid #cbd5e1", borderRadius: "8px" }}
                 >
@@ -1180,9 +1036,6 @@ export default function TrainingPointsPanel({ user }: { user?: { roles: string[]
                       {text(ac, "TenHoatDong")}
                     </option>
                   ))}
-                  <option value="15">Seminar Generative AI trong giáo dục</option>
-                  <option value="18">Cuộc thi Sinh viên nghiên cứu khoa học cấp Khoa</option>
-                  <option value="16">Workshop Cloud Native &amp; DevSecOps</option>
                 </select>
               </div>
 

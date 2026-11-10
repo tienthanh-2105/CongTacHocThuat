@@ -1,10 +1,10 @@
-import { BadRequestException, Body, Controller, Get, Inject, Param, ParseIntPipe, Patch, Post, UseGuards } from '@nestjs/common';
+import { Body, Controller, Get, Inject, Param, ParseIntPipe, Patch, Post, Query, UseGuards } from '@nestjs/common';
 import { ApiBearerAuth, ApiCookieAuth, ApiOperation, ApiTags } from '@nestjs/swagger';
 import { FeaturesService } from '../../business/features/features.service';
 import { SessionGuard } from '../auth/auth.guards';
 import type { AuthRequest } from '../auth/auth.http';
 import { Req } from '@nestjs/common';
-import { CreateExpenseDto, CreateSeminarDto, RegisterPushDeviceDto, UnregisterPushDeviceDto, UpdateSeminarDetailsDto } from './features.dto';
+import { CreateExpenseDto, CreateSeminarDto, CreateSettlementReportDto, RegisterPushDeviceDto, UnregisterPushDeviceDto, UpdateExpenseDto, UpdateSeminarDetailsDto } from './features.dto';
 import { PushNotificationsService } from '../../business/features/push-notifications.service';
 
 @ApiTags('mobile')
@@ -91,12 +91,14 @@ export class SeminarsController {
 
   @Get()
   @ApiOperation({ summary: 'Danh sách seminar và thông tin hoạt động' })
-  list() { return this.service.listSeminars(); }
+  list(@Req() request: AuthRequest, @Query('source') source?: string) {
+    return this.service.listSeminars(request.auth!, source === 'management');
+  }
 
   @Post()
-  @ApiOperation({ summary: 'Tạo seminar và hoạt động học thuật liên kết (cán bộ khoa/giảng viên)' })
+  @ApiOperation({ summary: 'Tạo bản nháp seminar và hoạt động học thuật liên kết' })
   create(@Req() request: AuthRequest, @Body() dto: CreateSeminarDto) {
-    void request; void dto; throw new BadRequestException('Lập đề xuất Seminar trong Hoạt động học thuật, bản chi phí và kế hoạch tổ chức; chỉ công bố sau khi khoa và CTSV ký');
+    return this.service.createSeminar(request.auth!, dto);
   }
 
   @Get(':id')
@@ -127,6 +129,11 @@ export class ExpensesController {
   create(@Req() request: AuthRequest, @Body() dto: CreateExpenseDto) {
     return this.service.createExpense(request.auth!, dto);
   }
+
+  @Patch(':id')
+  update(@Req() request: AuthRequest, @Param('id', ParseIntPipe) id: number, @Body() dto: UpdateExpenseDto) {
+    return this.service.updateExpense(request.auth!, id, dto);
+  }
 }
 
 @ApiTags('settlements')
@@ -136,6 +143,12 @@ export class ExpensesController {
 @Controller('settlements')
 export class SettlementsController {
   constructor(@Inject(FeaturesService) private readonly service: FeaturesService) {}
+
+  @Get('activities')
+  @ApiOperation({ summary: 'Danh sách hoạt động người dùng được phép quyết toán' })
+  listActivities(@Req() request: AuthRequest) {
+    return this.service.listSettlementActivities(request.auth!);
+  }
 
   @Get(':activityId')
   @ApiOperation({ summary: 'Hồ sơ quyết toán và danh sách chi phí thực tế của hoạt động' })
@@ -163,6 +176,24 @@ export class SettlementsController {
 @Controller('reports')
 export class ReportsController {
   constructor(@Inject(FeaturesService) private readonly service: FeaturesService) {}
+
+  @Get('settlements')
+  @ApiOperation({ summary: 'Danh sách báo cáo quyết toán đã lập' })
+  listSettlementReports(@Req() request: AuthRequest) {
+    return this.service.listSettlementReports(request.auth!);
+  }
+
+  @Get('settlements/activities')
+  @ApiOperation({ summary: 'Danh sách hoạt động được phép lập báo cáo quyết toán' })
+  listSettlementReportActivities(@Req() request: AuthRequest) {
+    return this.service.listSettlementReportActivities(request.auth!);
+  }
+
+  @Post('settlements')
+  @ApiOperation({ summary: 'Lập báo cáo quyết toán cho hoạt động' })
+  createSettlementReport(@Req() request: AuthRequest, @Body() dto: CreateSettlementReportDto) {
+    return this.service.createSettlementReport(request.auth!, dto);
+  }
 
   @Get('activities/:activityId')
   @ApiOperation({ summary: 'Báo cáo hoạt động: đăng ký, điểm danh, chi phí và kết quả đã công bố' })

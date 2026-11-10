@@ -38,6 +38,9 @@ export async function workflowRequest<T = unknown>(
         : typeof rawMsg === "string"
         ? rawMsg
         : `Yêu cầu thất bại (${response.status})`;
+      if (message.includes("numeric string is expected")) {
+        throw new Error(`${message} · ${method} ${path}`);
+      }
       if (response.status >= 500) {
         throw new Error(`${message} · ${method} ${path}`);
       }

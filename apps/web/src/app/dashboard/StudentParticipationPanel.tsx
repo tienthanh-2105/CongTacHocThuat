@@ -6,8 +6,10 @@ import type { AuthUser } from "@/services/auth";
 import NoticeDialog from "./NoticeDialog";
 
 type Row = Record<string, unknown>;
+type TeamMemberLookup = { hoTen: string; tenLop: string };
 
 const text = (row: Row | null | undefined, key: string) => String(row?.[key] ?? "");
+const prizeLines = (value: unknown) => String(value ?? "").split(/[;\r\n]+/).map((line) => line.trim()).filter(Boolean);
 
 function formatDateVn(value: unknown): string {
   if (!value) return "Chưa cập nhật";
@@ -28,19 +30,19 @@ function formatDateVn(value: unknown): string {
   }
 }
 
-function formatDateOnly(value: unknown): string {
+function formatRegistrationDeadline(value: unknown): string {
   if (!value) return "Chưa cập nhật";
-  try {
-    const d = new Date(String(value));
-    if (isNaN(d.getTime())) return String(value);
-    return d.toLocaleDateString("vi-VN", {
-      day: "2-digit",
-      month: "2-digit",
-      year: "numeric",
-    });
-  } catch {
-    return String(value);
-  }
+  const date = new Date(String(value));
+  if (!Number.isFinite(date.getTime())) return String(value);
+
+  const timeZone = "Asia/Ho_Chi_Minh";
+  const time = date.toLocaleTimeString("vi-VN", {
+    timeZone, hour: "2-digit", minute: "2-digit", hourCycle: "h23",
+  });
+  const day = date.toLocaleDateString("vi-VN", {
+    timeZone, day: "2-digit", month: "2-digit", year: "numeric",
+  });
+  return `${time} ${day}`;
 }
 
 interface StudentParticipationPanelProps {
@@ -75,13 +77,16 @@ export default function StudentParticipationPanel({
 
   // Modals
   const [registeringActivity, setRegisteringActivity] = useState<Row | null>(null);
-  const [ticketRegistration, setTicketRegistration] = useState<Row | null>(null);
+  const [selectedActivity, setSelectedActivity] = useState<Row | null>(null);
 
   // Registration Form States
   const [regMode, setRegMode] = useState<"individual" | "team_create" | "team_join" | "support_cheer">("individual");
   const [teamName, setTeamName] = useState("");
-  const [teamMembersInput, setTeamMembersInput] = useState("");
+  const [teamMemberMssvs, setTeamMemberMssvs] = useState(["", "", "", ""]);
+  const [teamMemberLookups, setTeamMemberLookups] = useState<Record<string, TeamMemberLookup>>({});
   const [joinTeamId, setJoinTeamId] = useState("");
+  const [projectTitle, setProjectTitle] = useState("");
+  const [projectAdvisor, setProjectAdvisor] = useState("");
   const [supportRole, setSupportRole] = useState("Cổ vũ");
   const [supportNote, setSupportNote] = useState("");
 
@@ -90,7 +95,25 @@ export default function StudentParticipationPanel({
   const [notice, setNotice] = useState("");
   const [busy, setBusy] = useState(false);
   const [loading, setLoading] = useState(true);
-  const [copiedCode, setCopiedCode] = useState(false);
+  const [copiedTeamCode, setCopiedTeamCode] = useState("");
+
+  useEffect(() => {
+    if (regMode !== "team_create") return;
+    let active = true;
+    const mssvs = Array.from(new Set(teamMemberMssvs.map((value) => value.trim()).filter((value) => value.length >= 8)));
+    Promise.all(mssvs.map(async (mssv) => {
+      try {
+        const student = await workflowRequest<{ mssv: string; hoTen: string; tenLop: string }>(`/registrations/students/${encodeURIComponent(mssv)}`);
+        return [mssv, { hoTen: student.hoTen, tenLop: student.tenLop }] as const;
+      } catch {
+        return [mssv, null] as const;
+      }
+    })).then((results) => {
+      if (!active) return;
+      setTeamMemberLookups(Object.fromEntries(results.filter((item): item is readonly [string, TeamMemberLookup] => item[1] !== null)));
+    });
+    return () => { active = false; };
+  }, [regMode, teamMemberMssvs]);
 
   // Check if an activity has an approved detailed organizing plan
   const isActivityApproved = (row: Row): boolean => {
@@ -101,6 +124,14 @@ export default function StudentParticipationPanel({
           Boolean(row.CongBoLuc) ||
           row.TrangThai === "Đã công bố")
     );
+  };
+
+  const isRegistrationOpen = (row: Row): boolean => {
+    if (!isActivityApproved(row)) return false;
+    if (row.MoDangKySauHan === true || row.MoDangKySauHan === 1) return true;
+    if (!row.HanDangKy) return true;
+    const deadline = new Date(String(row.HanDangKy)).getTime();
+    return Number.isFinite(deadline) && deadline >= Date.now();
   };
 
   // Load Data
@@ -163,7 +194,7 @@ export default function StudentParticipationPanel({
 
       const isReg = Boolean(getStudentRegistration(act.MaHD));
       if (statusFilter === "registered" && !isReg) return false;
-      if (statusFilter === "open" && isReg) return false;
+      if (statusFilter === "open" && (isReg || !isRegistrationOpen(act))) return false;
 
       if (searchQuery.trim()) {
         const q = searchQuery.toLowerCase();
@@ -188,8 +219,10 @@ export default function StudentParticipationPanel({
       setRegMode("individual");
     }
     setTeamName("");
-    setTeamMembersInput("");
+    setTeamMemberMssvs(["", "", "", ""]);
     setJoinTeamId("");
+    setProjectTitle("");
+    setProjectAdvisor("");
     setSupportRole("Cổ vũ");
     setSupportNote("");
   };
@@ -209,9 +242,14 @@ export default function StudentParticipationPanel({
       if (regMode === "individual") {
         const type = getActivityType(registeringActivity);
         const hinhThuc = type === "competition" ? "Dự thi" : "Tham gia";
+        if (type === "competition" && (!projectTitle.trim() || !projectAdvisor.trim())) {
+          setError("Vui lòng nhập tên đề tài và giáo viên hướng dẫn.");
+          setBusy(false);
+          return;
+        }
         const res = await workflowRequest<{ message?: string }>("/registrations/individual", {
           method: "POST",
-          body: { maHD, hinhThuc },
+          body: { maHD, hinhThuc, ...(type === "competition" ? { tenDeTai: projectTitle.trim(), gvhd: projectAdvisor.trim() } : {}) },
         });
         setNotice(res.message || "Đăng ký cá nhân thành công!");
       } else if (regMode === "team_create") {
@@ -220,10 +258,12 @@ export default function StudentParticipationPanel({
           setBusy(false);
           return;
         }
-        const memberList = teamMembersInput
-          .split(/[\s,;]+/)
-          .map((m) => m.trim())
-          .filter(Boolean);
+        if (!projectTitle.trim() || !projectAdvisor.trim()) {
+          setError("Vui lòng nhập tên đề tài và giáo viên hướng dẫn.");
+          setBusy(false);
+          return;
+        }
+        const memberList = teamMemberMssvs.map((m) => m.trim()).filter(Boolean);
         if (memberList.length > 4) {
           setError("Tối đa 4 thành viên khác (đội 2-5 bạn)");
           setBusy(false);
@@ -235,6 +275,8 @@ export default function StudentParticipationPanel({
             maCThi: maCThi || maHD,
             tenDoi: teamName.trim(),
             thanhVienMSSV: memberList,
+            tenDeTai: projectTitle.trim(),
+            gvhd: projectAdvisor.trim(),
           },
         });
         setNotice(res.message || "Đã tạo đội và đăng ký dự thi thành công!");
@@ -268,16 +310,18 @@ export default function StudentParticipationPanel({
     }
   };
 
-  // Copy team code helper
-  const copyToClipboard = (val: string) => {
-    void navigator.clipboard.writeText(val);
-    setCopiedCode(true);
-    setTimeout(() => setCopiedCode(false), 2000);
+  const copyTeamCode = async (teamCode: string) => {
+    try {
+      await navigator.clipboard.writeText(teamCode);
+      setCopiedTeamCode(teamCode);
+      setTimeout(() => setCopiedTeamCode((current) => current === teamCode ? "" : current), 2000);
+    } catch {
+      setError("Không thể sao chép mã đội.");
+    }
   };
 
   const studentName: string = String(profile?.HoTen ?? user?.name ?? "Sinh viên");
   const studentMssv: string = String(profile?.MSSV ?? user?.username ?? "—");
-  const studentClass: string = String(profile?.TenLop ?? "Khoa CNTT");
 
   return (
     <div style={{ width: "100%", display: "flex", flexDirection: "column", gap: "24px" }}>
@@ -326,7 +370,7 @@ export default function StudentParticipationPanel({
               Đang mở đăng ký
             </div>
             <div style={{ fontSize: "24px", fontWeight: 800, color: "#0f172a" }}>
-              {activities.length} <span style={{ fontSize: "14px", fontWeight: 500, color: "#64748b" }}>hoạt động</span>
+              {activities.filter(isRegistrationOpen).length} <span style={{ fontSize: "14px", fontWeight: 500, color: "#64748b" }}>hoạt động</span>
             </div>
           </div>
         </div>
@@ -503,8 +547,8 @@ export default function StudentParticipationPanel({
 
         {/* Search input & status filter (only when looking at activities) */}
         {activeTab !== "points" && activeTab !== "mine" && (
-          <div style={{ display: "flex", gap: "10px", alignItems: "center", flexWrap: "wrap" }}>
-            <div style={{ position: "relative" }}>
+          <div style={{ display: "flex", alignItems: "center", gap: "8px", flexWrap: "nowrap", minWidth: 0 }}>
+            <div style={{ position: "relative", flex: "1 1 220px", minWidth: 0 }}>
               <input
                 type="text"
                 placeholder="Tìm hoạt động, địa điểm..."
@@ -515,11 +559,13 @@ export default function StudentParticipationPanel({
                   borderRadius: "8px",
                   border: "1px solid #cbd5e1",
                   fontSize: "13.5px",
-                  width: "220px",
+                  width: "100%",
+                  boxSizing: "border-box",
                   outline: "none",
+                  paddingRight: "34px",
                 }}
               />
-              <span style={{ position: "absolute", left: "10px", top: "8px", opacity: 0.5, fontSize: "14px" }}>
+              <span style={{ position: "absolute", right: "10px", top: "50%", transform: "translateY(-50%)", pointerEvents: "none" }}>
                 🔍
               </span>
             </div>
@@ -535,6 +581,8 @@ export default function StudentParticipationPanel({
                 background: "#ffffff",
                 color: "#334155",
                 fontWeight: 500,
+                flex: "0 1 180px",
+                minWidth: "140px",
               }}
             >
               <option value="all">Tất cả trạng thái</option>
@@ -586,6 +634,8 @@ export default function StudentParticipationPanel({
                 const isRegistered = Boolean(reg);
                 const isTeam = act.HinhThucThi === "Theo đội";
                 const isApproved = isActivityApproved(act);
+                const canRegister = isRegistrationOpen(act);
+                const registrationFormat = text(act, "TheLe").split(/[.;\n]/)[0].trim();
 
                 const badgeBg =
                   type === "competition"
@@ -621,7 +671,7 @@ export default function StudentParticipationPanel({
                       transition: "transform 0.15s ease, box-shadow 0.15s ease",
                     }}
                   >
-                    <div style={{ padding: "20px" }}>
+                    <div style={{ padding: "18px 20px 20px" }}>
                       {/* Top Badges */}
                       <div
                         style={{
@@ -662,7 +712,7 @@ export default function StudentParticipationPanel({
                           >
                             ✓ Đã đăng ký
                           </span>
-                        ) : isApproved ? (
+                        ) : canRegister ? (
                           <span
                             style={{
                               padding: "4px 8px",
@@ -673,7 +723,20 @@ export default function StudentParticipationPanel({
                               color: "#166534",
                             }}
                           >
-                            🟢 Đang mở
+                            🟢 {act.MoDangKySauHan ? "Đang mở lại" : "Đang mở"}
+                          </span>
+                        ) : isApproved ? (
+                          <span
+                            style={{
+                              padding: "4px 8px",
+                              borderRadius: "6px",
+                              fontSize: "12px",
+                              fontWeight: 600,
+                              background: "#fff7ed",
+                              color: "#c2410c",
+                            }}
+                          >
+                            ⏳ Hết hạn đăng ký
                           </span>
                         ) : (
                           <span
@@ -694,61 +757,92 @@ export default function StudentParticipationPanel({
                       {/* Title */}
                       <h3
                         style={{
-                          fontSize: "16px",
+                          fontSize: "18px",
                           fontWeight: 700,
                           color: "#0f172a",
                           margin: "0 0 10px",
                           lineHeight: 1.45,
                         }}
                       >
-                        {text(act, "TenHoatDong")}
+                        <button
+                          type="button"
+                          onClick={() => setSelectedActivity(act)}
+                          aria-label={`Xem chi tiết ${text(act, "TenHoatDong")}`}
+                          style={{
+                            padding: 0,
+                            border: 0,
+                            background: "transparent",
+                            color: "inherit",
+                            font: "inherit",
+                            lineHeight: "inherit",
+                            textAlign: "left",
+                            cursor: "pointer",
+                          }}
+                        >
+                          {text(act, "TenHoatDong")}
+                        </button>
                       </h3>
 
                       {/* Points Reward Pill */}
-                      <div style={{ marginBottom: "14px" }}>
+                      <div >
                         <span
                           style={{
                             display: "inline-flex",
                             alignItems: "center",
-                            gap: "4px",
-                            fontSize: "12.5px",
+                          gap: "4px",
+                            fontSize: "14px",
                             fontWeight: 700,
                             color: "#d97706",
                             background: "#fffbeb",
                             border: "1px solid #fde68a",
                             padding: "3px 8px",
                             borderRadius: "6px",
+                            maxWidth: "100%",
+                            whiteSpace: "normal",
                           }}
                         >
-                          ⭐ {type === "competition" ? "+5 điểm rèn luyện" : "+3 điểm rèn luyện"}
+                          {type === "competition" ? (
+                            <>
+                              <span>🏆</span>
+                              <span>
+                                {prizeLines(act.GiaiThuong).length
+                                  ? prizeLines(act.GiaiThuong).map((line, index) => <span key={`${index}-${line}`} style={{ display: "block" }}>{line}</span>)
+                                  : "Xem thể lệ cuộc thi"}
+                              </span>
+                            </>
+                          ) : type === "seminar"
+                            ? `⭐ ${text(act, "DiemRenLuyen") ? `+${text(act, "DiemRenLuyen")} điểm rèn luyện` : "Chưa cập nhật điểm rèn luyện"}`
+                            : "⭐ +3 điểm rèn luyện"}
                         </span>
                       </div>
 
                       {/* Metadata Items */}
-                      <div style={{ display: "flex", flexDirection: "column", gap: "8px", fontSize: "13px", color: "#475569" }}>
-                        <div style={{ display: "flex", alignItems: "flex-start", gap: "8px" }}>
-                          <span>📅</span>
+                      <div style={{ marginTop: "14px", display: "grid", gap: "8px", fontSize: "15px", lineHeight: 1.5, color: "#334155" }}>
+                        <div style={{ display: "flex", alignItems: "flex-start", gap: "7px" }}>
+                          <span >📅</span>
                           <span>
-                            <strong>Thời gian:</strong> {text(act, "ThoiGianSeminar") || formatDateVn(act.ThoiGianBatDau || act.TgDuKien)}
+                            <strong>Thời gian:</strong> {type === "competition" && text(act, "TgDuKien")
+                              ? text(act, "TgDuKien")
+                              : formatDateVn(act.ThoiGianBatDau || text(act, "ThoiGianSeminar") || act.TgBatDau || act.TgDuKien)}
                           </span>
                         </div>
-                        <div style={{ display: "flex", alignItems: "flex-start", gap: "8px" }}>
-                          <span>📍</span>
+                        <div style={{ display: "flex", alignItems: "flex-start", gap: "7px" }}>
+                          <span >📍</span>
                           <span>
                             <strong>Địa điểm:</strong> {text(act, "DiaDiem") || "Trung tâm thư viện F401, trường Đại học Công Thương Thành phố Hồ Chí Minh"}
                           </span>
                         </div>
-                        <div style={{ display: "flex", alignItems: "flex-start", gap: "8px" }}>
-                          <span>👥</span>
+                        <div style={{ display: "flex", alignItems: "flex-start", gap: "7px" }}>
+                          <span >👥</span>
                           <span>
                             <strong>Hình thức:</strong>{" "}
-                            {isTeam ? "Thi đấu theo đội (2–5 bạn)" : type === "competition" ? "Cá nhân dự thi" : "Tham dự tự do"}
+                            {type === "competition" ? registrationFormat || (isTeam ? "Thi đấu theo đội" : "Cá nhân dự thi") : "Tham dự tự do"}
                           </span>
                         </div>
-                        <div style={{ display: "flex", alignItems: "flex-start", gap: "8px" }}>
-                          <span>⏳</span>
+                        <div style={{ display: "flex", alignItems: "flex-start", gap: "7px" }}>
+                          <span >⏳</span>
                           <span>
-                            <strong>Hạn đăng ký:</strong> {formatDateOnly(act.HanDangKy)}
+                            <strong>Hạn đăng ký:</strong> {formatRegistrationDeadline(act.HanDangKy)}
                           </span>
                         </div>
                       </div>
@@ -761,7 +855,7 @@ export default function StudentParticipationPanel({
                             padding: "10px 12px",
                             background: "#f8fafc",
                             borderRadius: "8px",
-                            fontSize: "12.5px",
+                            fontSize: "14px",
                             color: "#64748b",
                             lineHeight: 1.5,
                             maxHeight: "68px",
@@ -784,35 +878,16 @@ export default function StudentParticipationPanel({
                         background: isRegistered ? "#f0fdf4" : "#f8fafc",
                         borderTop: isRegistered ? "1px solid #bbf7d0" : "1px solid #e2e8f0",
                         display: "flex",
-                        justifyContent: "space-between",
+                        justifyContent: "flex-end",
                         alignItems: "center",
                       }}
                     >
                       {isRegistered ? (
+                        <div>
+                          {reg?.TenDoi ? `Đội: ${String(reg.TenDoi)}` : "Đã ghi nhận đăng ký"}
+                        </div>
+                      ) : !canRegister ? (
                         <>
-                          <div style={{ fontSize: "12px", color: "#15803d", fontWeight: 600 }}>
-                            {reg?.TenDoi ? `Đội: ${String(reg.TenDoi)}` : "Đã ghi nhận đăng ký"}
-                          </div>
-                          <button
-                            type="button"
-                            onClick={() => setTicketRegistration(reg || act)}
-                            style={{
-                              padding: "7px 14px",
-                              borderRadius: "6px",
-                              background: "#ffffff",
-                              color: "#15803d",
-                              border: "1px solid #86efac",
-                              fontWeight: 700,
-                              fontSize: "13px",
-                              cursor: "pointer",
-                            }}
-                          >
-                            🎫 Xem vé & QR
-                          </button>
-                        </>
-                      ) : !isApproved ? (
-                        <>
-                          <span style={{ fontSize: "12px", color: "#94a3b8" }}>Chờ phê duyệt</span>
                           <button
                             type="button"
                             disabled
@@ -827,12 +902,11 @@ export default function StudentParticipationPanel({
                               cursor: "not-allowed",
                             }}
                           >
-                            Chưa mở đăng ký
+                            {isApproved ? "Đã hết hạn đăng ký" : "Chưa mở đăng ký"}
                           </button>
                         </>
                       ) : (
                         <>
-                          <span style={{ fontSize: "12px", color: "#64748b" }}>Miễn phí tham gia</span>
                           <button
                             type="button"
                             onClick={() => openRegisterModal(act)}
@@ -893,7 +967,7 @@ export default function StudentParticipationPanel({
                 Danh sách hoạt động bạn đã đăng ký
               </h2>
               <p style={{ margin: 0, fontSize: "13.5px", color: "#64748b" }}>
-                Xuất trình vé tham dự hoặc mã đội khi tham gia thi đấu và điểm danh nhận điểm rèn luyện.
+                Theo dõi trạng thái đăng ký và xem mã đội thi của bạn.
               </p>
             </div>
             <button
@@ -970,6 +1044,7 @@ export default function StudentParticipationPanel({
                 <tbody>
                   {registrations.map((row) => {
                     const isTeamLeader = row.VaiTroDoi === "Trưởng đội";
+                    const teamCode = text(row, "MaDoi");
                     return (
                       <tr
                         key={text(row, "MaDK")}
@@ -1051,23 +1126,25 @@ export default function StudentParticipationPanel({
                           </span>
                         </td>
                         <td style={{ padding: "14px 16px", verticalAlign: "middle", textAlign: "right" }}>
-                          <div style={{ display: "inline-flex", gap: "8px" }}>
-                            <button
-                              type="button"
-                              onClick={() => setTicketRegistration(row)}
-                              style={{
-                                padding: "6px 12px",
-                                borderRadius: "6px",
-                                background: "#ffffff",
-                                color: "#2563eb",
-                                border: "1px solid #bfdbfe",
-                                fontWeight: 600,
-                                fontSize: "13px",
-                                cursor: "pointer",
-                              }}
-                            >
-                              🎫 Thẻ tham dự
-                            </button>
+                          <div style={{ display: "inline-flex", gap: "8px", flexWrap: "wrap", justifyContent: "flex-end" }}>
+                            {teamCode && (
+                              <button
+                                type="button"
+                                onClick={() => void copyTeamCode(teamCode)}
+                                style={{
+                                  padding: "6px 12px",
+                                  borderRadius: "6px",
+                                  background: "#ffffff",
+                                  color: "#2563eb",
+                                  border: "1px solid #bfdbfe",
+                                  fontWeight: 600,
+                                  fontSize: "13px",
+                                  cursor: "pointer",
+                                }}
+                              >
+                                {copiedTeamCode === teamCode ? "✓ Đã chép" : `Sao chép mã đội #${teamCode}`}
+                              </button>
+                            )}
                             {onNavigate && (
                               <button
                                 type="button"
@@ -1218,6 +1295,70 @@ export default function StudentParticipationPanel({
         </div>
       )}
 
+      {/* ACTIVITY DETAILS MODAL */}
+      {selectedActivity && (
+        <div
+          role="presentation"
+          onClick={() => setSelectedActivity(null)}
+          style={{
+            position: "fixed",
+            inset: 0,
+            zIndex: 9998,
+            display: "flex",
+            alignItems: "center",
+            justifyContent: "center",
+            padding: "16px",
+            background: "rgba(15, 23, 42, 0.65)",
+            backdropFilter: "blur(4px)",
+          }}
+        >
+          <section
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby="student-activity-details-title"
+            onClick={(event) => event.stopPropagation()}
+            style={{
+              width: "100%",
+              maxWidth: "680px",
+              maxHeight: "90vh",
+              overflowY: "auto",
+              borderRadius: "16px",
+              background: "#ffffff",
+              boxShadow: "0 25px 50px -12px rgba(0,0,0,0.25)",
+            }}
+          >
+            <header style={{ padding: "20px 24px", borderBottom: "1px solid #e2e8f0", display: "flex", justifyContent: "space-between", gap: "16px" }}>
+              <div>
+                <div style={{ color: "#2563eb", fontWeight: 700, fontSize: "12px", marginBottom: "6px" }}>Chi tiết hoạt động</div>
+                <h2 id="student-activity-details-title" style={{ margin: 0, fontSize: "20px", lineHeight: 1.4, color: "#0f172a" }}>
+                  {text(selectedActivity, "TenHoatDong")}
+                </h2>
+              </div>
+              <button type="button" onClick={() => setSelectedActivity(null)} aria-label="Đóng chi tiết" style={{ border: 0, background: "transparent", color: "#64748b", fontSize: "24px", cursor: "pointer", alignSelf: "flex-start" }}>×</button>
+            </header>
+            <div style={{ padding: "22px 24px", display: "grid", gap: "16px", color: "#334155", fontSize: "14px", lineHeight: 1.6 }}>
+              <div><strong>Thời gian:</strong> {getActivityType(selectedActivity) === "competition" && text(selectedActivity, "TgDuKien")
+                ? text(selectedActivity, "TgDuKien")
+                : text(selectedActivity, "ThoiGianSeminar") || formatDateVn(selectedActivity.ThoiGianBatDau || selectedActivity.TgBatDau || selectedActivity.TgDuKien)}</div>
+              <div><strong>Địa điểm:</strong> {text(selectedActivity, "DiaDiem") || "Chưa cập nhật"}</div>
+              <div><strong>Hạn đăng ký:</strong> {formatRegistrationDeadline(selectedActivity.HanDangKy)}</div>
+              {Boolean(text(selectedActivity, "DoiTuongTG")) && <div><strong>Đối tượng dự thi/tham dự:</strong> {text(selectedActivity, "DoiTuongTG")}</div>}
+              {Boolean(text(selectedActivity, "TheLe")) && <div><strong>Hình thức và thể lệ:</strong> {text(selectedActivity, "TheLe")}</div>}
+              {Boolean(text(selectedActivity, "NoiDung")) && <div><strong>Nội dung:</strong> {text(selectedActivity, "NoiDung")}</div>}
+              {Boolean(text(selectedActivity, "GiaiThuong")) && (
+                <div>
+                  <strong>Giải thưởng:</strong>
+                  <div>{prizeLines(selectedActivity.GiaiThuong).map((line, index) => <div key={`${index}-${line}`}>{line}</div>)}</div>
+                </div>
+              )}
+            </div>
+            <footer style={{ padding: "14px 24px", borderTop: "1px solid #e2e8f0", display: "flex", justifyContent: "flex-end" }}>
+              <button type="button" onClick={() => setSelectedActivity(null)} style={{ padding: "8px 16px", border: "1px solid #cbd5e1", borderRadius: "8px", background: "#ffffff", color: "#334155", fontWeight: 600, cursor: "pointer" }}>Đóng</button>
+            </footer>
+          </section>
+        </div>
+      )}
+
       {/* REGISTRATION MODAL */}
       {registeringActivity && (
         <div
@@ -1238,7 +1379,7 @@ export default function StudentParticipationPanel({
             style={{
               background: "#ffffff",
               borderRadius: "16px",
-              maxWidth: "600px",
+              maxWidth: "820px",
               width: "100%",
               maxHeight: "90vh",
               overflowY: "auto",
@@ -1311,7 +1452,9 @@ export default function StudentParticipationPanel({
               >
                 <div>
                   <span style={{ color: "#64748b" }}>Thời gian: </span>
-                  <strong>{text(registeringActivity, "ThoiGianSeminar") || formatDateVn(registeringActivity.ThoiGianBatDau || registeringActivity.TgDuKien)}</strong>
+                  <strong>{getActivityType(registeringActivity) === "competition" && text(registeringActivity, "TgDuKien")
+                    ? text(registeringActivity, "TgDuKien")
+                    : text(registeringActivity, "ThoiGianSeminar") || formatDateVn(registeringActivity.ThoiGianBatDau || registeringActivity.TgDuKien)}</strong>
                 </div>
                 <div>
                   <span style={{ color: "#64748b" }}>Địa điểm: </span>
@@ -1322,8 +1465,14 @@ export default function StudentParticipationPanel({
                   <strong>{studentName} ({studentMssv})</strong>
                 </div>
                 <div>
-                  <span style={{ color: "#64748b" }}>Điểm RL: </span>
-                  <strong style={{ color: "#059669" }}>+5 điểm</strong>
+                  <span style={{ color: "#64748b" }}>{getActivityType(registeringActivity) === "competition" ? "Giải thưởng: " : "Điểm RL: "}</span>
+                  <strong style={{ color: "#059669" }}>{getActivityType(registeringActivity) === "competition"
+                    ? prizeLines(registeringActivity.GiaiThuong).length
+                      ? prizeLines(registeringActivity.GiaiThuong).map((line, index) => <span key={`${index}-${line}`} style={{ display: "block" }}>{line}</span>)
+                      : "Xem thông báo cuộc thi"
+                    : getActivityType(registeringActivity) === "seminar"
+                      ? text(registeringActivity, "DiemRenLuyen") ? `+${text(registeringActivity, "DiemRenLuyen")} điểm` : "Chưa cập nhật"
+                      : "+3 điểm"}</strong>
                 </div>
               </div>
 
@@ -1379,12 +1528,26 @@ export default function StudentParticipationPanel({
                 </div>
               )}
 
+              {getActivityType(registeringActivity) === "competition" && regMode !== "team_join" && (
+                <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "12px", marginBottom: "18px" }}>
+                  <label style={{ display: "flex", flexDirection: "column", gap: "6px", color: "#334155", fontSize: "13px", fontWeight: 700 }}>
+                    <span style={{ display: "flex", alignItems: "center", gap: "4px" }}>Tên đề tài <span style={{ color: "#dc2626" }}>*</span></span>
+                    <input required maxLength={250} value={projectTitle} onChange={(event) => setProjectTitle(event.target.value)} placeholder="VD: Ứng dụng AI trong chuyển đổi số" style={{ width: "100%", padding: "10px 12px", border: "1px solid #cbd5e1", borderRadius: "8px", boxSizing: "border-box", fontSize: "14px", fontWeight: 400 }} />
+                    <small style={{ color: "#64748b", fontSize: "12px", fontWeight: 400 }}>Đề tài cần liên quan đến chủ đề và thể lệ cuộc thi.</small>
+                  </label>
+                  <label style={{ display: "flex", flexDirection: "column", gap: "6px", color: "#334155", fontSize: "13px", fontWeight: 700 }}>
+                    <span style={{ display: "flex", alignItems: "center", gap: "4px" }}>Giáo viên hướng dẫn <span style={{ color: "#dc2626" }}>*</span></span>
+                    <input required maxLength={150} value={projectAdvisor} onChange={(event) => setProjectAdvisor(event.target.value)} placeholder="Nhập họ tên giáo viên hướng dẫn" style={{ width: "100%", padding: "10px 12px", border: "1px solid #cbd5e1", borderRadius: "8px", boxSizing: "border-box", fontSize: "14px", fontWeight: 400 }} />
+                  </label>
+                </div>
+              )}
+
               {/* Form Fields: Team Create */}
               {regMode === "team_create" && (
                 <div style={{ display: "flex", flexDirection: "column", gap: "14px" }}>
                   <div>
                     <label style={{ display: "block", fontSize: "13px", fontWeight: 700, color: "#334155", marginBottom: "6px" }}>
-                      Tên đội thi <span style={{ color: "#dc2626" }}>*</span>
+                      <span style={{ display: "inline-flex", alignItems: "center", gap: "4px" }}>Tên đội thi <span style={{ color: "#dc2626" }}>*</span></span>
                     </label>
                     <input
                       type="text"
@@ -1408,22 +1571,39 @@ export default function StudentParticipationPanel({
                     <label style={{ display: "block", fontSize: "13px", fontWeight: 700, color: "#334155", marginBottom: "6px" }}>
                       Thành viên trong đội (Tối đa 4 bạn khác)
                     </label>
-                    <textarea
-                      placeholder="Nhập các MSSV, cách nhau bởi dấu phẩy hoặc khoảng trắng (VD: 2001230002, 2001230003)"
-                      rows={3}
-                      value={teamMembersInput}
-                      onChange={(e) => setTeamMembersInput(e.target.value)}
-                      style={{
-                        width: "100%",
-                        padding: "9px 12px",
-                        borderRadius: "8px",
-                        border: "1px solid #cbd5e1",
-                        fontSize: "13.5px",
-                        outline: "none",
-                        boxSizing: "border-box",
-                        fontFamily: "inherit",
-                      }}
-                    />
+                    <div style={{ overflowX: "auto", border: "1px solid #cbd5e1", borderRadius: "8px" }}>
+                      <table style={{ width: "100%", borderCollapse: "collapse", minWidth: "600px", fontSize: "13px" }}>
+                        <thead>
+                          <tr style={{ background: "#f8fafc", color: "#334155", textAlign: "left" }}>
+                            <th style={{ padding: "10px 12px", width: "32%" }}>Mã số sinh viên</th>
+                            <th style={{ padding: "10px 12px", width: "40%" }}>Họ và tên</th>
+                            <th style={{ padding: "10px 12px", width: "28%" }}>Lớp</th>
+                          </tr>
+                        </thead>
+                        <tbody>
+                          {teamMemberMssvs.map((mssv, index) => {
+                            const student = teamMemberLookups[mssv.trim()];
+                            return (
+                              <tr key={index} style={{ borderTop: "1px solid #e2e8f0" }}>
+                                <td style={{ padding: "6px 8px" }}>
+                                  <input
+                                    type="text"
+                                    inputMode="numeric"
+                                    value={mssv}
+                                    onChange={(event) => setTeamMemberMssvs((current) => current.map((value, row) => row === index ? event.target.value.replace(/[^0-9]/g, "") : value))}
+                                    placeholder="Nhập MSSV"
+                                    aria-label={`MSSV thành viên ${index + 1}`}
+                                    style={{ width: "100%", padding: "9px 10px", border: "1px solid #cbd5e1", borderRadius: "6px", boxSizing: "border-box", font: "inherit" }}
+                                  />
+                                </td>
+                                <td style={{ padding: "10px 12px", color: student ? "#0f172a" : "#94a3b8" }}>{student?.hoTen || (mssv.length >= 8 ? "Không tìm thấy sinh viên" : "Tự động tra cứu theo MSSV")}</td>
+                                <td style={{ padding: "10px 12px", color: student ? "#0f172a" : "#94a3b8" }}>{student?.tenLop || "—"}</td>
+                              </tr>
+                            );
+                          })}
+                        </tbody>
+                      </table>
+                    </div>
                     <small style={{ color: "#64748b", fontSize: "12px", display: "block", marginTop: "4px" }}>
                       * Trưởng đội ({studentMssv}) đã được tự động tính vào đội.
                     </small>
@@ -1573,211 +1753,6 @@ export default function StudentParticipationPanel({
                 </button>
               </div>
             </form>
-          </div>
-        </div>
-      )}
-
-      {/* E-TICKET MODAL */}
-      {ticketRegistration && (
-        <div
-          style={{
-            position: "fixed",
-            inset: 0,
-            background: "rgba(15, 23, 42, 0.7)",
-            backdropFilter: "blur(4px)",
-            zIndex: 9999,
-            display: "flex",
-            alignItems: "center",
-            justifyContent: "center",
-            padding: "16px",
-          }}
-          onClick={() => setTicketRegistration(null)}
-        >
-          <div
-            style={{
-              background: "#ffffff",
-              borderRadius: "20px",
-              maxWidth: "460px",
-              width: "100%",
-              overflow: "hidden",
-              boxShadow: "0 25px 50px -12px rgba(0, 0, 0, 0.35)",
-            }}
-            onClick={(e) => e.stopPropagation()}
-          >
-            {/* Ticket Header */}
-            <div
-              style={{
-                background: "linear-gradient(135deg, #1e3a8a 0%, #2563eb 100%)",
-                color: "#ffffff",
-                padding: "24px",
-                textAlign: "center",
-                position: "relative",
-              }}
-            >
-              <button
-                type="button"
-                onClick={() => setTicketRegistration(null)}
-                style={{
-                  position: "absolute",
-                  right: "16px",
-                  top: "16px",
-                  background: "transparent",
-                  border: "none",
-                  color: "#ffffff",
-                  fontSize: "22px",
-                  cursor: "pointer",
-                }}
-              >
-                ×
-              </button>
-              <div style={{ fontSize: "11px", fontWeight: 700, letterSpacing: "1px", textTransform: "uppercase", opacity: 0.85 }}>
-                Khoa Công Nghệ Thông Tin · HUIT
-              </div>
-              <h2 style={{ fontSize: "19px", fontWeight: 800, margin: "6px 0 0" }}>
-                THẺ THAM DỰ HỌC THUẬT
-              </h2>
-              <div style={{ fontSize: "12px", opacity: 0.9, marginTop: "2px" }}>
-                MÃ VÉ: #{text(ticketRegistration, "MaDK") || "REG-2026"}
-              </div>
-            </div>
-
-            {/* Ticket Content */}
-            <div style={{ padding: "24px" }}>
-              {/* Event Name */}
-              <div style={{ textAlign: "center", marginBottom: "18px" }}>
-                <h4 style={{ margin: "0 0 6px", fontSize: "16px", fontWeight: 700, color: "#0f172a" }}>
-                  {text(ticketRegistration, "TenHoatDong")}
-                </h4>
-                <span
-                  style={{
-                    display: "inline-block",
-                    padding: "3px 10px",
-                    borderRadius: "6px",
-                    background: "#ecfdf5",
-                    color: "#059669",
-                    fontWeight: 700,
-                    fontSize: "12px",
-                  }}
-                >
-                  ✓ ĐÃ XÁC NHẬN THAM DỰ
-                </span>
-              </div>
-
-              {/* QR Code Placeholder Graphic */}
-              <div
-                style={{
-                  background: "#f8fafc",
-                  border: "2px dashed #cbd5e1",
-                  borderRadius: "14px",
-                  padding: "18px",
-                  textAlign: "center",
-                  margin: "0 auto 20px",
-                  maxWidth: "180px",
-                }}
-              >
-                <div style={{ fontSize: "72px", lineHeight: "1" }}>📲</div>
-                <div style={{ fontSize: "11px", color: "#64748b", marginTop: "6px", fontWeight: 600 }}>
-                  QR CHECK-IN ĐIỂM DANH
-                </div>
-              </div>
-
-              {/* Attendee Info Grid */}
-              <div
-                style={{
-                  display: "grid",
-                  gridTemplateColumns: "1fr 1fr",
-                  gap: "12px",
-                  fontSize: "13px",
-                  background: "#f8fafc",
-                  padding: "14px 18px",
-                  borderRadius: "12px",
-                  marginBottom: "18px",
-                }}
-              >
-                <div>
-                  <div style={{ color: "#64748b", fontSize: "11.5px" }}>HỌ VÀ TÊN</div>
-                  <strong style={{ color: "#0f172a" }}>{studentName}</strong>
-                </div>
-                <div>
-                  <div style={{ color: "#64748b", fontSize: "11.5px" }}>MSSV / LỚP</div>
-                  <strong style={{ color: "#0f172a" }}>{studentMssv} · {studentClass}</strong>
-                </div>
-                <div>
-                  <div style={{ color: "#64748b", fontSize: "11.5px" }}>HÌNH THỨC</div>
-                  <strong style={{ color: "#0f172a" }}>
-                    {ticketRegistration.TenDoi ? `Đội ${String(ticketRegistration.TenDoi)}` : "Cá nhân"}
-                  </strong>
-                </div>
-                <div>
-                  <div style={{ color: "#64748b", fontSize: "11.5px" }}>ĐỊA ĐIỂM</div>
-                  <strong style={{ color: "#0f172a" }}>{text(ticketRegistration, "DiaDiem") || "Trung tâm thư viện F401, trường Đại học Công Thương Thành phố Hồ Chí Minh"}</strong>
-                </div>
-              </div>
-
-              {/* Share Team Code (if team leader) */}
-              {Boolean(ticketRegistration.TenDoi) && (
-                <div
-                  style={{
-                    background: "#f5f3ff",
-                    border: "1px solid #ddd6fe",
-                    borderRadius: "10px",
-                    padding: "12px",
-                    marginBottom: "16px",
-                    display: "flex",
-                    justifyContent: "space-between",
-                    alignItems: "center",
-                  }}
-                >
-                  <div>
-                    <span style={{ fontSize: "11px", color: "#6d28d9", fontWeight: 700 }}>
-                      MÃ ĐỘI THI ĐỂ MỜI BẠN BÈ:
-                    </span>
-                    <div style={{ fontSize: "16px", fontWeight: 800, color: "#5b21b6" }}>
-                      #{text(ticketRegistration, "MaDoi") || text(ticketRegistration, "MaDK")}
-                    </div>
-                  </div>
-                  <button
-                    type="button"
-                    onClick={() => copyToClipboard(text(ticketRegistration, "MaDoi") || text(ticketRegistration, "MaDK"))}
-                    style={{
-                      padding: "6px 12px",
-                      borderRadius: "6px",
-                      background: "#7c3aed",
-                      color: "#ffffff",
-                      border: "none",
-                      fontWeight: 600,
-                      fontSize: "12px",
-                      cursor: "pointer",
-                    }}
-                  >
-                    {copiedCode ? "✓ Đã chép" : "📋 Sao chép mã"}
-                  </button>
-                </div>
-              )}
-
-              <p style={{ margin: 0, fontSize: "12px", color: "#64748b", textAlign: "center", lineHeight: 1.5 }}>
-                Vui lòng xuất trình mã này tại bàn tiếp đón của Ban tổ chức để hoàn tất điểm danh và ghi nhận điểm rèn luyện.
-              </p>
-
-              <button
-                type="button"
-                onClick={() => setTicketRegistration(null)}
-                style={{
-                  width: "100%",
-                  marginTop: "18px",
-                  padding: "10px",
-                  borderRadius: "8px",
-                  background: "#2563eb",
-                  color: "#ffffff",
-                  border: "none",
-                  fontWeight: 700,
-                  fontSize: "14px",
-                  cursor: "pointer",
-                }}
-              >
-                Đóng vé
-              </button>
-            </div>
           </div>
         </div>
       )}
