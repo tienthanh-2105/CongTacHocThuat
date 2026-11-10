@@ -73,31 +73,38 @@ export class FeaturesRepository {
       ) x ORDER BY CASE WHEN x.LoaiNhac=N'Hạn đăng ký sắp kết thúc' THEN x.HanDangKy ELSE x.TgBatDau END`, [userId]);
   }
 
-  async listMobileActivities() {
+  async listMobileActivities(studentId: number | string, allowAfterDeadline: boolean) {
     return this.db.query(
-      `SELECT TOP (100) h.MaHD,h.TenHoatDong,h.NoiDung,h.TgDuKien,
-              COALESCE(d.ThoiGianBatDau,c.ThoiGian,s.ThoiGian,
-                TRY_CONVERT(DATETIME2,REPLACE(h.TgDuKien,N'Ngày ',N''),103)) AS TgBatDau,
-              COALESCE(d.ThoiGianBatDau,c.ThoiGian,s.ThoiGian,
-                TRY_CONVERT(DATETIME2,REPLACE(h.TgDuKien,N'Ngày ',N''),103)) AS ThoiGianBatDau,
+      `SELECT TOP (100) h.MaHD,h.TenHoatDong,h.LoaiHoatDong,h.NoiDung,h.TgDuKien,
+              schedule.StartsAt AS TgBatDau,schedule.StartsAt AS ThoiGianBatDau,
               d.ThoiGianKetThuc,COALESCE(h.HanDangKy,d.HanDangKy) AS HanDangKy,
               COALESCE(d.DiaDiem,s.DiaDiem,h.DiaDiem) AS DiaDiem,h.SLSVDuKien,h.BanThamGia,h.TrangThai,
               TRY_CONVERT(INT,NULLIF(h.SLSVDuKien,N'')) AS SLToiDa,
               COALESCE((SELECT SUM(k.SoTien) FROM KINHPHIHOATDONG k WHERE k.MaHD=h.MaHD),0) AS KinhPhiDuTru,
               d.TrangThai AS TrangThaiKeHoach,d.CongBoLuc,d.NguoiKyKhoa,d.NguoiKyCTSV,
               c.MaCThi,c.TenCuocThi,c.HinhThucThi,c.TheLe,s.MaSeminar,s.ChuDe,
+              (SELECT COUNT(*) FROM DKTHAMGIA dk WHERE dk.MaHD=h.MaHD
+                AND dk.TrangThai NOT IN(N'Đã hủy',N'Từ chối')) AS SoLuongDangKy,
+              CASE WHEN EXISTS (SELECT 1 FROM DKTHAMGIA dk WHERE dk.MaHD=h.MaHD AND dk.MaSV=@p1
+                AND dk.TrangThai NOT IN(N'Đã hủy',N'Từ chối')) THEN N'Đã đăng ký'
+                WHEN EXISTS (SELECT 1 FROM HANGDOICHODANGKY q WHERE q.MaHD=h.MaHD AND q.MaSV=@p1
+                AND q.TrangThai IN(N'Đang chờ',N'Đã mời')) THEN N'Đang chờ'
+              END AS TrangThaiDangKyCuaToi,
               CAST(CASE WHEN d.TrangThai=N'Đã duyệt' AND d.NguoiKyKhoa IS NOT NULL
                      AND d.NguoiKyCTSV IS NOT NULL AND annual.TrangThai=N'Đã duyệt'
-                     AND (h.HanDangKy IS NULL OR h.HanDangKy>SYSDATETIME())
+                     AND (@p2=1 OR h.HanDangKy IS NULL OR h.HanDangKy>SYSDATETIME())
                      THEN 1 ELSE 0 END AS BIT) AS CoTheDangKy
        FROM HOATDONGHOCTHUAT h
        LEFT JOIN KEHOACHTOCHUC d ON d.MaHD=h.MaHD
        LEFT JOIN KEHOACHHOCTHUAT annual ON annual.MaKeHoach=d.MaKeHoach
        LEFT JOIN CUOCTHI c ON c.MaHD=h.MaHD
        LEFT JOIN SEMINAR s ON s.MaHD=h.MaHD
+       CROSS APPLY (SELECT COALESCE(d.ThoiGianBatDau,c.ThoiGian,
+         TRY_CONVERT(DATETIME2,s.ThoiGian,121),
+         TRY_CONVERT(DATETIME2,REPLACE(h.TgDuKien,N'Ngày ',N''),103)) AS StartsAt) schedule
        WHERE h.TrangThai=N'Đã công bố'
-       ORDER BY COALESCE(d.ThoiGianBatDau,c.ThoiGian,s.ThoiGian,
-                TRY_CONVERT(DATETIME2,REPLACE(h.TgDuKien,N'Ngày ',N''),103)) DESC,h.MaHD DESC`,
+       ORDER BY schedule.StartsAt DESC,h.MaHD DESC`,
+      [studentId, allowAfterDeadline ? 1 : 0],
     );
   }
 

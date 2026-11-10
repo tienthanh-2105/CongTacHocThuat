@@ -159,7 +159,7 @@ export class DetailedPlansService {
   private activityQuery(lock: boolean) {
     const hint = lock ? 'WITH(UPDLOCK,HOLDLOCK)' : '';
     return `SELECT h.MaHD,h.TenHoatDong,h.LoaiHoatDong,h.NamHoc,
-      COALESCE(h.MaBM,gv.MaBM) AS MaBM,bm.TenBM,p.MaKhoa,p.MaKeHoach,p.TenKeHoach AS TenKeHoachNam,
+      COALESCE(departmentProposal.MaBM,gv.MaBM) AS MaBM,bm.TenBM,p.MaKhoa,p.MaKeHoach,p.TenKeHoach AS TenKeHoachNam,
       h.TrangThai AS TrangThaiHoatDong,h.NoiDung AS NoiDungHoatDong,h.DoiTuongThamDu,
       TRY_CONVERT(INT,NULLIF(h.SLSVDuKien,N'')) AS SLSVDuKien,
       d.MaKHToChuc,d.TenKeHoach,d.NoiDung,d.TheLe,d.TieuChiCham,d.HinhThucThi,
@@ -168,9 +168,10 @@ export class DetailedPlansService {
       c.MaCThi,s.MaSeminar,COALESCE(s.SoKeHoach,c.SoKeHoach) AS SoKeHoach,COALESCE(budget.TongKinhPhi,0) AS TongDuToan,budget.TrangThai AS TrangThaiDuTru
       FROM HOATDONGHOCTHUAT h ${hint}
       JOIN KEHOACHHOCTHUAT p ${hint} ON p.MaKeHoach=COALESCE(h.MaKeHoachKhoa,h.MaKeHoach)
+      OUTER APPLY(SELECT TOP(1) proposal.MaBM FROM KEHOACHCUOCTHIBOMON proposal WHERE proposal.MaHD=h.MaHD ORDER BY proposal.MaDeXuat DESC) departmentProposal
       LEFT JOIN TAIKHOAN owner ON owner.MaTK=h.NguoiLap
       LEFT JOIN GIANGVIEN gv ON gv.MaNgDung=owner.MaNgDung
-      LEFT JOIN BOMON bm ON bm.MaBM=COALESCE(h.MaBM,gv.MaBM)
+      LEFT JOIN BOMON bm ON bm.MaBM=COALESCE(departmentProposal.MaBM,gv.MaBM)
       LEFT JOIN KEHOACHTOCHUC d ${hint} ON d.MaHD=h.MaHD
       OUTER APPLY(SELECT TOP(1) MaCThi,SoKeHoach FROM CUOCTHI WHERE MaHD=h.MaHD ORDER BY MaCThi) c
       OUTER APPLY(SELECT TOP(1) MaSeminar,SoKeHoach,DiemRenLuyenDeXuat FROM SEMINAR WHERE MaHD=h.MaHD ORDER BY MaSeminar) s
@@ -222,7 +223,7 @@ export class DetailedPlansService {
     const isFacultyWide = !this.isDepartmentRestricted(context);
     const rows = await this.query<DetailedPlan & { canManage: number }>(
       `SELECT h.MaHD,h.TenHoatDong,h.LoaiHoatDong,h.NamHoc,
-        COALESCE(h.MaBM,gv.MaBM) AS MaBM,bm.TenBM,p.MaKhoa,p.MaKeHoach,p.TenKeHoach AS TenKeHoachNam,
+        COALESCE(departmentProposal.MaBM,gv.MaBM) AS MaBM,bm.TenBM,p.MaKhoa,p.MaKeHoach,p.TenKeHoach AS TenKeHoachNam,
         h.TrangThai AS TrangThaiHoatDong,h.NoiDung AS NoiDungHoatDong,h.DoiTuongThamDu,
         TRY_CONVERT(INT,NULLIF(h.SLSVDuKien,N'')) AS SLSVDuKien,
         d.MaKHToChuc,d.TenKeHoach,d.NoiDung,d.TheLe,d.TieuChiCham,d.HinhThucThi,
@@ -230,7 +231,7 @@ export class DetailedPlansService {
         d.NguoiKyKhoa,d.NgayKyKhoa,d.NguoiKyCTSV,d.NgayKyCTSV,d.LichSuDuyet,d.CongBoLuc,
         c.MaCThi,s.MaSeminar,COALESCE(s.SoKeHoach,c.SoKeHoach) AS SoKeHoach,COALESCE(budget.TongKinhPhi,0) AS TongDuToan,budget.TrangThai AS TrangThaiDuTru,
         CASE WHEN @p2 = 1
-          OR COALESCE(h.MaBM, gv.MaBM) IN (
+          OR COALESCE(departmentProposal.MaBM, gv.MaBM) IN (
             SELECT gv0.MaBM FROM GIANGVIEN gv0 JOIN TAIKHOAN t0 ON t0.MaNgDung=gv0.MaNgDung WHERE t0.MaTK=@p3 AND gv0.MaBM IS NOT NULL
             UNION
             SELECT gb0.MaBM FROM GIANGVIEN gv0 JOIN TAIKHOAN t0 ON t0.MaNgDung=gv0.MaNgDung JOIN GIANGVIEN_BOMON gb0 ON gb0.MaGV=gv0.MaGV WHERE t0.MaTK=@p3
@@ -249,9 +250,10 @@ export class DetailedPlansService {
         THEN CAST(1 AS BIT) ELSE CAST(0 AS BIT) END AS canManage
         FROM HOATDONGHOCTHUAT h
         JOIN KEHOACHHOCTHUAT p ON p.MaKeHoach=COALESCE(h.MaKeHoachKhoa,h.MaKeHoach)
+        OUTER APPLY(SELECT TOP(1) proposal.MaBM FROM KEHOACHCUOCTHIBOMON proposal WHERE proposal.MaHD=h.MaHD ORDER BY proposal.MaDeXuat DESC) departmentProposal
         LEFT JOIN TAIKHOAN owner ON owner.MaTK=h.NguoiLap
         LEFT JOIN GIANGVIEN gv ON gv.MaNgDung=owner.MaNgDung
-        LEFT JOIN BOMON bm ON bm.MaBM=COALESCE(h.MaBM,gv.MaBM)
+        LEFT JOIN BOMON bm ON bm.MaBM=COALESCE(departmentProposal.MaBM,gv.MaBM)
         LEFT JOIN KEHOACHTOCHUC d ON d.MaHD=h.MaHD
         OUTER APPLY(SELECT TOP(1) MaCThi,SoKeHoach FROM CUOCTHI WHERE MaHD=h.MaHD ORDER BY MaCThi) c
         OUTER APPLY(SELECT TOP(1) MaSeminar,SoKeHoach FROM SEMINAR WHERE MaHD=h.MaHD ORDER BY MaSeminar) s

@@ -200,7 +200,7 @@ test('RegistrationService', async (t) => {
       registerIndividualWithinCapacity: async () => ({ waitlisted: true as const, MaCho: 9, ViTri: 2 }),
       createRegistrationNotification: async () => { notifications++; },
     } as unknown as RegistrationRepository;
-    const result = await new RegistrationService(repository).registerIndividual('17', { maHD: 31 });
+    const result = await new RegistrationService(repository).registerIndividual('17', { maHD: 31, hinhThuc: 'Tham gia' });
 
     assert.equal(result.data.trangThai, 'Đang chờ');
     assert.equal(result.data.viTri, 2);
@@ -237,7 +237,7 @@ test('RegistrationService', async (t) => {
     });
     await t.test('đăng ký hiện hữu chưa bị hủy', async () => {
       await assert.rejects(
-        makeService(activity, { TrangThai: 'Đã đăng ký' }).registerIndividual('17', { maHD: 31 }),
+        makeService(activity, { TrangThai: 'Đã đăng ký' }).registerIndividual('17', { maHD: 31, hinhThuc: 'Tham gia' }),
         isHttpStatus(409),
       );
     });
@@ -259,6 +259,7 @@ test('RegistrationService', async (t) => {
     } as unknown as RegistrationRepository;
     const result = await new RegistrationService(repository).registerTeam('17', {
       maCThi: 5, tenDoi: 'Đội thử', thanhVienMSSV: ['23310028', ' 23310028 '],
+      tenDeTai: 'Đề tài thử', gvhd: 'Giảng viên mẫu',
     });
 
     assert.equal(result.data.tongThanhVien, 2);

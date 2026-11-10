@@ -12,7 +12,7 @@ type PlanFaculty = { MaKhoa: number; TenKhoa: string };
 type AnnualProposal = { MaHD: number; NguoiLap: number; MaBM: number | null; NamHoc: string | null; TenHoatDong: string; NoiDung: string | null; TrangThai: string };
 function parseActivityDate(value: string | Date | null | undefined): Date | null {
   if (value instanceof Date) return Number.isNaN(value.getTime()) ? null : value;
-  const raw = String(value ?? '').trim();
+  const raw = String(value ?? '').trim().replace(/^ngày\s+/iu, '');
   if (!raw) return null;
   const iso = /^(\d{4})-(\d{2})-(\d{2})/.exec(raw);
   const localized = /^(\d{1,2})[/. -](\d{1,2})[/. -](\d{4})$/.exec(raw);
@@ -1303,13 +1303,13 @@ export class WorkflowService {
         const idParams=activityIds.map((_,index)=>`@activity${index}`).join(',');
         selected=(await request.query(`SELECT h.MaHD,h.TrangThai,h.NamHoc,h.MaKeHoach,h.MaKeHoachKhoa,
             departmentProposal.TrangThai AS TrangThaiDeXuatBoMon,departmentProposal.MaDeXuat,departmentProposal.MaKeHoachKhoa AS MaKeHoachDeXuat,
-            COALESCE(h.MaBM,gv.MaBM) AS MaBM,
+            COALESCE(departmentProposal.MaBM,gv.MaBM) AS MaBM,
             COALESCE(activityBm.MaKhoa,creatorBm.MaKhoa,cb.MaKhoa) AS MaKhoa
           FROM HOATDONGHOCTHUAT h WITH(UPDLOCK,HOLDLOCK)
-          OUTER APPLY (SELECT TOP (1) p.MaDeXuat,p.TrangThai,p.MaKeHoachKhoa FROM KEHOACHCUOCTHIBOMON p WITH(UPDLOCK,HOLDLOCK) WHERE p.MaHD=h.MaHD ORDER BY p.MaDeXuat DESC) departmentProposal
+          OUTER APPLY (SELECT TOP (1) p.MaDeXuat,p.TrangThai,p.MaKeHoachKhoa,p.MaBM FROM KEHOACHCUOCTHIBOMON p WITH(UPDLOCK,HOLDLOCK) WHERE p.MaHD=h.MaHD ORDER BY p.MaDeXuat DESC) departmentProposal
           LEFT JOIN TAIKHOAN owner ON owner.MaTK=h.NguoiLap
           LEFT JOIN GIANGVIEN gv ON gv.MaNgDung=owner.MaNgDung
-          LEFT JOIN BOMON activityBm ON activityBm.MaBM=h.MaBM
+          LEFT JOIN BOMON activityBm ON activityBm.MaBM=departmentProposal.MaBM
           LEFT JOIN BOMON creatorBm ON creatorBm.MaBM=gv.MaBM
           LEFT JOIN CANBOKHOA cb ON cb.MaNgDung=owner.MaNgDung
           WHERE h.MaHD IN(${idParams})`)).recordset;
@@ -1618,8 +1618,8 @@ export class WorkflowService {
         MAX(t.GuiLuc) AS GuiLuc,
         MAX(t.Loai) AS Loai
       FROM THONGBAO t
-      WHERE t.Loai=N'Nhắc lịch hoạt động' AND t.MaHD IS NOT NULL
-      GROUP BY t.MaHD,t.TieuDe
+      WHERE (t.Loai=N'Nhắc lịch hoạt động' AND t.MaHD IS NOT NULL) OR t.Loai=N'Thông báo quản lý'
+      GROUP BY t.MaHD,t.TieuDe,t.Loai
       ORDER BY MAX(t.GuiLuc) DESC
     `);
     return rows.map((r) => {
@@ -1629,7 +1629,7 @@ export class WorkflowService {
       return {
         id: r.id,
         tieuDe: r.TieuDe,
-        doiTuong: `${r.TongNhan} sinh viên đã đăng ký`,
+        doiTuong: r.Loai === 'Thông báo quản lý' ? `${r.TongNhan} tài khoản` : `${r.TongNhan} sinh viên đã đăng ký`,
         guiLuc: r.GuiLuc,
         daDoc: daDocStr,
         tongNhan: r.TongNhan,
@@ -1664,14 +1664,16 @@ export class WorkflowService {
         .input('activityId', sql.BigInt, activity.MaHD)
         .input('title', sql.NVarChar(250), title)
         .input('message', sql.NVarChar(sql.MAX), message)
-        .query<{ MaThongBao: number }>(`INSERT INTO THONGBAO(MaTK,MaHD,Loai,TieuDe,NoiDung)
-          OUTPUT INSERTED.MaThongBao
+        .query<{ MaThongBao: number }>(`DECLARE @CreatedNotifications TABLE (MaThongBao BIGINT NOT NULL);
+          INSERT INTO THONGBAO(MaTK,MaHD,Loai,TieuDe,NoiDung)
+          OUTPUT INSERTED.MaThongBao INTO @CreatedNotifications(MaThongBao)
           SELECT DISTINCT t.MaTK,h.MaHD,N'Nhắc lịch hoạt động',@title,@message
           FROM HOATDONGHOCTHUAT h
           JOIN DKTHAMGIA dk ON dk.MaHD=h.MaHD AND dk.TrangThai IN(N'Đã đăng ký',N'Đã xác nhận')
           JOIN SINHVIEN sv ON sv.MaSV=dk.MaSV
           JOIN TAIKHOAN t ON t.MaNgDung=sv.MaNgDung AND t.TrangThai=N'Hoạt động'
-          WHERE h.MaHD=@activityId AND h.TrangThai=N'Đã công bố'`);
+          WHERE h.MaHD=@activityId AND h.TrangThai=N'Đã công bố';
+          SELECT MaThongBao FROM @CreatedNotifications`);
       if (!sent.recordset.length) throw new BadRequestException('Hoạt động chưa có sinh viên đăng ký nhận nhắc lịch');
       await transaction.commit();
       return { success: true, message: `Đã gửi nhắc lịch cho ${sent.recordset.length} sinh viên đã đăng ký.`, recipients: sent.recordset.length };
@@ -1679,6 +1681,47 @@ export class WorkflowService {
       await transaction.rollback().catch(() => undefined);
       throw error;
     }
+  }
+
+  async sendManualBroadcast(context: SessionContext, dto: { tieuDe: string; noiDung: string }) {
+    this.require(context, ['ADMIN','CANBOKHOA','CAN_BO_KHOA','GIANGVIEN','GIANG_VIEN','PHONG_CTSV','PHONGCTSV','TRUONGKHOA']);
+    if (!dto.tieuDe?.trim() || !dto.noiDung?.trim()) {
+      throw new BadRequestException('Tiêu đề và nội dung thông báo không được để trống');
+    }
+    const facultyId = (await this.resolvePlanFaculty()).MaKhoa;
+    const delivery = (await this.db.query<{ notificationCount: number; pushQueuedCount: number }>(`
+      DECLARE @CreatedNotifications TABLE (MaThongBao BIGINT NOT NULL);
+      INSERT INTO THONGBAO(MaTK, Loai, TieuDe, NoiDung, GuiLuc)
+      OUTPUT INSERTED.MaThongBao INTO @CreatedNotifications(MaThongBao)
+      SELECT t.MaTK, N'Thông báo quản lý', @p1, @p2, SYSDATETIMEOFFSET()
+      FROM TAIKHOAN t
+      WHERE t.TrangThai = N'Hoạt động'
+        AND EXISTS (
+          SELECT 1 FROM SINHVIEN sv JOIN LOP l ON l.MaLop=sv.MaLop
+          WHERE sv.MaNgDung=t.MaNgDung AND l.MaKhoa=@p3
+          UNION ALL
+          SELECT 1 FROM CANBOKHOA cb WHERE cb.MaNgDung=t.MaNgDung AND cb.MaKhoa=@p3
+          UNION ALL
+          SELECT 1 FROM GIANGVIEN gv JOIN BOMON bm ON bm.MaBM=gv.MaBM
+          WHERE gv.MaNgDung=t.MaNgDung AND bm.MaKhoa=@p3
+          UNION ALL
+          SELECT 1 FROM GIANGVIEN gv JOIN GIANGVIEN_BOMON gb ON gb.MaGV=gv.MaGV
+          JOIN BOMON bm ON bm.MaBM=gb.MaBM
+          WHERE gv.MaNgDung=t.MaNgDung AND bm.MaKhoa=@p3
+        );
+
+      SELECT
+        (SELECT COUNT(*) FROM @CreatedNotifications) AS notificationCount,
+        (SELECT COUNT(*) FROM dbo.FCM_NOTIFICATION_QUEUE q JOIN @CreatedNotifications c ON c.MaThongBao=q.MaThongBao) AS pushQueuedCount;
+    `, [dto.tieuDe.trim(), dto.noiDung.trim(), facultyId]))[0];
+    const notificationCount = Number(delivery?.notificationCount ?? 0);
+    if (!notificationCount) throw new BadRequestException('Không tìm thấy tài khoản đang hoạt động trong nhóm người nhận');
+    return {
+      success: true,
+      message: 'Đã lưu thông báo trong ứng dụng',
+      notificationCount,
+      pushQueuedCount: Number(delivery?.pushQueuedCount ?? 0),
+    };
   }
   async awardPoint(context:SessionContext,dto:AwardTrainingPointDto) {
     this.require(context,['ADMIN','CANBOKHOA','CAN_BO_KHOA','GIANGVIEN','GIANG_VIEN','PHONG_CTSV','PHONGCTSV','CONG_TAC_SINH_VIEN','CAN_BO_CTSV','TRUONGKHOA']);
@@ -1899,7 +1942,11 @@ export class WorkflowService {
       (SELECT COUNT(*) FROM DKTHAMGIA d WHERE d.MaHD=h.MaHD AND d.TrangThai NOT IN(N'Đã hủy',N'Từ chối')) SoLuotDangKy,
       (SELECT COUNT(*) FROM DKTHAMGIA d JOIN DIEMDANH dd ON dd.MaDK=d.MaDK WHERE d.MaHD=h.MaHD AND dd.TrangThai IN(N'Đã điểm danh',N'Đã xác nhận')) SoLuotThamDu,
       (SELECT COALESCE(SUM(c.SoTien),0) FROM CHIPHITHUCTE c JOIN HOSOQUYETTOAN hs ON hs.MaHS=c.MaHS WHERE c.MaHD=h.MaHD AND hs.TrangThai=N'Đã duyệt') TongChiPhi
-      FROM HOATDONGHOCTHUAT h LEFT JOIN KEHOACHHOCTHUAT p ON p.MaKeHoach=COALESCE(h.MaKeHoachKhoa,h.MaKeHoach) LEFT JOIN KHOA k ON k.MaKhoa=p.MaKhoa LEFT JOIN BOMON bm ON bm.MaBM=h.MaBM
+      FROM HOATDONGHOCTHUAT h
+      LEFT JOIN KEHOACHHOCTHUAT p ON p.MaKeHoach=COALESCE(h.MaKeHoachKhoa,h.MaKeHoach)
+      LEFT JOIN KHOA k ON k.MaKhoa=p.MaKhoa
+      OUTER APPLY (SELECT TOP (1) proposal.MaBM FROM KEHOACHCUOCTHIBOMON proposal WHERE proposal.MaHD=h.MaHD ORDER BY proposal.MaDeXuat DESC) departmentProposal
+      LEFT JOIN BOMON bm ON bm.MaBM=departmentProposal.MaBM
       WHERE (@p1 IS NULL OR TRY_CONVERT(date,h.TgDuKien,23)>=@p1)
         AND (@p2 IS NULL OR TRY_CONVERT(date,h.TgDuKien,23)<DATEADD(DAY,1,@p2)) ORDER BY h.TgDuKien DESC`,[from??null,to??null]);
   }
@@ -1910,7 +1957,10 @@ export class WorkflowService {
       SUM(CASE WHEN d.SoDiem<0 THEN d.SoDiem ELSE 0 END) AS TongDiemTru,
       SUM(CASE WHEN d.TrangThai=N'Đã xác nhận' THEN d.SoDiem ELSE 0 END) AS TongDiemDaXacNhan
       FROM DIEMRENLUYEN d JOIN SINHVIEN sv ON sv.MaSV=d.MaSV JOIN LOP l ON l.MaLop=sv.MaLop JOIN KHOA k ON k.MaKhoa=l.MaKhoa
-      JOIN HOATDONGHOCTHUAT h ON h.MaHD=d.MaHD LEFT JOIN KEHOACHHOCTHUAT p ON p.MaKeHoach=COALESCE(h.MaKeHoachKhoa,h.MaKeHoach) LEFT JOIN BOMON bm ON bm.MaBM=h.MaBM
+      JOIN HOATDONGHOCTHUAT h ON h.MaHD=d.MaHD
+      LEFT JOIN KEHOACHHOCTHUAT p ON p.MaKeHoach=COALESCE(h.MaKeHoachKhoa,h.MaKeHoach)
+      OUTER APPLY (SELECT TOP (1) proposal.MaBM FROM KEHOACHCUOCTHIBOMON proposal WHERE proposal.MaHD=h.MaHD ORDER BY proposal.MaDeXuat DESC) departmentProposal
+      LEFT JOIN BOMON bm ON bm.MaBM=departmentProposal.MaBM
       WHERE (@p1 IS NULL OR d.HocKy=@p1) AND (@p2 IS NULL OR d.NamHoc=@p2)
       GROUP BY d.NamHoc,d.HocKy,k.TenKhoa,bm.TenBM ORDER BY d.NamHoc DESC,d.HocKy,k.TenKhoa,bm.TenBM`,[semester??null,academicYear??null]);
   }
@@ -1925,7 +1975,7 @@ export class WorkflowService {
         h.MaHD,
         (SELECT ISNULL(MAX(h2.MaHD), 0) + 1 FROM HOATDONGHOCTHUAT h2) AS MaHDKeTiep,
         h.HocKy,h.NamHoc,h.CapTC,h.TgBatDau,h.TgKetThuc,h.MaKeHoach,h.MaKeHoachKhoa,
-        h.MaBM AS MaBM,COALESCE(h.MaBM,ownerGv.MaBM) AS MaBMHienThi,
+        departmentProposal.MaBM AS MaBM,COALESCE(departmentProposal.MaBM,ownerGv.MaBM) AS MaBMHienThi,
         COALESCE(activityBm.TenBM,ownerBm.TenBM,bm.TenBM) AS TenBM,
         COALESCE(activityBm.MaKhoa,ownerBm.MaKhoa,bm.MaKhoa,ownerCb.MaKhoa) AS MaKhoa,
         h.TenHoatDong,h.LoaiHoatDong,h.NoiDung,CONVERT(NVARCHAR(225),h.TgDuKien) AS TgDuKien,
@@ -1939,14 +1989,14 @@ export class WorkflowService {
         (SELECT COUNT(*) FROM BANHOTRO bht WHERE bht.MaHD=h.MaHD) AS SoThanhVienHoTro
       FROM HOATDONGHOCTHUAT h
       LEFT JOIN KEHOACHHOCTHUAT kh ON kh.MaKeHoach=COALESCE(h.MaKeHoachKhoa,h.MaKeHoach)
-      LEFT JOIN BOMON activityBm ON activityBm.MaBM=h.MaBM
+      OUTER APPLY (SELECT TOP (1) p.TrangThai,p.MaKeHoachKhoa,p.GhiChuDuyet,p.MaBM FROM KEHOACHCUOCTHIBOMON p WHERE p.MaHD=h.MaHD ORDER BY p.MaDeXuat DESC) departmentProposal
+      LEFT JOIN BOMON activityBm ON activityBm.MaBM=departmentProposal.MaBM
       LEFT JOIN TAIKHOAN activityOwner ON activityOwner.MaTK=h.NguoiLap
       LEFT JOIN GIANGVIEN ownerGv ON ownerGv.MaNgDung=activityOwner.MaNgDung
       LEFT JOIN BOMON ownerBm ON ownerBm.MaBM=ownerGv.MaBM
       LEFT JOIN CANBOKHOA ownerCb ON ownerCb.MaNgDung=activityOwner.MaNgDung
-      LEFT JOIN BOMON bm ON bm.MaBM=h.MaBM
+      LEFT JOIN BOMON bm ON bm.MaBM=departmentProposal.MaBM
       OUTER APPLY (SELECT TOP (1) d.TrangThai,d.TongKinhPhi FROM DUTRUKINHPHI d WHERE d.MaHD=h.MaHD ORDER BY d.MaDuTruKP DESC) cost
-      OUTER APPLY (SELECT TOP (1) p.TrangThai,p.MaKeHoachKhoa,p.GhiChuDuyet FROM KEHOACHCUOCTHIBOMON p WHERE p.MaHD=h.MaHD ORDER BY p.MaDeXuat DESC) departmentProposal
       LEFT JOIN KEHOACHHOCTHUAT departmentPlan ON departmentPlan.MaKeHoach=departmentProposal.MaKeHoachKhoa
       WHERE (@p3 = 1 OR (@p2 = 1 AND h.TrangThai IN (N'Chờ duyệt', N'Đã duyệt', N'Đã công bố')))
          OR h.NguoiLap = CAST(@p1 AS INT)

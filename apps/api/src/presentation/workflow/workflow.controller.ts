@@ -4,7 +4,7 @@ import { ApiBearerAuth, ApiCookieAuth, ApiOperation, ApiTags } from '@nestjs/swa
 import { SessionGuard } from '../auth/auth.guards';
 import type { AuthRequest } from '../auth/auth.http';
 import { WorkflowService } from '../../business/workflow/workflow.service';
-import { ActivityChangeDto, AdjustTrainingPointDto, AwardTrainingPointDto, BroadcastNotificationDto, CheckInDto, CompetitionResultDto, CreateAttendanceCodeDto, CreatePlanActivityDto, CreatePlanDto, CreateRoundDto, ReviewPlanDto, SelectPlanActivitiesDto, ScoreWorkDto, SubmitWorkDto, SeminarMaterialDto, CreateAccountDto, CreateStudentAccountDto, CreateStudentProfileDto, CreateLinkedStudentProfileDto, UpdateStudentRecordDto, ChangeAccountRoleDto, LinkAccountStudentProfileDto, ResetAccountPasswordDto, SetAccountStatusDto, ManualAttendanceDto, CreateClassDto, UpdateClassDto, UpdateStaffRecordDto, CreateStaffRecordDto, CreateStaffAccountDto, CreateAcademicActivityDto, UpdateAcademicActivityDto, CreateCommitteeMemberDto, UpdateCommitteeMemberDto, CreateActivityBudgetDto, CreateBudgetEstimateDto, ReviewActivityBudgetDto, AddBudgetEstimateLinesDto } from './workflow.dto';
+import { ActivityChangeDto, AdjustTrainingPointDto, AwardTrainingPointDto, BroadcastNotificationDto, ManualBroadcastNotificationDto, CheckInDto, CompetitionResultDto, CreateAttendanceCodeDto, CreatePlanActivityDto, CreatePlanDto, CreateRoundDto, ReviewPlanDto, SelectPlanActivitiesDto, ScoreWorkDto, SubmitWorkDto, SeminarMaterialDto, CreateAccountDto, CreateStudentAccountDto, CreateStudentProfileDto, CreateLinkedStudentProfileDto, UpdateStudentRecordDto, ChangeAccountRoleDto, LinkAccountStudentProfileDto, ResetAccountPasswordDto, SetAccountStatusDto, ManualAttendanceDto, CreateClassDto, UpdateClassDto, UpdateStaffRecordDto, CreateStaffRecordDto, CreateStaffAccountDto, CreateAcademicActivityDto, UpdateAcademicActivityDto, CreateCommitteeMemberDto, UpdateCommitteeMemberDto, CreateActivityBudgetDto, CreateBudgetEstimateDto, ReviewActivityBudgetDto, AddBudgetEstimateLinesDto } from './workflow.dto';
 
 @ApiTags('admin-accounts') @ApiBearerAuth() @ApiCookieAuth() @UseGuards(SessionGuard)
 @Controller('admin/accounts')
@@ -95,6 +95,7 @@ export class TrainingPointsController {
   @Get() list(@Req() r:AuthRequest){return this.service.listTrainingPoints(r.auth!);}
   @Get('broadcasts') listBroadcasts(@Req() r:AuthRequest){return this.service.listBroadcasts(r.auth!);}
   @Post('broadcasts') sendBroadcast(@Req() r:AuthRequest,@Body() dto:BroadcastNotificationDto){return this.service.sendBroadcast(r.auth!,dto);}
+  @Post('broadcasts/manual') sendManualBroadcast(@Req() r:AuthRequest,@Body() dto:ManualBroadcastNotificationDto){return this.service.sendManualBroadcast(r.auth!,dto);}
   @Post() award(@Req() r:AuthRequest,@Body() dto:AwardTrainingPointDto){return this.service.awardPoint(r.auth!,dto);}
   @Post(':id/adjust') adjust(@Req() r:AuthRequest,@Param('id',ParseIntPipe) id:number,@Body() dto:AdjustTrainingPointDto){return this.service.adjustPoint(r.auth!,id,dto);}
   @Patch(':id/approve') approve(@Req() r:AuthRequest,@Param('id',ParseIntPipe) id:number){return this.service.reviewPoint(r.auth!,id,'approve');}

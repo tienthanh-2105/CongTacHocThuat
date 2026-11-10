@@ -13,9 +13,6 @@ import { getCurrentUser, logout, type AuthUser } from "@/services/auth";
 import AccountPanel from "./AccountPanel";
 import BusinessPanel from "./BusinessPanel";
 import ReportsPanel from "./ReportsPanel";
-import StudentProfilesPanel from "./StudentProfilesPanel";
-import StaffProfilesPanel from "./StaffProfilesPanel";
-import ClassesManagementPanel from "./ClassesManagementPanel";
 import UsersManagementPanel from "./UsersManagementPanel";
 import AcademicActivitiesPanel from "./AcademicActivitiesPanel";
 import { sectionsForRoles, sections, type DashboardSection } from "./sections";
@@ -222,6 +219,10 @@ export default function Dashboard() {
     }
     const targetSection = sections.find((s) => s.id === routeSection);
     const availableSections = user ? sectionsForRoles(user.roles) : sections;
+    if (!availableSections.some((section) => section.id === routeSection)) {
+      router.replace("/dashboard/news");
+      return;
+    }
     if (targetSection?.parentId) {
       setOpenParentId(targetSection.parentId);
     } else if (availableSections.some((s) => s.parentId === routeSection)) {
@@ -546,7 +547,7 @@ export default function Dashboard() {
           </div>
         </header>
         <main className={s.main}>
-          {activeSectionId !== "users" && activeSectionId !== "staff-profiles" && activeSectionId !== "student-profiles" && activeSectionId !== "classes" && activeSectionId !== "plans" && !activeSectionId.startsWith("academic-") && !(activeSectionId === "training-points" && !user?.roles?.includes("SINHVIEN")) && activeSectionId !== "seminars" && activeSectionId !== "registrations" && activeSectionId !== "results" && accountView !== "info" && (
+          {activeSectionId !== "users" && activeSectionId !== "plans" && !activeSectionId.startsWith("academic-") && !(activeSectionId === "training-points" && !user?.roles?.includes("SINHVIEN")) && activeSectionId !== "seminars" && activeSectionId !== "registrations" && activeSectionId !== "results" && accountView !== "info" && (
             <div className={s.heading}>
               <div>
                 <h1>{selected.title}</h1>
@@ -574,14 +575,8 @@ export default function Dashboard() {
             <ReportsPanel />
           ) : activeSectionId === "users" ? (
             <UsersManagementPanel currentUserId={user.id} />
-          ) : activeSectionId === "staff-profiles" ? (
-            <StaffProfilesPanel />
           ) : activeSectionId === "department-plans" ? (
             <DepartmentPlansPanel mode="lecturer" />
-          ) : activeSectionId === "student-profiles" ? (
-            <StudentProfilesPanel />
-          ) : activeSectionId === "classes" ? (
-            <ClassesManagementPanel />
           ) : activeSectionId === "academic-activities" || activeSectionId === "academic-list" ? (
             <AcademicActivitiesPanel view="activities" user={user} onNavigateExpenses={openExpenses} onNavigateTab={(tab) => navigate(tab === "activities" ? "academic-activities" : tab === "steering" ? "academic-steering" : tab === "organizing" ? "academic-organizing" : "academic-support")} />
           ) : activeSectionId === "academic-steering" ? (

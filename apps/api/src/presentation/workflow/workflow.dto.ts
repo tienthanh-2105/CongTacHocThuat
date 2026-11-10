@@ -98,6 +98,11 @@ export class BroadcastNotificationDto {
   @Type(() => Number) @IsInt() @Min(1) maHD!: number;
 }
 
+export class ManualBroadcastNotificationDto {
+  @IsString() @IsNotEmpty() @MaxLength(255) tieuDe!: string;
+  @IsString() @IsNotEmpty() noiDung!: string;
+}
+
 export class SeminarMaterialDto {
   @IsString() @IsNotEmpty() @MaxLength(250) tenTep!: string;
   @IsString() @IsNotEmpty() @MaxLength(2048) urlTep!: string;

@@ -6,11 +6,14 @@ import 'package:firebase_core/firebase_core.dart';
 import 'package:firebase_messaging/firebase_messaging.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_local_notifications/flutter_local_notifications.dart';
+import 'package:image_picker/image_picker.dart';
 import 'package:mobile_scanner/mobile_scanner.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:flutter_timezone/flutter_timezone.dart';
 import 'package:timezone/data/latest_all.dart' as tz_data;
 import 'package:timezone/timezone.dart' as tz;
+
+import 'news_message.dart';
 
 const apiUrl = String.fromEnvironment(
   'API_URL',
@@ -20,6 +23,60 @@ const apiUrl = String.fromEnvironment(
 String _initialOf(dynamic value) {
   final text = value?.toString().trim() ?? '';
   return text.isEmpty ? 'S' : text.substring(0, 1).toUpperCase();
+}
+
+String _activityType(Map<String, dynamic> row) {
+  final type = row['LoaiHoatDong']?.toString().trim();
+  if (type != null && type.isNotEmpty) return type;
+  if (row['MaCThi'] != null) return 'Cuộc thi';
+  if (row['MaSeminar'] != null) return 'Seminar';
+  if ('${row['TenHoatDong']}'.toLowerCase().contains('workshop')) {
+    return 'Workshop';
+  }
+  return 'Hoạt động học thuật';
+}
+
+typedef _CompetitionTopic = ({String name, String advisor});
+
+Future<_CompetitionTopic?> _askCompetitionTopic(BuildContext context) {
+  var name = '';
+  var advisor = '';
+  return showDialog<_CompetitionTopic>(
+    context: context,
+    builder: (dialogContext) => StatefulBuilder(
+      builder: (context, setState) => AlertDialog(
+        title: const Text('Thông tin đề tài dự thi'),
+        scrollable: true,
+        content: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            TextField(
+              decoration: const InputDecoration(labelText: 'Tên đề tài'),
+              maxLength: 250,
+              onChanged: (value) => setState(() => name = value.trim()),
+            ),
+            TextField(
+              decoration: const InputDecoration(labelText: 'Giáo viên hướng dẫn'),
+              maxLength: 150,
+              onChanged: (value) => setState(() => advisor = value.trim()),
+            ),
+          ],
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(dialogContext),
+            child: const Text('Hủy'),
+          ),
+          FilledButton(
+            onPressed: name.length >= 2 && advisor.length >= 2
+                ? () => Navigator.pop(dialogContext, (name: name, advisor: advisor))
+                : null,
+            child: const Text('Gửi đăng ký'),
+          ),
+        ],
+      ),
+    ),
+  );
 }
 
 Future<void> main() async {
@@ -145,9 +202,7 @@ class Api {
   }
 
   static Future<List<dynamic>> activities() async {
-    // Mobile shows only activities that have passed the full approval chain
-    // and whose registration window is still open. The general /activities
-    // endpoint also contains drafts that the registration API must reject.
+    // The feed contains published activities. CoTheDangKy controls registration.
     final data = await request('/mobile/activities');
     return data is List ? data : <dynamic>[];
   }
@@ -210,11 +265,19 @@ class Api {
   static Future<dynamic> markNotificationRead(int id) =>
       request('/notifications/$id/read', method: 'PATCH');
 
-  static Future<dynamic> registerIndividual(int activityId, String type) =>
+  static Future<dynamic> registerIndividual(
+    int activityId,
+    String type, {
+    _CompetitionTopic? topic,
+  }) =>
       request(
         '/registrations/individual',
         method: 'POST',
-        body: {'maHD': activityId, 'hinhThuc': type},
+        body: {
+          'maHD': activityId,
+          'hinhThuc': type,
+          if (topic != null) ...{'tenDeTai': topic.name, 'gvhd': topic.advisor},
+        },
       );
 
   static Future<dynamic> checkIn(String code) => request(
@@ -227,11 +290,14 @@ class Api {
     int competitionId,
     String teamName,
     List<String> memberNumbers,
+    _CompetitionTopic topic,
   ) =>
       request('/registrations/team', method: 'POST', body: {
         'maCThi': competitionId,
         'tenDoi': teamName,
         'thanhVienMSSV': memberNumbers,
+        'tenDeTai': topic.name,
+        'gvhd': topic.advisor,
       });
 
   static Future<dynamic> joinTeam(int teamId) => request(
@@ -301,7 +367,7 @@ class MobilePushNotifications {
     await ActivityReminderNotifications.showPush(
       id: id,
       title: notification.title ?? 'Thông báo học thuật',
-      body: notification.body ?? 'Bạn có thông báo mới.',
+      body: NewsMessage.parse(notification.body ?? '').summary,
     );
   }
 }
@@ -528,7 +594,7 @@ class IncomingNotificationWatcher {
     final id = _notificationId(row);
     if (id < 1) return;
     final title = (row['TieuDe'] ?? 'Thông báo học thuật').toString();
-    final body = (row['NoiDung'] ?? 'Bạn có thông báo mới.').toString();
+    final body = NewsMessage.parse('${row['NoiDung'] ?? ''}').summary;
     await ActivityReminderNotifications._plugin.show(
       id: id % 2147483647,
       title: title,
@@ -1038,14 +1104,31 @@ class _DashboardScreenState extends State<DashboardScreen> {
     });
   }
 
+  Future<void> _refreshActivityDetails(int activityId) async {
+    try {
+      final activities = _recordRows(await Api.activities());
+      if (!mounted || '${activityDetail?['MaHD']}' != '$activityId') return;
+      final updated = activities
+          .where((activity) => '${activity['MaHD']}' == '$activityId')
+          .firstOrNull;
+      if (updated != null) setState(() => activityDetail = updated);
+    } catch (_) {
+      // Refresh failure does not change the registration result.
+    }
+  }
+
   Future<void> _openRegistrationDialog() async {
     final input = await showDialog<RegistrationInput>(
       context: context,
       builder: (_) => const RegistrationDialog(),
     );
-    if (input == null) return;
+    if (!mounted || input == null) return;
+    final topic = input.type == 'Dự thi'
+        ? await _askCompetitionTopic(context)
+        : null;
+    if (!mounted || (input.type == 'Dự thi' && topic == null)) return;
     try {
-      await Api.registerIndividual(input.activityId, input.type);
+      await Api.registerIndividual(input.activityId, input.type, topic: topic);
       unawaited(ActivityReminderNotifications.syncWithServer());
       if (!mounted) return;
       ScaffoldMessenger.of(context).showSnackBar(
@@ -1106,8 +1189,10 @@ class _DashboardScreenState extends State<DashboardScreen> {
             context: context,
             builder: (_) => const TeamCreationDialog(),
           );
-          if (input == null || maCThi == null) return;
-          result = await Api.registerTeam(maCThi, input.name, input.members);
+          if (!mounted || input == null || maCThi == null) return;
+          final teamTopic = await _askCompetitionTopic(context);
+          if (!mounted || teamTopic == null) return;
+          result = await Api.registerTeam(maCThi, input.name, input.members, teamTopic);
           break;
         case 'join-team':
           final teamId = await showDialog<int>(
@@ -1118,7 +1203,10 @@ class _DashboardScreenState extends State<DashboardScreen> {
           result = await Api.joinTeam(teamId);
           break;
         case 'individual':
-          result = await Api.registerIndividual(maHD, 'Dự thi');
+          if (!mounted) return;
+          final individualTopic = await _askCompetitionTopic(context);
+          if (!mounted || individualTopic == null) return;
+          result = await Api.registerIndividual(maHD, 'Dự thi', topic: individualTopic);
           break;
         case 'support':
           result = await Api.registerIndividual(maHD, 'Hỗ trợ');
@@ -1127,21 +1215,32 @@ class _DashboardScreenState extends State<DashboardScreen> {
           result = await Api.registerIndividual(maHD, 'Cổ vũ');
           break;
         default:
-          result = await Api.registerIndividual(
-              maHD, maCThi == null ? 'Tham gia' : 'Dự thi');
+          result = await Api.registerIndividual(maHD, 'Tham gia');
       }
       if (!mounted) return;
-      setState(() => registrationsVersion++);
-      unawaited(ActivityReminderNotifications.syncWithServer());
       final data = result is Map ? result['data'] : null;
+      final isWaiting = data is Map && data['trangThai'] == 'Đang chờ';
+      final isSameActivity = action != 'join-team' ||
+          (data is Map && '${data['maCThi']}' == '$maCThi');
+      setState(() {
+        registrationsVersion++;
+        if (isSameActivity && '${activityDetail?['MaHD']}' == '$maHD') {
+          activityDetail = {
+            ...activityDetail!,
+            'TrangThaiDangKyCuaToi': isWaiting ? 'Đang chờ' : 'Đã đăng ký',
+          };
+        }
+      });
+      unawaited(ActivityReminderNotifications.syncWithServer());
       final teamCode = data is Map ? data['maDoi'] : null;
       final responseMessage = result is Map ? result['message'] : null;
       ScaffoldMessenger.of(context).showSnackBar(SnackBar(
-        content: Text(teamCode == null
+        content: Text(teamCode == null || isWaiting || action != 'create-team'
             ? (responseMessage?.toString() ?? 'Đăng ký thành công.')
             : 'Tạo đội thành công. Mã đội của bạn: $teamCode'),
         duration: const Duration(seconds: 5),
       ));
+      await _refreshActivityDetails(maHD);
     } catch (error) {
       if (!mounted) return;
       await showDialog<void>(
@@ -1677,7 +1776,8 @@ class _CompactActivityCard extends StatelessWidget {
   final VoidCallback onTap;
   @override
   Widget build(BuildContext context) {
-    final isContest = activity['MaCThi'] != null;
+    final type = _activityType(activity);
+    final isContest = type == 'Cuộc thi';
     return Card(
         color: Colors.white,
         elevation: 0,
@@ -1714,7 +1814,7 @@ class _CompactActivityCard extends StatelessWidget {
                             decoration: BoxDecoration(
                                 color: const Color(0xffe6f6ef),
                                 borderRadius: BorderRadius.circular(20)),
-                            child: Text(isContest ? 'Cuộc thi' : 'Seminar',
+                            child: Text(type,
                                 style: const TextStyle(
                                     color: Color(0xff18815e), fontSize: 8))),
                         const SizedBox(height: 4),
@@ -1825,7 +1925,7 @@ class _EmptyActivityCard extends StatelessWidget {
           color: Colors.white,
           borderRadius: BorderRadius.circular(14),
           border: Border.all(color: const Color(0xffe7edf4))),
-      child: const Text('Hiện chưa có cuộc thi hoặc seminar sắp tới.',
+      child: const Text('Không có hoạt động phù hợp.',
           style: TextStyle(color: Color(0xff718096), fontSize: 11)));
 }
 
@@ -1878,35 +1978,47 @@ class _ExploreContentState extends State<ExploreContent> {
         topics = Api.publicCompetitionTopics();
       });
 
+  Future<void> _refresh() async {
+    final next = Api.activities();
+    final nextTopics =
+        category == 'Đề tài' ? Api.publicCompetitionTopics() : null;
+    setState(() {
+      activities = next;
+      if (nextTopics != null) topics = nextTopics;
+    });
+    try {
+      await Future.wait([next, if (nextTopics != null) nextTopics]);
+    } catch (_) {
+      // The activity and topic builders display their own retry states.
+    }
+  }
+
   @override
   Widget build(BuildContext context) => FutureBuilder<List<dynamic>>(
         future: activities,
         builder: (context, snapshot) {
-          if (snapshot.connectionState == ConnectionState.waiting)
+          if (snapshot.connectionState == ConnectionState.waiting &&
+              !snapshot.hasData)
             return const Center(child: CircularProgressIndicator());
           if (snapshot.hasError)
             return _RetryView(
                 message:
                     snapshot.error.toString().replaceFirst('Exception: ', ''),
-                onRetry: () => setState(() {
-                  activities = Api.activities();
-                }));
+                onRetry: _refresh);
           final rows = _recordRows(snapshot.data);
           final search = searchController.text.trim().toLowerCase();
           final filtered = rows.where((row) {
-            final contest = row['MaCThi'] != null;
-            final seminar = row['MaSeminar'] != null;
-            final categoryMatch = category == 'Tất cả' ||
-                (category == 'Cuộc thi' && contest) ||
-                (category == 'Seminar' && seminar) ||
-                (category == 'Workshop' &&
-                    '${row['TenHoatDong']}'.toLowerCase().contains('workshop'));
+            final type = _activityType(row);
+            final categoryMatch = category == 'Tất cả' || type == category;
             final text =
-                '${row['TenHoatDong'] ?? ''} ${row['ChuDe'] ?? ''} ${row['DiaDiem'] ?? ''}'
+                '${row['TenHoatDong'] ?? ''} ${row['ChuDe'] ?? ''} ${row['DiaDiem'] ?? ''} $type'
                     .toLowerCase();
             return categoryMatch && text.contains(search);
           }).toList();
-          return ListView(
+          return RefreshIndicator(
+            onRefresh: _refresh,
+            child: ListView(
+              physics: const AlwaysScrollableScrollPhysics(),
               padding: const EdgeInsets.fromLTRB(16, 10, 16, 24),
               children: [
                 TextField(
@@ -1951,11 +2063,13 @@ class _ExploreContentState extends State<ExploreContent> {
                       searchQuery: search,
                       onRetry: _retryTopics)
                 else ...[
-                  if (rows.isNotEmpty) ...[
+                  if (category == 'Tất cả' &&
+                      search.isEmpty &&
+                      filtered.isNotEmpty) ...[
                     const SizedBox(height: 5),
                     _ExploreHero(
-                        activity: rows.first,
-                        onTap: () => widget.onOpenActivity(rows.first)),
+                        activity: filtered.first,
+                        onTap: () => widget.onOpenActivity(filtered.first)),
                   ],
                   const SizedBox(height: 12),
                   Row(children: [
@@ -1977,7 +2091,9 @@ class _ExploreContentState extends State<ExploreContent> {
                         activity: activity,
                         onTap: () => widget.onOpenActivity(activity))),
                 ],
-              ]);
+              ],
+            ),
+          );
         },
       );
 }
@@ -2036,7 +2152,7 @@ class ActivityDetailScreen extends StatefulWidget {
   });
   final Map<String, dynamic> activity;
   final VoidCallback onBack;
-  final ValueChanged<Map<String, dynamic>> onRegister;
+  final Future<void> Function(Map<String, dynamic>) onRegister;
 
   @override
   State<ActivityDetailScreen> createState() => _ActivityDetailScreenState();
@@ -2044,6 +2160,17 @@ class ActivityDetailScreen extends StatefulWidget {
 
 class _ActivityDetailScreenState extends State<ActivityDetailScreen> {
   late Future<dynamic>? seminar;
+  bool _registering = false;
+
+  Future<void> _submitRegistration() async {
+    if (_registering) return;
+    setState(() => _registering = true);
+    try {
+      await widget.onRegister(widget.activity);
+    } finally {
+      if (mounted) setState(() => _registering = false);
+    }
+  }
 
   @override
   void initState() {
@@ -2072,11 +2199,15 @@ class _ActivityDetailScreenState extends State<ActivityDetailScreen> {
               ? Map<String, dynamic>.from(snapshot.data as Map)
               : <String, dynamic>{};
           final activity = widget.activity;
-          final isCompetition = activity['MaCThi'] != null;
-          final isSeminar = activity['MaSeminar'] != null;
           final canRegister = activity['CoTheDangKy'] == true ||
               activity['CoTheDangKy'] == 1 ||
               activity['CoTheDangKy']?.toString() == '1';
+          final registrationStatus = activity['TrangThaiDangKyCuaToi'] as String?;
+          final canSubmit = canRegister && registrationStatus == null && !_registering;
+          final registrationLabel = registrationStatus ??
+              (_registering
+                  ? 'Đang xử lý…'
+                  : canRegister ? 'Đăng ký tham gia' : 'Chưa mở đăng ký');
           final start = activity['ThoiGianBatDau'] ??
               extra['ThoiGianBatDau'] ??
               activity['TgDuKien'];
@@ -2092,11 +2223,7 @@ class _ActivityDetailScreenState extends State<ActivityDetailScreen> {
                   extra['NoiDung'] ??
                   'Thông tin chi tiết của hoạt động sẽ được cập nhật.')
               .toString();
-          final type = isCompetition
-              ? 'Cuộc thi'
-              : isSeminar
-                  ? 'Seminar'
-                  : 'Hoạt động học thuật';
+          final type = _activityType(activity);
 
           return Column(children: [
             Padding(
@@ -2218,7 +2345,7 @@ class _ActivityDetailScreenState extends State<ActivityDetailScreen> {
                 ],
               ),
             ),
-            if (!canRegister)
+            if (!canRegister && registrationStatus == null)
               const Padding(
                 padding: EdgeInsets.fromLTRB(16, 2, 16, 4),
                 child: Text(
@@ -2234,13 +2361,13 @@ class _ActivityDetailScreenState extends State<ActivityDetailScreen> {
                 child: SizedBox(
                   width: double.infinity,
                   child: FilledButton.icon(
-                    onPressed: canRegister ? () => widget.onRegister(activity) : null,
-                    icon: Icon(canRegister
-                        ? Icons.event_available_rounded
-                        : Icons.hourglass_top_rounded),
-                    label: Text(canRegister
-                        ? 'Đăng ký tham gia'
-                        : 'Chưa mở đăng ký'),
+                    onPressed: canSubmit ? _submitRegistration : null,
+                    icon: Icon(switch (registrationStatus) {
+                      'Đã đăng ký' => Icons.check_circle_outline_rounded,
+                      null when canSubmit => Icons.event_available_rounded,
+                      _ => Icons.hourglass_top_rounded,
+                    }),
+                    label: Text(registrationLabel),
                     style: FilledButton.styleFrom(
                       minimumSize: const Size.fromHeight(48),
                       backgroundColor: const Color(0xff1769e8),
@@ -2521,10 +2648,10 @@ class ActivityCard extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final isCompetition = activity['MaCThi'] != null;
-    final isSeminar = activity['MaSeminar'] != null;
-    final kind =
-        isCompetition ? 'CUỘC THI' : (isSeminar ? 'SEMINAR' : 'HOẠT ĐỘNG');
+    final type = _activityType(activity);
+    final isCompetition = type == 'Cuộc thi';
+    final isSeminar = type == 'Seminar';
+    final kind = type.toUpperCase();
     final subtitle = [
       _shortDate(activity['TgBatDau']),
       (activity['DiaDiem'] ?? 'Chưa có địa điểm').toString(),
@@ -2643,31 +2770,65 @@ class QrAttendanceContent extends StatefulWidget {
 }
 
 class _QrAttendanceContentState extends State<QrAttendanceContent> {
+  static const _qrFormats = [BarcodeFormat.qrCode];
   final MobileScannerController controller = MobileScannerController(
-    formats: const [BarcodeFormat.qrCode],
+    formats: _qrFormats,
   );
+  final ImagePicker _imagePicker = ImagePicker();
   bool processing = false;
   bool checkedIn = false;
   String? message;
   Map<String, dynamic> checkInResult = <String, dynamic>{};
 
-  Future<void> _onDetect(BarcodeCapture capture) async {
-    if (processing || checkedIn) return;
-    String? code;
+  Iterable<String> _qrCodes(BarcodeCapture? capture) sync* {
+    if (capture == null) return;
     for (final barcode in capture.barcodes) {
-      final value = barcode.rawValue;
-      if (value != null && value.isNotEmpty) {
-        code = value;
-        break;
+      final value = barcode.rawValue?.trim();
+      if (barcode.format == BarcodeFormat.qrCode &&
+          value != null && value.isNotEmpty) {
+        yield value;
       }
     }
-    if (code == null || code.isEmpty) return;
-    setState(() {
-      processing = true;
-      message = 'Đang xác nhận điểm danh…';
-    });
-    await controller.stop();
+  }
+
+  void _onDetect(BarcodeCapture capture) {
+    if (processing || checkedIn) return;
+    final code = _qrCodes(capture).firstOrNull;
+    if (code != null) unawaited(_checkIn(cameraCode: code));
+  }
+
+  Future<String?> _pickQrCode() async {
+    final Set<String> codes;
     try {
+      final image = await _imagePicker.pickImage(
+        source: ImageSource.gallery,
+        requestFullMetadata: false,
+      );
+      if (!mounted || image == null) return null;
+      setState(() => message = 'Đang đọc mã QR từ ảnh…');
+      final capture = await controller.analyzeImage(image.path, formats: _qrFormats);
+      codes = _qrCodes(capture).toSet();
+    } catch (_) {
+      throw Exception('Không thể đọc ảnh. Vui lòng chọn ảnh khác.');
+    }
+    if (codes.isEmpty) {
+      throw Exception('Không tìm thấy mã QR trong ảnh.');
+    }
+    if (codes.length > 1) {
+      throw Exception('Ảnh có nhiều mã QR. Hãy chọn ảnh chỉ có mã điểm danh.');
+    }
+    return codes.single;
+  }
+
+  Future<void> _checkIn({String? cameraCode}) async {
+    if (processing || checkedIn) return;
+    setState(() => processing = true);
+    try {
+      final code = cameraCode ?? await _pickQrCode();
+      if (!mounted || code == null) return;
+      setState(() => message = 'Đang xác nhận điểm danh…');
+      await controller.stop();
+      if (!mounted) return;
       final result = await Api.checkIn(code);
       if (!mounted) return;
       final trainingPoints = result is Map && result['diemRenLuyen'] is Map
@@ -2698,7 +2859,7 @@ class _QrAttendanceContentState extends State<QrAttendanceContent> {
       checkedIn = false;
       message = null;
     });
-    await controller.start();
+    if (!controller.value.isRunning) await controller.start();
   }
 
   @override
@@ -2877,6 +3038,12 @@ class _QrAttendanceContentState extends State<QrAttendanceContent> {
                   onDetect: _onDetect,
                 ),
               ),
+            ),
+            const SizedBox(height: 12),
+            OutlinedButton.icon(
+              onPressed: processing ? null : _checkIn,
+              icon: const Icon(Icons.photo_library_outlined),
+              label: const Text('Chọn ảnh từ thư viện'),
             ),
             if (message != null) ...[
               const SizedBox(height: 16),
@@ -3688,7 +3855,7 @@ class _NewsContentState extends State<NewsContent> {
     await next;
   }
 
-  Future<void> _openNotice(Map<String, dynamic> row) async {
+  Future<void> _openNotice(Map<String, dynamic> row, NewsMessage message) async {
     final id = int.tryParse('${row['MaThongBao'] ?? ''}');
     if (row['_kind'] != 'Nhắc lịch' && row['DocLuc'] == null && id != null) {
       try {
@@ -3708,9 +3875,7 @@ class _NewsContentState extends State<NewsContent> {
         title: Text((row['TieuDe'] ?? row['TenHoatDong'] ?? 'Thông báo')
             .toString()),
         content: SingleChildScrollView(
-          child: Text((row['NoiDung'] ?? row['LoaiNhac'] ??
-                  'Hoạt động sắp diễn ra.')
-              .toString()),
+          child: SizedBox(width: 360, child: message.details(dialogContext)),
         ),
         actions: [
           TextButton(
@@ -3810,6 +3975,11 @@ class _NewsContentState extends State<NewsContent> {
                         ? Map<String, dynamic>.from(raw)
                         : <String, dynamic>{};
                     final isReminder = row['_kind'] == 'Nhắc lịch';
+                    final message = NewsMessage.parse(
+                      (row['NoiDung'] ?? row['LoaiNhac'] ??
+                              'Hoạt động sắp diễn ra.')
+                          .toString(),
+                    );
                     return Card(
                       color: Colors.white,
                       elevation: 0,
@@ -3820,7 +3990,7 @@ class _NewsContentState extends State<NewsContent> {
                       child: ListTile(
                         contentPadding: const EdgeInsets.symmetric(
                             horizontal: 10, vertical: 3),
-                        onTap: () => _openNotice(row),
+                        onTap: () => _openNotice(row, message),
                         leading: CircleAvatar(
                           radius: 17,
                           backgroundColor: isReminder
@@ -3858,8 +4028,7 @@ class _NewsContentState extends State<NewsContent> {
                                           row['DiaDiem']
                                       ].join(' · ')
                                     : [
-                                        if (row['NoiDung'] != null)
-                                          row['NoiDung'],
+                                        message.summary,
                                         if (row['GuiLuc'] != null)
                                           _formatMobileDate(row['GuiLuc'])
                                       ].join(' · '),

@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useState, useMemo } from "react";
+import { useCallback, useEffect, useState, useMemo, type FormEvent } from "react";
 import { workflowRequest } from "@/services/workflow";
 import s from "./dashboard.module.css";
 import NoticeDialog from "./NoticeDialog";
@@ -20,6 +20,8 @@ const text = (row: Row, ...keys: string[]) => {
   const res = value(row, ...keys);
   return res === undefined ? "—" : String(res);
 };
+
+const isStudentRole = (name: string) => name.normalize("NFD").replace(/[\u0300-\u036f]/g, "").toUpperCase().replace(/[^A-Z]/g, "") === "SINHVIEN";
 
 function EyeIcon({ visible }: { visible: boolean }) {
   return (
@@ -43,6 +45,8 @@ function EyeIcon({ visible }: { visible: boolean }) {
 export default function UsersManagementPanel({ currentUserId }: { currentUserId?: string | number }) {
   const [accounts, setAccounts] = useState<Row[]>([]);
   const [roles, setRoles] = useState<Row[]>([]);
+  const [studentClasses, setStudentClasses] = useState<Row[]>([]);
+  const [createRoleId, setCreateRoleId] = useState("");
   const [loading, setLoading] = useState(true);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
@@ -57,6 +61,7 @@ export default function UsersManagementPanel({ currentUserId }: { currentUserId?
 
   // Modals
   const [showRoleMatrixModal, setShowRoleMatrixModal] = useState(false);
+  const [showCreateModal, setShowCreateModal] = useState(false);
   const [editingAccount, setEditingAccount] = useState<Row | null>(null);
   const [actionType, setActionType] = useState<"role" | "password" | null>(null);
   const [newPassword, setNewPassword] = useState("");
@@ -69,8 +74,10 @@ export default function UsersManagementPanel({ currentUserId }: { currentUserId?
         workflowRequest<unknown>("/admin/accounts"),
         workflowRequest<unknown>("/admin/accounts/roles"),
       ]);
+      const classRows = await workflowRequest<unknown>("/admin/accounts/student-classes").catch(() => []);
       setAccounts(Array.isArray(accRows) ? (accRows as Row[]) : []);
       setRoles(Array.isArray(roleRows) ? (roleRows as Row[]) : []);
+      setStudentClasses(Array.isArray(classRows) ? classRows as Row[] : []);
     } catch (err) {
       setError(err instanceof Error ? err.message : "Không tải được danh sách tài khoản.");
     } finally {
@@ -78,28 +85,53 @@ export default function UsersManagementPanel({ currentUserId }: { currentUserId?
     }
   }, []);
 
-  useEffect(() => {
-    let active = true;
-    void (async () => {
-      try {
-        const [accRows, roleRows] = await Promise.all([
-          workflowRequest<unknown>("/admin/accounts"),
-          workflowRequest<unknown>("/admin/accounts/roles"),
-        ]);
-        if (active) {
-          setAccounts(Array.isArray(accRows) ? (accRows as Row[]) : []);
-          setRoles(Array.isArray(roleRows) ? (roleRows as Row[]) : []);
-          setLoading(false);
-        }
-      } catch (err) {
-        if (active) {
-          setError(err instanceof Error ? err.message : "Không tải được danh sách tài khoản.");
-          setLoading(false);
-        }
+  useEffect(() => { void loadData(); }, [loadData]);
+
+  const selectedCreateRole = roles.find((role) => String(value(role, "MaVaiTro")) === createRoleId);
+  const creatingStudent = createRoleId === "student" || isStudentRole(text(selectedCreateRole ?? {}, "TenVaiTro"));
+
+  async function createAccount(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    const form = event.currentTarget;
+    const data = new FormData(form);
+    setBusy(true);
+    setError("");
+    try {
+      const password = String(data.get("password") ?? "");
+      if (password.length < 12) throw new Error("Mật khẩu phải có ít nhất 12 ký tự.");
+      if (creatingStudent) {
+        const classId = Number(data.get("maLop"));
+        if (!classId) throw new Error("Hãy chọn lớp cho sinh viên.");
+        const created = await workflowRequest<Row>("/admin/accounts/student", {
+          method: "POST",
+          body: {
+            hoTen: data.get("hoTen"),
+            maLop: classId,
+            password,
+            email: data.get("email") || undefined,
+          },
+        });
+      setNotice(`Đã cấp tài khoản sinh viên ${text(created, "MSSV", "TenDangNhap")}. Tên đăng nhập là MSSV.`);
+      } else {
+        if (!selectedCreateRole) throw new Error("Hãy chọn vai trò cho tài khoản.");
+        const username = String(data.get("username") ?? "").trim();
+        if (!username) throw new Error("Hãy nhập tên đăng nhập.");
+        await workflowRequest("/admin/accounts", {
+          method: "POST",
+          body: { username, password, roleId: Number(value(selectedCreateRole, "MaVaiTro")) },
+        });
+        setNotice(`Đã cấp tài khoản ${username}.`);
       }
-    })();
-    return () => { active = false; };
-  }, []);
+      form.reset();
+      setCreateRoleId("");
+      setShowCreateModal(false);
+      await loadData();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Không cấp được tài khoản.");
+    } finally {
+      setBusy(false);
+    }
+  }
 
   // Statistics
   const totalAccounts = accounts.length;
@@ -250,6 +282,9 @@ export default function UsersManagementPanel({ currentUserId }: { currentUserId?
         <div>
           <h1 className={s.usersPageTitle}>Tài khoản &amp; phân quyền</h1>
         </div>
+        <button type="button" className={s.addAccountBtn} onClick={() => setShowCreateModal(true)}>
+          <span aria-hidden="true">＋</span> Cấp tài khoản
+        </button>
       </div>
 
       {/* 4 Metric Cards */}
@@ -697,6 +732,40 @@ export default function UsersManagementPanel({ currentUserId }: { currentUserId?
       </div>
 
       {/* Modal: Đổi mật khẩu */}
+      {showCreateModal && (
+        <div className={s.modalOverlay} role="presentation" onMouseDown={(event) => { if (event.target === event.currentTarget) setShowCreateModal(false); }}>
+          <div className={s.modalBox} role="dialog" aria-modal="true" aria-labelledby="create-account-title">
+            <div className={s.modalHeader}>
+              <h3 id="create-account-title">Cấp tài khoản</h3>
+              <button type="button" className={s.modalClose} aria-label="Đóng" onClick={() => setShowCreateModal(false)}>✕</button>
+            </div>
+            <p className={s.usersPageSubtitle}>Tài khoản sinh viên được tự cấp MSSV làm tên đăng nhập.</p>
+            <form className={s.modalForm} onSubmit={createAccount}>
+              <label className={s.businessField}>
+                <span>Vai trò</span>
+                <select value={createRoleId} onChange={(event) => setCreateRoleId(event.target.value)} required>
+                  <option value="">Chọn vai trò</option>
+                  {roles.map((role, index) => {
+                    const roleName = text(role, "TenVaiTro");
+                    const id = value(role, "MaVaiTro");
+                    return <option key={`create-role-${String(id ?? index)}`} value={isStudentRole(roleName) ? "student" : String(id ?? "")} disabled={id == null && !isStudentRole(roleName)}>{roleName}</option>;
+                  })}
+                  {!roles.some((role) => isStudentRole(text(role, "TenVaiTro"))) && <option value="student">Sinh viên (tự cấp MSSV)</option>}
+                </select>
+              </label>
+              {creatingStudent ? <>
+                <label className={s.businessField}><span>Họ tên sinh viên</span><input name="hoTen" required maxLength={150} /></label>
+                <label className={s.businessField}><span>Lớp</span><select name="maLop" required defaultValue=""><option value="">Chọn lớp</option>{studentClasses.map((row, index) => <option key={`student-class-${String(value(row, "MaLop") ?? index)}`} value={String(value(row, "MaLop") ?? "")}>{text(row, "TenLop")} · {text(row, "KhoaHoc")}</option>)}</select></label>
+                <label className={s.businessField}><span>Email (không bắt buộc)</span><input name="email" type="email" maxLength={150} /></label>
+              </> : <label className={s.businessField}><span>Tên đăng nhập</span><input name="username" required maxLength={100} autoComplete="off" /></label>}
+              <label className={s.businessField}><span>Mật khẩu (ít nhất 12 ký tự)</span><input name="password" type="password" required minLength={12} maxLength={72} autoComplete="new-password" /></label>
+              {creatingStudent && studentClasses.length === 0 && <p className={s.usersPageSubtitle}>Chưa tải được danh sách lớp; chưa thể cấp tài khoản sinh viên.</p>}
+              <button className={s.primary} disabled={busy || (creatingStudent && studentClasses.length === 0)}>{busy ? "Đang cấp…" : "Cấp tài khoản"}</button>
+            </form>
+          </div>
+        </div>
+      )}
+
       {editingAccount && actionType && (
         <div className={s.modalOverlay}>
           <div className={s.modalBox}>

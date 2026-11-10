@@ -7,6 +7,21 @@ import s from "./dashboard.module.css";
 
 type Row = Record<string, unknown>;
 const text = (row: Row | null | undefined, key: string) => String(row?.[key] ?? "");
+const formatBroadcastTime = (value: string) => {
+  const date = new Date(value);
+  if (!value || !Number.isFinite(date.getTime())) return value || "—";
+  const parts = new Intl.DateTimeFormat("vi-VN", {
+    timeZone: "Asia/Ho_Chi_Minh",
+    day: "2-digit",
+    month: "2-digit",
+    year: "numeric",
+    hour: "2-digit",
+    minute: "2-digit",
+    hourCycle: "h23",
+  }).formatToParts(date);
+  const part = (type: Intl.DateTimeFormatPartTypes) => parts.find((item) => item.type === type)?.value ?? "";
+  return `${part("day")}/${part("month")}/${part("year")} · ${part("hour")}:${part("minute")}`;
+};
 
 interface BroadcastItem {
   id: number | string;
@@ -142,6 +157,7 @@ export default function TrainingPointsPanel({ user }: { user?: { roles: string[]
     }
     setBusy(true);
     setError("");
+    setNotice("");
     try {
       const result = await workflowRequest<{ message: string; recipients: number }>("/training-points/broadcasts", {
         method: "POST",
@@ -156,6 +172,45 @@ export default function TrainingPointsPanel({ user }: { user?: { roles: string[]
     } finally {
       setBusy(false);
     }
+  }
+
+  async function sendManualBroadcast(tieuDe: string, noiDung: string) {
+    if (busy) return false;
+    if (!tieuDe.trim() || !noiDung.trim()) {
+      setError("Vui lòng nhập tiêu đề và nội dung thông báo.");
+      return false;
+    }
+    setBusy(true);
+    setError("");
+    setNotice("");
+    try {
+      const result = await workflowRequest<{ notificationCount?: number; pushQueuedCount?: number }>("/training-points/broadcasts/manual", {
+        method: "POST",
+        body: { tieuDe: tieuDe.trim(), noiDung: noiDung.trim() },
+      });
+      const queued = Number(result.pushQueuedCount ?? 0);
+      setNotice(queued > 0
+        ? `Đã lưu thông báo cho ${Number(result.notificationCount ?? 0).toLocaleString("vi-VN")} tài khoản. Đã đưa vào hàng đợi gửi đẩy cho ${queued.toLocaleString("vi-VN")} tài khoản có thiết bị đăng ký.`
+        : "Đã lưu thông báo trong ứng dụng. Hiện chưa có thiết bị đăng ký nhận thông báo đẩy trong nhóm người nhận.");
+      const updatedBroadcasts = await workflowRequest<BroadcastItem[]>("/training-points/broadcasts").catch(() => null);
+      if (updatedBroadcasts) setBroadcasts(updatedBroadcasts);
+      return true;
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Không gửi được thông báo.");
+      return false;
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function handleNoticeSend(e: FormEvent<HTMLFormElement>) {
+    e.preventDefault();
+    const form = new FormData(e.currentTarget);
+    const sent = await sendManualBroadcast(
+      String(form.get("tieuDe") ?? ""),
+      String(form.get("noiDung") ?? ""),
+    );
+    if (sent) setIsNoticeModalOpen(false);
   }
 
   // Handle approving a training point item
@@ -245,7 +300,7 @@ export default function TrainingPointsPanel({ user }: { user?: { roles: string[]
   // Export data as CSV
   function handleExport() {
     const headers = ["Tiêu đề", "Người nhận", "Gửi lúc", "Tỷ lệ đã đọc"];
-    const rows = filteredBroadcasts.map((b) => [b.tieuDe, b.doiTuong, b.guiLuc, b.daDoc]);
+    const rows = filteredBroadcasts.map((b) => [b.tieuDe, b.doiTuong, formatBroadcastTime(b.guiLuc), b.daDoc]);
     const csvContent =
       "data:text/csv;charset=utf-8,\uFEFF" +
       [headers.join(","), ...rows.map((e) => e.map((x) => `"${x}"`).join(","))].join("\n");
@@ -342,7 +397,7 @@ export default function TrainingPointsPanel({ user }: { user?: { roles: string[]
                     borderRadius: "999px",
                   }}
                 >
-                  {broadcasts.length} lời nhắc lịch
+                  {broadcasts.length} thông báo
                 </span>
               </div>
               <p style={{ margin: "4px 0 0 0", fontSize: "13px", color: "#64748b" }}>
@@ -507,7 +562,7 @@ export default function TrainingPointsPanel({ user }: { user?: { roles: string[]
                       {item.doiTuong}
                     </td>
                     <td style={{ padding: "13px 12px", color: "#64748b", whiteSpace: "nowrap" }}>
-                      {item.guiLuc}
+                      {formatBroadcastTime(item.guiLuc)}
                     </td>
                     <td style={{ padding: "13px 4px 13px 12px", fontWeight: 600, color: "#334155" }}>
                       {item.daDoc}
@@ -855,7 +910,7 @@ export default function TrainingPointsPanel({ user }: { user?: { roles: string[]
             zIndex: 1000,
             backdropFilter: "blur(2px)",
           }}
-          onClick={() => setIsNoticeModalOpen(false)}
+          onClick={() => { if (!busy) setIsNoticeModalOpen(false); }}
         >
           <div
             style={{
@@ -872,6 +927,7 @@ export default function TrainingPointsPanel({ user }: { user?: { roles: string[]
               <h3 style={{ margin: 0, fontSize: "18px", fontWeight: 800, color: "#0f172a" }}>Tạo thông báo mới</h3>
               <button
                 type="button"
+                disabled={busy}
                 onClick={() => setIsNoticeModalOpen(false)}
                 style={{ background: "none", border: "none", fontSize: "20px", cursor: "pointer", color: "#94a3b8" }}
               >
@@ -880,20 +936,7 @@ export default function TrainingPointsPanel({ user }: { user?: { roles: string[]
             </div>
 
             <form
-              onSubmit={(e) => {
-                e.preventDefault();
-                const fd = new FormData(e.currentTarget);
-                const t = String(fd.get("tieuDe") || "");
-                const c = String(fd.get("noiDung") || "");
-                const d = String(fd.get("doiTuong") || "Toàn khoa");
-                if (!t || !c) return;
-                setBroadcasts((prev) => [
-                  { id: Date.now(), tieuDe: t, doiTuong: d, guiLuc: "Vừa xong", daDoc: "—" },
-                  ...prev,
-                ]);
-                setNotice("Đã tạo và gửi thông báo thành công!");
-                setIsNoticeModalOpen(false);
-              }}
+              onSubmit={handleNoticeSend}
               style={{ display: "flex", flexDirection: "column", gap: "14px" }}
             >
               <div>
@@ -902,6 +945,7 @@ export default function TrainingPointsPanel({ user }: { user?: { roles: string[]
                 </label>
                 <input
                   name="tieuDe"
+                  maxLength={255}
                   required
                   placeholder="VD: Nhắc lịch tham dự Seminar..."
                   style={{ width: "100%", padding: "9px 12px", fontSize: "13px", border: "1px solid #cbd5e1", borderRadius: "8px" }}
@@ -917,9 +961,6 @@ export default function TrainingPointsPanel({ user }: { user?: { roles: string[]
                   style={{ width: "100%", padding: "9px 12px", fontSize: "13px", border: "1px solid #cbd5e1", borderRadius: "8px" }}
                 >
                   <option>Toàn khoa CNTT</option>
-                  <option>Sinh viên đăng ký dự thi (120 SV)</option>
-                  <option>Sinh viên đăng ký cổ vũ &amp; hỗ trợ (4 lớp K24)</option>
-                  <option>Sinh viên tham dự Seminar (186 SV)</option>
                 </select>
               </div>
 
@@ -939,6 +980,7 @@ export default function TrainingPointsPanel({ user }: { user?: { roles: string[]
               <div style={{ display: "flex", justifyContent: "flex-end", gap: "10px", marginTop: "10px" }}>
                 <button
                   type="button"
+                  disabled={busy}
                   onClick={() => setIsNoticeModalOpen(false)}
                   style={{ padding: "8px 16px", borderRadius: "8px", border: "1px solid #cbd5e1", background: "#f8fafc", cursor: "pointer", fontWeight: 600 }}
                 >
@@ -946,9 +988,10 @@ export default function TrainingPointsPanel({ user }: { user?: { roles: string[]
                 </button>
                 <button
                   type="submit"
+                  disabled={busy}
                   style={{ padding: "8px 20px", borderRadius: "8px", border: "none", background: "#2563eb", color: "#fff", cursor: "pointer", fontWeight: 600 }}
                 >
-                  Gửi thông báo
+                  {busy ? "Đang gửi…" : "Gửi thông báo"}
                 </button>
               </div>
             </form>

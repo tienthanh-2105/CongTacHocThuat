@@ -43,8 +43,8 @@ export class FeaturesService {
   }
 
   async getMobileActivities(context: SessionContext) {
-    await this.requireStudent(context);
-    return this.repository.listMobileActivities();
+    const student = await this.requireStudent(context);
+    return this.repository.listMobileActivities(student.MaSV, registrationDeadlineOverrideEnabled());
   }
 
   async getMobileTopics(context: SessionContext) {

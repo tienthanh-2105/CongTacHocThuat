@@ -206,7 +206,7 @@ export class RegistrationService {
     const joined = await this.repository.addStudentToTeam(team.MaDoi, team.MaHD, student.MaSV);
     if(joined.waitlisted) return {
       message:'Đội đã đủ chỉ tiêu; bạn đã vào danh sách chờ theo thứ tự đăng ký.',
-      data:{maDoi:team.MaDoi,tenDoi:team.TenDoi,maCho:joined.maCho,viTri:joined.viTri,trangThai:'Đang chờ'},
+      data:{maDoi:team.MaDoi,tenDoi:team.TenDoi,maCThi:team.MaCThi,maCho:joined.maCho,viTri:joined.viTri,trangThai:'Đang chờ'},
     };
     return {
       message: 'Tham gia đội thi thành công',
